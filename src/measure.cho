@@ -1,0 +1,73 @@
+module qc.measure;
+
+import qc.complex;
+import qc.state;
+
+// Measurement with a seeded sampler. Entropy is a value, never ambient
+// (`docs/qubit-types.md` D2): the generator state is one `int` the caller
+// owns and passes in, so the same circuit and the same seed give the
+// same bits, on every backend, because nothing here reads a clock or a
+// device.
+//
+// xorshift64* (Vigna). `>>` in cancho is arithmetic (`bitwise.md` §2), so
+// each right shift is masked to the width a logical shift would leave.
+// That mask is the whole difference between this and the C original, and
+// `scripts/gen_reference.py` carries the same generator so the two can
+// be compared.
+
+pub fn next[&r](rng: &!r [int]) -> [] float {
+    var x = rng[0];
+    x = x ^ x >> 12 & 0xfffffffffffff;
+    x = x ^ x << 25;
+    x = x ^ x >> 27 & 0x1fffffffff;
+    rng[0] = x;
+    let y = wrapping_mul(x, 2685821657736338717);
+    return float_of(y >> 11 & 0x1fffffffffffff) / 9007199254740992.0;
+}
+
+// Probability that qubit `q` reads 1.
+pub fn prob_one[&s](st: &s [float], n: int, q: int) -> [] float {
+    let bit = 1 << q;
+    let total = state.amplitudes_for(n);
+    var p = 0.0;
+    var i = 0;
+    while i < total {
+        if i & bit != 0 {
+            p = p + complex.norm_sqr(state.get(st, i));
+        }
+        i = i + 1;
+    }
+    return p;
+}
+
+// Sample qubit `q`, collapse the state onto the outcome, renormalise,
+// and answer the bit. The outcome is 1 exactly when the draw is below
+// P(1), so P(outcome = 1) is P(1) and a state with P(1) = 0 never
+// answers 1.
+pub fn measure[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
+    let p1 = prob_one(st, n, q);
+    let u = next(rng);
+    var outcome = 0;
+    var kept = 1.0 - p1;
+    if u < p1 {
+        outcome = 1;
+        kept = p1;
+    }
+    let bit = 1 << q;
+    let scale = 1.0 / sqrt(kept);
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        var has = 0;
+        if i & bit != 0 {
+            has = 1;
+        }
+        if has == outcome {
+            state.put(st, i, complex.scale(state.get(st, i), scale));
+        } else {
+            state.put(st, i, complex.zero());
+        }
+        i = i + 1;
+    }
+    return outcome;
+}

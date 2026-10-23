@@ -229,9 +229,9 @@ convention `aliasing_same_place_twice.cho` already follows.
 - **M1** can start. It needs: complex as a two-float struct, the
   threaded state slice (§2.1), H/X/CNOT/RZ, the PRNG (D2), and
   `scripts/gen_reference.py` with D5's bit order and D6's tolerance.
-- Open for M1 to settle: whether a zero-initialised `Box[[float]]` state
-  (`zeroed-slices.md`, `calloc`) is writable through `&!`, since
-  `contents` is documented as returning a shared reference.
+- Settled in M1 (`m1-results.md`): a zero-initialised `Box[[float]]` is
+  writable through `&!` via `contents`, so the owning form of §2.1 is
+  available.
 - The compiler is untouched until M2 reports.
 
 ---
