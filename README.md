@@ -5,6 +5,8 @@ built to test whether cancho's linear resources and capability-typed
 effects fit quantum information. Status: pre-PoC, milestones M0 to M3 of the plan
 in `docs/qubit-types.md`.
 
+- `docs/index.html`: the landing page (for humans, for agents, a gallery of what runs, what is refused and what is planned). Rebuild with `python3 scripts/build_site.py`; `--check` fails if it has drifted from the tools. Serve it with GitHub Pages from `/docs`.
+- `docs/llms.txt`, `docs/agent-prompt.md`: the same facts for agents
 - `docs/qubit-types.md`: M0 design and the must-reject list
 - `docs/m1-results.md`: M1 results (simulator, diff against Qiskit)
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)

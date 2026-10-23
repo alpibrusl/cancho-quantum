@@ -1,0 +1,23 @@
+# cancho-quantum
+
+> A small state-vector quantum simulator written in cancho, built to test what a linear-types-and-capabilities language catches in quantum code. Pre-PoC; milestones M0 to M3 are done. Everything here is measured against cancho compiler revision 3fa3fbb.
+
+## Read first
+- [README](https://github.com/alpibrusl/cancho-quantum/blob/main/README.md): the commands.
+- [Design and must-reject list](https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md): what the checker should refuse, and what it cannot.
+- [M2 results](https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md): the five must-reject entries; four are refused, one is not.
+- [Agent prompt](https://github.com/alpibrusl/cancho-quantum/blob/main/docs/agent-prompt.md): install and try it, no key, no model.
+
+## Facts an agent should not get wrong
+- A `Qubit` is a `res`: it cannot be copied or dropped; `qubit.measure` is the only function that ends one.
+- Refusals carry a stable rule tag: read `cancho check ... --output json`, field `rule`. Do not match on the message.
+- CNOT with one qubit as both operands is accepted by the checker and stops at run time (a trap). Do not report it as a refusal.
+- `Qubit { ... }` can be written directly from any module; `qubit.fresh` is a convention.
+- The aarch64 determinism result is emulation under qemu-user, not arm64 hardware.
+- Circuit text format: `n N`, then `h|x|z|s|t q`, `cx|cz a b`, `rz q num den` (theta = pi*num/den), `seed S`, `m q`, `trig num den`.
+
+## Checks
+- `python3 scripts/check_types.py`: 16 accept/reject fixtures.
+- `python3 scripts/check_diff.py`: amplitudes against Qiskit (needs qiskit, numpy).
+- `python3 scripts/check_determinism.py [--arm64]`: byte-identical output across builds.
+- `python3 scripts/build_site.py --check`: the landing page matches the tools.

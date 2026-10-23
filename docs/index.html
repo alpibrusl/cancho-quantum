@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-quantum: can a compiler refuse to clone a qubit?</title>
+<meta name="description" content="A small quantum state-vector simulator written in cancho, built to find out what a linear-types-and-capabilities language catches in quantum code, and what it does not.">
+<meta property="og:title" content="cancho-quantum: can a compiler refuse to clone a qubit?">
+<meta property="og:description" content="No-cloning as a type error, byte-identical runs, and an honest list of what the checker misses.">
+<meta name="color-scheme" content="light dark">
+<style>
+:root {
+  --bg: #fbfbfd; --fg: #15151c; --muted: #585a68; --line: #e1e2ea; --surface: #ffffff; --soft: #f1f1f7;
+  --accent: #5b3fb0; --accent-fg: #ffffff; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e;
+  --term-bg: #12111a; --term-fg: #dedbea; --term-dim: #8b88a0; --term-good: #5fd3a6; --term-bad: #ff8a80; --term-acc: #b9a4ff;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d0c14; --fg: #e9e8f0; --muted: #a09eb4; --line: #25243a; --surface: #14131f; --soft: #1a1927;
+    --accent: #b9a4ff; --accent-fg: #170f33; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; --term-bg: #0a0910; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 16px; }
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 44rem) { nav a.opt { display: none; } }
+.hero { padding: 3.5rem 0 2rem; text-align: center; }
+.hero h1 { font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.1; margin: 0 auto 1rem; letter-spacing: -.03em; max-width: 20ch; }
+.hero .sub { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 auto 1.6rem; }
+.cta { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-block; padding: .65rem 1.2rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+section { margin: 0; padding: 3rem 0; }
+section.alt { background: var(--soft); }
+h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 .6rem; letter-spacing: -.02em; text-align: center; }
+.lead { text-align: center; color: var(--muted); max-width: 40rem; margin: 0 auto 2rem; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 12px; border: 1px solid var(--line); max-width: 50rem; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.18); overflow: hidden; }
+.term .bar { display: flex; align-items: center; gap: .4rem; padding: .55rem .8rem; border-bottom: 1px solid #25243a; font: .78rem var(--mono); color: var(--term-dim); }
+.term .bar i { width: .7rem; height: .7rem; border-radius: 50%; background: #34324c; display: inline-block; }
+.term .bar button { margin-left: auto; font: .78rem var(--mono); color: var(--term-fg); background: #1d1c2e; border: 1px solid #34324c; border-radius: 6px; padding: .2rem .6rem; cursor: pointer; }
+.term pre { margin: 0; padding: 1rem 1.1rem; min-height: 16rem; overflow-x: auto; font: .82rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .g { color: var(--term-good); } .term .b { color: var(--term-bad); } .term .d { color: var(--term-dim); } .term .a { color: var(--term-acc); }
+.caption { text-align: center; color: var(--muted); font-size: .88rem; max-width: 46rem; margin: .8rem auto 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; }
+.card h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.card ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .95rem; }
+.two { display: grid; grid-template-columns: 1fr; gap: 1rem; max-width: 64rem; margin: 0 auto; }
+@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; text-align: center; }
+.num b { display: block; font-size: 2.3rem; letter-spacing: -.03em; color: var(--accent); }
+.num span { color: var(--muted); font-size: .92rem; }
+.fine { max-width: 46rem; margin: 1.5rem auto 0; color: var(--muted); font-size: .88rem; text-align: center; }
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; font: .85rem/1.5 var(--mono); max-width: 46rem; margin: 0 auto 1rem; }
+pre.code.small { font-size: .78rem; margin: 0; max-width: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.code.err { border-color: var(--bad); }
+section.alt pre.code { background: var(--surface); }
+code { font: .9em var(--mono); }
+table.rules { border-collapse: collapse; margin: 0 auto; font-size: .88rem; max-width: 46rem; width: 100%; }
+table.rules td, table.rules th { border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left; }
+footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .9rem; text-align: center; }
+.promptbox { max-width: 52rem; margin: 0 auto; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.pbar { display: flex; justify-content: space-between; align-items: center; padding: .45rem .8rem; border-bottom: 1px solid var(--line); background: var(--soft); font: .8rem var(--mono); color: var(--muted); }
+.pbar button { font: 600 .8rem var(--font); padding: .25rem .7rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; margin-right: .6rem; }
+.promptbox pre { margin: 0; padding: 1rem; max-height: 26rem; overflow: auto; font: .8rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.gh { text-align: center; margin: 1.6rem 0 .5rem; font-size: 1.15rem; }
+.gallery { list-style: none; margin: 1rem auto 2rem; padding: 0; max-width: 64rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
+.gtile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+.gtile h4 { margin: 0; font-size: 1.05rem; }
+.gtile p { margin: 0; color: var(--muted); font-size: .92rem; overflow-wrap: anywhere; }
+.glinks { display: flex; flex-wrap: wrap; gap: .4rem 1rem; }
+.gtile.soon { border-style: dashed; }
+.badge { display: inline-block; font: 600 .72rem var(--mono); padding: .1rem .5rem; border-radius: 999px; border: 1px solid var(--warn); color: var(--warn); vertical-align: middle; white-space: nowrap; }
+.rule { display: inline-block; margin-top: .3rem; font: 600 .78rem var(--mono); color: var(--bad); }
+svg.bars { width: 100%; height: auto; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; }
+svg.bars .bar { fill: var(--accent); }
+svg.bars .axis { stroke: var(--muted); stroke-width: 1; }
+svg.bars .tick { fill: var(--muted); font: 10px var(--mono); }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href=".">cancho-quantum</a>
+  <nav>
+    <a href="#why">Why</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
+    <a href="https://github.com/alpibrusl/cancho-quantum">GitHub</a>
+  </nav>
+</div></header>
+
+<div class="wrap hero">
+  <h1>Can a compiler refuse to clone a qubit?</h1>
+  <p class="sub">A small quantum simulator written in <a href="https://github.com/alpibrusl/cancho">cancho</a>, built to find out what a language with linear types and capabilities catches in quantum code, and to say plainly what it does not.</p>
+  <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#humans">For humans</a><a class="btn" href="#agents">For agents</a><a class="btn" href="#gallery">Gallery</a></div>
+</div>
+
+<div class="wrap" style="padding-bottom:2.5rem">
+  <div class="term" role="img" aria-label="Replay of real compiler output: three programs refused because a qubit was cloned, dropped, or used after measurement">
+    <div class="bar"><i></i><i></i><i></i> the terminal <button id="replay" type="button">&#8635; replay</button></div>
+    <pre id="screen"></pre>
+  </div>
+  <p class="caption">Real output of the compiler on the fixtures in <code>tests/reject/</code>, replayed. Each refusal has a stable rule tag; an agent reads the tag from <code>--output json</code>, not the sentence. Not a live session.</p>
+</div>
+
+<section class="alt" id="why"><div class="wrap">
+  <h2>What was tried, and what came out</h2>
+  <p class="lead">The idea: qubits are linear resources. The test: write the simulator, then try to write the mistakes, and see which ones the checker stops.</p>
+  <div class="cards">
+    <div class="card"><h3>No-cloning is a type error</h3><p>A <code>Qubit</code> is a <code>res</code>: it cannot be copied, cannot be dropped, and only <code>measure</code> ends it. Cloning, dropping, measuring twice and escaping a borrow are all refused by rules cancho already had. No compiler change was made.</p></div>
+    <div class="card"><h3>Reproducible to the byte</h3><p>25 circuits, each run six ways (interpreted and compiled; Cranelift and LLVM; aarch64 under emulation). The outputs are identical, and their hashes are checked in.</p></div>
+    <div class="card"><h3>A gap, stated up front</h3><p>CNOT with one qubit as both control and target is <em>not</em> refused at check time: it is accepted, and stops at run time. The page lists this, and what would close it, in the gallery.</p></div>
+  </div>
+</div></section>
+
+<section id="humans"><div class="wrap">
+  <h2>For humans</h2>
+  <p class="lead">What this is, what you can do with it today, and how far to trust it.</p>
+  <div class="two">
+    <div class="card"><h3>What you can do</h3>
+      <ul>
+        <li>Run a circuit: write a few lines (<code>h 0</code>, <code>cx 0 1</code>, <code>rz 2 1 4</code>, <code>m 1</code>) and read the amplitudes.</li>
+        <li>Write a typed program with <code>Qubit</code> values and see the checker say no when you clone one.</li>
+        <li>Check the numbers yourself against Qiskit, and the bytes against the checked-in hashes.</li>
+      </ul></div>
+    <div class="card"><h3>How far to trust it</h3>
+      <ul>
+        <li>Amplitudes match Qiskit 2.6.1 to 1.221e-15 on 25 circuits (the gate is 1e-12). Up to 20 qubits.</li>
+        <li>It is a research prototype: one reference implementation, one compiler revision, one machine plus emulation.</li>
+        <li>It is not fast and not a rival to Qiskit Aer or qsim, and does not try to be.</li>
+      </ul></div>
+  </div>
+  <p class="fine">The input is plain text, one operation per line, so a circuit can be hashed and kept beside its reference output:</p>
+<pre class="code">n 2        # two qubits
+h 0        # Hadamard on qubit 0
+cx 0 1     # CNOT, control 0, target 1
+m 0        # measure qubit 0 (seeded, deterministic)</pre>
+</div></section>
+
+<section class="alt" id="agents"><div class="wrap">
+  <h2>For agents</h2>
+  <p class="lead">Everything an agent needs is checked, tagged or hashed. No key, no model, no network after the clone.</p>
+  <div class="two">
+    <div class="card"><h3>Read rule tags, not prose</h3><p>Every refusal has a stable tag in <code>cancho check ... --output json</code>, field <code>rule</code>. The fixtures use these:</p>
+      <table class="rules"><tr><th>rule</th><th>fixture</th></tr>
+      <tr><td><code>linear-use-after-move</code></td><td><code>clone_qubit</code></td></tr>
+      <tr><td><code>linear-value-unconsumed</code></td><td><code>drop_qubit</code></td></tr>
+      <tr><td><code>linear-use-after-move</code></td><td><code>use_after_measure</code></td></tr>
+      <tr><td><code>reference-escapes-region</code></td><td><code>escape_borrow</code></td></tr>
+      <tr><td><code>linear-value-unconsumed</code></td><td><code>measure_in_loop</code></td></tr>
+      <tr><td><code>borrow-conflict</code></td><td><code>two_mutable_borrows</code></td></tr>
+      <tr><td><code>linear-value-taken-apart</code></td><td><code>read_qubit_index</code></td></tr>
+      <tr><td><code>type-mismatch</code></td><td><code>control_written</code></td></tr>
+      </table></div>
+    <div class="card"><h3>What not to get wrong</h3>
+      <ul>
+        <li>Do not fix a refusal by copying a qubit. It cannot be copied; <code>qubit.measure</code> ends it.</li>
+        <li>CNOT on one qubit twice compiles. It is a known gap, not a bug in your setup; do not report it as a refusal.</li>
+        <li><code>Qubit { ... }</code> can be written by hand from any module. That is a known gap too.</li>
+        <li>Do not edit <code>tests/golden/</code> to make a check pass.</li>
+        <li>The aarch64 result is emulation, not hardware.</li>
+      </ul>
+      <p style="margin-top:.6rem"><a href="llms.txt">llms.txt</a> has the short version.</p></div>
+  </div>
+  <h3 class="gh">Ask your coding agent to try it</h3>
+  <p class="lead">Paste this into Claude Code, Codex or any agent that can run commands. It builds the compiler at the measured revision, runs the checks, and has the agent watch a clone get refused.</p>
+  <div class="promptbox">
+    <div class="pbar"><span>prompt</span><span><button type="button" id="copyprompt">Copy</button> <a href="https://raw.githubusercontent.com/alpibrusl/cancho-quantum/main/docs/agent-prompt.md">raw</a></span></div>
+    <pre id="agentprompt">Install cancho-quantum and try it on one small circuit. Work in a new empty directory, keep every path free of spaces, and never use sudo. Run steps 2 to 5 in one shell session. Report honestly; do not retry a failing command in a loop and do not edit the repository to make a command pass.
+
+1. Check that `git`, `cargo` (Rust, via rustup), `python3` and a C linker (`cc`) exist. If one is missing, stop and tell me which; do not install system packages on your own.
+
+2. Get the cancho compiler at the revision this project was measured against, and build it:
+   git clone https://github.com/alpibrusl/cancho.git
+   git -C cancho checkout 3fa3fbb
+   (cd cancho &amp;&amp; cargo build -p cancho)
+   export CANCHO=&quot;$PWD/cancho/target/debug/cancho&quot;
+
+3. Get the simulator:
+   git clone https://github.com/alpibrusl/cancho-quantum.git
+   cd cancho-quantum
+
+4. Run the checks that need no network after the clone:
+   python3 scripts/check_types.py          # every line must say ok; ends &quot;16 of 16 fixtures behave as stated&quot;
+   Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv &amp;&amp; . .venv/bin/activate &amp;&amp; pip install qiskit numpy):
+   python3 scripts/check_diff.py           # amplitudes against Qiskit; ends with the worst error, which must be under 1e-12
+   python3 scripts/check_determinism.py    # six builds per circuit must give identical bytes (omit --arm64 unless qemu-aarch64 is installed)
+
+5. Try the simulator and the checker on your own input:
+   $CANCHO build src/*.cho --std -o qsim
+   printf &#x27;n 2\nh 0\ncx 0 1\n&#x27; | ./qsim     # a Bell state: amp 0 and amp 3 are 7.071067811865475e-1
+   Now make a program that clones a qubit and watch it be refused. Copy tests/reject/clone_qubit.cho, read it, and run:
+   $CANCHO check src/complex.cho src/state.cho src/gates.cho src/measure.cho src/qubit.cho tests/reject/clone_qubit.cho --std ; echo &quot;exit $?&quot;           # expect exit 1
+   $CANCHO check src/complex.cho src/state.cho src/gates.cho src/measure.cho src/qubit.cho tests/reject/clone_qubit.cho --std --output json          # the rule is &quot;linear-use-after-move&quot;
+   Do not fix the refusal by copying the qubit: it cannot be copied. A qubit is ended by `qubit.measure`.
+   Then run tests/accept/same_handle_cx.cho (see its header) and report what happened: it compiles and then stops at run time. That is a known gap, not a bug in your setup.
+
+6. Tell me, briefly:
+   - the exit code and the first line each command printed in step 5;
+   - whether step 4&#x27;s checks passed, and the last line each printed;
+   - anything that failed, with the exact error.
+Docs: README.md (the commands), docs/qubit-types.md (the design and what the checker cannot say), docs/m2-results.md (what was refused and what was not), docs/m3-results.md (determinism).</pre>
+  </div>
+</div></section>
+
+<!-- gallery:start -->
+<section id="gallery"><div class="wrap">
+  <h2>Gallery</h2>
+  <p class="lead">What runs today (every number below comes from running the tools, and a script checks the page has not drifted), what the checker refuses, what it should refuse and does not, and what is planned.</p>
+  <h3 class="gh">Supported: circuits and programs that run</h3>
+<ul class="gallery">
+  <li class="gtile"><h4>Bell pair</h4>
+      <p>H then CNOT. Two amplitudes of 1/&radic;2 and nothing else, matching Qiskit to the last bit.</p>
+      <pre class="code small">n 2
+h 0
+cx 0 1</pre>
+      <svg viewBox="0 0 360 130" role="img" aria-label="Probability of each two-qubit outcome of the Bell state: 00 and 11 at one half, 01 and 10 at zero" class="bars"><line x1="18" y1="112" x2="342" y2="112" class="axis"/><rect x="18.5" y="18.0" width="80.0" height="94.0" class="bar"><title>|00&gt; 0.5000</title></rect><rect x="99.5" y="112.0" width="80.0" height="0.0" class="bar"><title>|01&gt; 0.0000</title></rect><rect x="180.5" y="112.0" width="80.0" height="0.0" class="bar"><title>|10&gt; 0.0000</title></rect><rect x="261.5" y="18.0" width="80.0" height="94.0" class="bar"><title>|11&gt; 0.5000</title></rect><text x="58.5" y="122" text-anchor="middle" class="tick">00</text><text x="139.5" y="122" text-anchor="middle" class="tick">01</text><text x="220.5" y="122" text-anchor="middle" class="tick">10</text><text x="301.5" y="122" text-anchor="middle" class="tick">11</text><text x="18" y="12" class="tick">probability, tallest bar = 0.500</text></svg>
+      <pre class="code small">amp 0 = 0.707107+0.000000i
+amp 3 = 0.707107+0.000000i</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/bell.qc">Circuit</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/bell.ref">Reference</a></p>
+</li>
+  <li class="gtile"><h4>A 5-qubit state, 60 gates</h4>
+      <p>A fixed pseudo-random circuit of H, X, Z, S, T, RZ, CNOT and CZ. Each of its 32 amplitudes is within 2e-16 of Qiskit's.</p>
+      <svg viewBox="0 0 360 130" role="img" aria-label="Probability of each of the 32 five-qubit outcomes after the random circuit" class="bars"><line x1="18" y1="112" x2="342" y2="112" class="axis"/><rect x="18.5" y="95.9" width="9.1" height="16.1" class="bar"><title>|00000&gt; 0.0113</title></rect><rect x="28.6" y="53.5" width="9.1" height="58.5" class="bar"><title>|00001&gt; 0.0409</title></rect><rect x="38.8" y="18.0" width="9.1" height="94.0" class="bar"><title>|00010&gt; 0.0658</title></rect><rect x="48.9" y="102.0" width="9.1" height="10.0" class="bar"><title>|00011&gt; 0.0070</title></rect><rect x="59.0" y="102.0" width="9.1" height="10.0" class="bar"><title>|00100&gt; 0.0070</title></rect><rect x="69.1" y="18.0" width="9.1" height="94.0" class="bar"><title>|00101&gt; 0.0658</title></rect><rect x="79.2" y="53.5" width="9.1" height="58.5" class="bar"><title>|00110&gt; 0.0409</title></rect><rect x="89.4" y="95.9" width="9.1" height="16.1" class="bar"><title>|00111&gt; 0.0113</title></rect><rect x="99.5" y="18.0" width="9.1" height="94.0" class="bar"><title>|01000&gt; 0.0658</title></rect><rect x="109.6" y="102.0" width="9.1" height="10.0" class="bar"><title>|01001&gt; 0.0070</title></rect><rect x="119.8" y="95.9" width="9.1" height="16.1" class="bar"><title>|01010&gt; 0.0113</title></rect><rect x="129.9" y="53.5" width="9.1" height="58.5" class="bar"><title>|01011&gt; 0.0409</title></rect><rect x="140.0" y="53.5" width="9.1" height="58.5" class="bar"><title>|01100&gt; 0.0409</title></rect><rect x="150.1" y="95.9" width="9.1" height="16.1" class="bar"><title>|01101&gt; 0.0113</title></rect><rect x="160.2" y="102.0" width="9.1" height="10.0" class="bar"><title>|01110&gt; 0.0070</title></rect><rect x="170.4" y="18.0" width="9.1" height="94.0" class="bar"><title>|01111&gt; 0.0658</title></rect><rect x="180.5" y="95.9" width="9.1" height="16.1" class="bar"><title>|10000&gt; 0.0113</title></rect><rect x="190.6" y="53.5" width="9.1" height="58.5" class="bar"><title>|10001&gt; 0.0409</title></rect><rect x="200.8" y="18.0" width="9.1" height="94.0" class="bar"><title>|10010&gt; 0.0658</title></rect><rect x="210.9" y="102.0" width="9.1" height="10.0" class="bar"><title>|10011&gt; 0.0070</title></rect><rect x="221.0" y="102.0" width="9.1" height="10.0" class="bar"><title>|10100&gt; 0.0070</title></rect><rect x="231.1" y="18.0" width="9.1" height="94.0" class="bar"><title>|10101&gt; 0.0658</title></rect><rect x="241.2" y="53.5" width="9.1" height="58.5" class="bar"><title>|10110&gt; 0.0409</title></rect><rect x="251.4" y="95.9" width="9.1" height="16.1" class="bar"><title>|10111&gt; 0.0113</title></rect><rect x="261.5" y="18.0" width="9.1" height="94.0" class="bar"><title>|11000&gt; 0.0658</title></rect><rect x="271.6" y="102.0" width="9.1" height="10.0" class="bar"><title>|11001&gt; 0.0070</title></rect><rect x="281.8" y="95.9" width="9.1" height="16.1" class="bar"><title>|11010&gt; 0.0113</title></rect><rect x="291.9" y="53.5" width="9.1" height="58.5" class="bar"><title>|11011&gt; 0.0409</title></rect><rect x="302.0" y="53.5" width="9.1" height="58.5" class="bar"><title>|11100&gt; 0.0409</title></rect><rect x="312.1" y="95.9" width="9.1" height="16.1" class="bar"><title>|11101&gt; 0.0113</title></rect><rect x="322.2" y="102.0" width="9.1" height="10.0" class="bar"><title>|11110&gt; 0.0070</title></rect><rect x="332.4" y="18.0" width="9.1" height="94.0" class="bar"><title>|11111&gt; 0.0658</title></rect><text x="23.1" y="122" text-anchor="middle" class="tick">00000</text><text x="63.6" y="122" text-anchor="middle" class="tick">00100</text><text x="104.1" y="122" text-anchor="middle" class="tick">01000</text><text x="144.6" y="122" text-anchor="middle" class="tick">01100</text><text x="185.1" y="122" text-anchor="middle" class="tick">10000</text><text x="225.6" y="122" text-anchor="middle" class="tick">10100</text><text x="266.1" y="122" text-anchor="middle" class="tick">11000</text><text x="306.6" y="122" text-anchor="middle" class="tick">11100</text><text x="18" y="12" class="tick">probability, tallest bar = 0.066</text></svg>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/random5.qc">Circuit</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/random5.ref">Reference</a></p>
+</li>
+  <li class="gtile"><h4>GHZ on 10 qubits</h4>
+      <p>A state of 1024 amplitudes with exactly 2 non-zero: |0000000000&rang; and |1111111111&rang;, each 0.707107. The same circuit on 20 qubits (a million amplitudes, 16 MiB) runs in a fraction of a second.</p>
+      <pre class="code small">n 10
+h 0
+... 8 more cx
+non-zero: 0, 1023</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/ghz10.qc">Circuit</a></p>
+</li>
+  <li class="gtile"><h4>Bell pair, 200 shots, typed</h4>
+      <p>The linear layer: each shot makes two <code>Qubit</code>s, applies gates through borrows, and ends both with <code>measure</code>. Bits that disagreed: <b>0</b>. Ones: <b>92</b> of 200 (a fact about the seeded sampler; an independent Python copy of the generator gives the same count).</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/bell.cho">Source</a></p>
+</li>
+  <li class="gtile"><h4>Teleportation</h4>
+      <p>Qubit 0 holds an unknown state; measuring it and its Bell partner <em>consumes</em> both, and two classical bits say which of X and Z to apply to qubit 2. Over 80 different states: <b>0</b> failures, all <b>4</b> measurement outcomes seen. With the Z correction deleted the same check fails <b>42</b> of 80, so the check is not vacuous.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/teleport.cho">Source</a></p>
+</li>
+  <li class="gtile"><h4>The same bytes, six ways</h4>
+      <p>Every one of the 25 circuits runs interpreted and as a compiled cancho function, on Cranelift and LLVM (x86-64) and LLVM aarch64 under <code>qemu-user</code>. All six outputs are byte-identical and match the SHA-256 checked in. The aarch64 run is emulation, not arm64 hardware.</p>
+      <pre class="code small">bell
+circuit  6d4def79ca0dd15f...
+output   902c3ef36e909413...
+library  05060d020ad8dd60...</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/golden/provenance.json">Provenance</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Results</a></p>
+</li>
+</ul>
+  <h3 class="gh">Refused: mistakes the checker catches</h3>
+  <p class="lead">Each is a real fixture; the red line is the compiler's own message and the tag under the title is the rule.</p>
+<ul class="gallery">
+  <li class="gtile"><h4>No cloning</h4>
+      <p>Measuring the same qubit twice. The first <code>measure</code> consumes it.<br><span class="rule">linear-use-after-move</span></p>
+      <pre class="code small err">`q` has already been consumed; a `res` value is used exactly once</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/clone_qubit.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>No dropping</h4>
+      <p>A gate borrows the qubit and hands it back, so the function still owes a consumption.<br><span class="rule">linear-value-unconsumed</span></p>
+      <pre class="code small err">`q` is still live here; a `res` value must be consumed on every path</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/drop_qubit.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>Measurement collapses</h4>
+      <p>After <code>measure</code> there is no qubit left to borrow.<br><span class="rule">linear-use-after-move</span></p>
+      <pre class="code small err">`q` has already been consumed; there is nothing left to borrow</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/use_after_measure.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>No escaping a borrow</h4>
+      <p>A reference to a qubit may not outlive the block that borrowed it.<br><span class="rule">reference-escapes-region</span></p>
+      <pre class="code small err">this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/escape_borrow.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>One measurement per qubit</h4>
+      <p><code>measure</code> inside a loop consumes on the first pass and has nothing on the second.<br><span class="rule">linear-value-unconsumed</span></p>
+      <pre class="code small err">`q` is consumed inside this loop; the next iteration would use it again</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/measure_in_loop.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>One gate at a time</h4>
+      <p>No second unique borrow of a qubit while a gate on it is in flight.<br><span class="rule">borrow-conflict</span></p>
+      <pre class="code small err">`q` is already uniquely borrowed; a `&amp;!` reference is the only way to reach a value, so there is at most one</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/two_mutable_borrows.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>No peeking at identity</h4>
+      <p>The index of an owned qubit cannot be read out of it.<br><span class="rule">linear-value-taken-apart</span></p>
+      <pre class="code small err">`Qubit` is `res`, so a field cannot be read out of it; take the whole value apart with a destructuring `let` (a non-owning read is a borrow, which is §5)</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/read_qubit_index.cho">Fixture</a></p>
+</li>
+  <li class="gtile"><h4>Control is read, target is written</h4>
+      <p>A control borrowed shared cannot stand where the operand to change is expected.<br><span class="rule">type-mismatch</span></p>
+      <pre class="code small err">expected a unique reference `&amp;!`, found a shared one `&amp;`</pre>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/control_written.cho">Fixture</a></p>
+</li>
+</ul>
+  <h3 class="gh">Accepted, and should not be</h3>
+  <p class="lead">Pinned as passing fixtures so that the day a rule refuses them, the build goes red.</p>
+<ul class="gallery">
+  <li class="gtile"><h4>CNOT with one qubit as both operands</h4>
+      <p>Accepted by the checker (compiles: <b>yes</b>), because a unique borrow is a copyable pointer. It stops at run time instead, with a trap (signal 4, SIGILL, on Linux). Two more ways to the same program are pinned the same way: a copied handle, and two qubits with the same index.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/same_handle_cx.cho">Fixture</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md">Why</a></p>
+</li>
+  <li class="gtile"><h4>Forging a qubit</h4>
+      <p>A <code>pub res struct</code> can be built and taken apart from any module, so &ldquo;only <code>fresh</code> makes qubits&rdquo; is a convention. The page does not hide this: it is a request to the compiler, not a flaw of the simulator.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/forged_qubit.cho">Fixture</a></p>
+</li>
+</ul>
+  <h3 class="gh">Planned</h3>
+  <p class="lead">Not built, and not promised for any date. Each tile says what is missing.</p>
+<ul class="gallery">
+  <li class="gtile soon"><h4>A Qpu capability <span class="badge">Needs the compiler</span></h4>
+      <p>Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Plan</a></p>
+</li>
+  <li class="gtile soon"><h4>Refuse CNOT(q, q) at check time <span class="badge">Needs the compiler</span></h4>
+      <p>A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho/pull/608">Design</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md">Asker</a></p>
+</li>
+  <li class="gtile soon"><h4>Private constructors <span class="badge">Needs the compiler</span></h4>
+      <p>So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho/pull/608">Design</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/forged_qubit.cho">Asker</a></p>
+</li>
+  <li class="gtile soon"><h4>OpenQASM in and out <span class="badge">Planned</span></h4>
+      <p>Emit first, parse later. The circuit format today is a stand-in.</p>
+</li>
+  <li class="gtile soon"><h4>A second reference, Cirq <span class="badge">Planned</span></h4>
+      <p>Qiskit is the only reference so far. A second one would catch a convention both share.</p>
+</li>
+  <li class="gtile soon"><h4>Real arm64 hardware <span class="badge">Planned</span></h4>
+      <p>The aarch64 result is emulation. A run on a real arm64 machine is still owed.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Results</a></p>
+</li>
+  <li class="gtile soon"><h4>A cloud quantum service <span class="badge">Later</span></h4>
+      <p>Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.</p>
+</li>
+  <li class="gtile soon"><h4>Adjoint and controlled gates <span class="badge">Not possible yet</span></h4>
+      <p>Not possible today: cancho has no function values, so a gate cannot be passed to a transform. Circuits stay data.</p>
+</li>
+  <li class="gtile soon"><h4>A GPU backend <span class="badge">Out of scope</span></h4>
+      <p>Out of scope until cancho-gpu exists. A state vector of 20 qubits is fine on one CPU core.</p>
+</li>
+</ul>
+</div></section>
+<!-- gallery:end -->
+
+<section class="alt" id="measured"><div class="wrap">
+  <h2>Measured, not promised</h2>
+  <p class="lead">What the repository can show today.</p>
+  <div class="nums">
+    <div class="num"><b>1.221e-15</b><span>worst amplitude error against Qiskit over 25 circuits (gate: 1e-12)</span></div>
+    <div class="num"><b>1 ulp</b><span>worst distance of <code>sin</code>/<code>cos</code> from the C library on the angles tested</span></div>
+    <div class="num"><b>16 / 16</b><span>accept and reject fixtures behave as stated</span></div>
+    <div class="num"><b>25 &times; 6</b><span>circuits &times; builds, all byte-identical</span></div>
+  </div>
+  <p class="fine">Not measured: arm64 hardware (the aarch64 runs are emulation), a second reference such as Cirq, anything above 20 qubits, and whether an agent writes better quantum code with these refusals than without. Timings in <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m1-results.md">m1-results.md</a> are single runs on one machine.</p>
+</div></section>
+
+<section id="try"><div class="wrap">
+  <h2>Try it</h2>
+  <p class="lead">You need a Rust toolchain (to build the compiler) and Python 3. The compiler revision matters: rule tags can change between revisions.</p>
+<pre class="code"><code>git clone https://github.com/alpibrusl/cancho.git &amp;&amp; git -C cancho checkout 3fa3fbb
+(cd cancho &amp;&amp; cargo build -p cancho)
+git clone https://github.com/alpibrusl/cancho-quantum.git &amp;&amp; cd cancho-quantum
+export CANCHO=../cancho/target/debug/cancho
+$CANCHO build src/*.cho --std -o qsim
+printf 'n 2\nh 0\ncx 0 1\n' | ./qsim
+python3 scripts/check_types.py</code></pre>
+</div></section>
+
+<section class="alt"><div class="wrap">
+  <h2>Go deeper</h2>
+  <div class="cards">
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Design</a></h3><p>The mapping from quantum facts to checks, and what the checker cannot say.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md">The must-reject list</a></h3><p>Five entries, four refused, one not, and why.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Determinism</a></h3><p>Six builds, one set of bytes, and what the emulation does not show.</p></div>
+  </div>
+</div></section>
+<footer><div class="wrap">cancho-quantum &middot; part of the <a href="https://github.com/alpibrusl/cancho">cancho</a> ecosystem &middot; <a href="https://github.com/alpibrusl/cancho-ui">cancho-ui</a> is its sibling for interfaces</div></footer>
+<script>
+(function () {
+  var screen = document.getElementById("screen");
+  var script = [[["d", "$ cancho check src/*.cho tests/reject/clone_qubit.cho --std"], ["b", "error: `q` has already been consumed; a `res` value is used exactly once"], ["d", "  rule: linear-use-after-move"]], [["d", "$ cancho check src/*.cho tests/reject/drop_qubit.cho --std"], ["b", "error: `q` is still live here; a `res` value must be consumed on every path"], ["d", "  rule: linear-value-unconsumed"]], [["d", "$ cancho check src/*.cho tests/reject/use_after_measure.cho --std"], ["b", "error: `q` has already been consumed; there is nothing left to borrow"], ["d", "  rule: linear-use-after-move"]]];
+  var timer = null;
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  function play() {
+    if (timer) clearTimeout(timer);
+    screen.innerHTML = "";
+    var flat = [];
+    script.forEach(function (block, bi) { block.forEach(function (l) { flat.push(l); }); flat.push(["d", ""]); });
+    var i = 0;
+    (function next() {
+      if (i >= flat.length) return;
+      var l = flat[i++];
+      screen.innerHTML += '<span class="' + l[0] + '">' + esc(l[1]) + "</span>\n";
+      timer = setTimeout(next, l[0] === "d" && l[1].charAt(0) === "$" ? 700 : 350);
+    })();
+  }
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    script.forEach(function (b) { b.forEach(function (l) { screen.innerHTML += '<span class="' + l[0] + '">' + esc(l[1]) + "</span>\n"; }); screen.innerHTML += "\n"; });
+  } else { play(); }
+  document.getElementById("replay").addEventListener("click", play);
+  var btn = document.getElementById("copyprompt");
+  btn.addEventListener("click", function () {
+    var t = document.getElementById("agentprompt").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(
+      function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); },
+      function () { var r = document.createRange(); r.selectNodeContents(document.getElementById("agentprompt")); var s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected"; });
+  });
+})();
+</script>
+</body>
+</html>

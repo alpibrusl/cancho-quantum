@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-quantum: can a compiler refuse to clone a qubit?</title>
+<meta name="description" content="A small quantum state-vector simulator written in cancho, built to find out what a linear-types-and-capabilities language catches in quantum code, and what it does not.">
+<meta property="og:title" content="cancho-quantum: can a compiler refuse to clone a qubit?">
+<meta property="og:description" content="No-cloning as a type error, byte-identical runs, and an honest list of what the checker misses.">
+<meta name="color-scheme" content="light dark">
+<style>
+:root {
+  --bg: #fbfbfd; --fg: #15151c; --muted: #585a68; --line: #e1e2ea; --surface: #ffffff; --soft: #f1f1f7;
+  --accent: #5b3fb0; --accent-fg: #ffffff; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e;
+  --term-bg: #12111a; --term-fg: #dedbea; --term-dim: #8b88a0; --term-good: #5fd3a6; --term-bad: #ff8a80; --term-acc: #b9a4ff;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d0c14; --fg: #e9e8f0; --muted: #a09eb4; --line: #25243a; --surface: #14131f; --soft: #1a1927;
+    --accent: #b9a4ff; --accent-fg: #170f33; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; --term-bg: #0a0910; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 16px; }
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 44rem) { nav a.opt { display: none; } }
+.hero { padding: 3.5rem 0 2rem; text-align: center; }
+.hero h1 { font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.1; margin: 0 auto 1rem; letter-spacing: -.03em; max-width: 20ch; }
+.hero .sub { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 auto 1.6rem; }
+.cta { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-block; padding: .65rem 1.2rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+section { margin: 0; padding: 3rem 0; }
+section.alt { background: var(--soft); }
+h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 .6rem; letter-spacing: -.02em; text-align: center; }
+.lead { text-align: center; color: var(--muted); max-width: 40rem; margin: 0 auto 2rem; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 12px; border: 1px solid var(--line); max-width: 50rem; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.18); overflow: hidden; }
+.term .bar { display: flex; align-items: center; gap: .4rem; padding: .55rem .8rem; border-bottom: 1px solid #25243a; font: .78rem var(--mono); color: var(--term-dim); }
+.term .bar i { width: .7rem; height: .7rem; border-radius: 50%; background: #34324c; display: inline-block; }
+.term .bar button { margin-left: auto; font: .78rem var(--mono); color: var(--term-fg); background: #1d1c2e; border: 1px solid #34324c; border-radius: 6px; padding: .2rem .6rem; cursor: pointer; }
+.term pre { margin: 0; padding: 1rem 1.1rem; min-height: 16rem; overflow-x: auto; font: .82rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .g { color: var(--term-good); } .term .b { color: var(--term-bad); } .term .d { color: var(--term-dim); } .term .a { color: var(--term-acc); }
+.caption { text-align: center; color: var(--muted); font-size: .88rem; max-width: 46rem; margin: .8rem auto 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; }
+.card h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.card ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .95rem; }
+.two { display: grid; grid-template-columns: 1fr; gap: 1rem; max-width: 64rem; margin: 0 auto; }
+@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; text-align: center; }
+.num b { display: block; font-size: 2.3rem; letter-spacing: -.03em; color: var(--accent); }
+.num span { color: var(--muted); font-size: .92rem; }
+.fine { max-width: 46rem; margin: 1.5rem auto 0; color: var(--muted); font-size: .88rem; text-align: center; }
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; font: .85rem/1.5 var(--mono); max-width: 46rem; margin: 0 auto 1rem; }
+pre.code.small { font-size: .78rem; margin: 0; max-width: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.code.err { border-color: var(--bad); }
+section.alt pre.code { background: var(--surface); }
+code { font: .9em var(--mono); }
+table.rules { border-collapse: collapse; margin: 0 auto; font-size: .88rem; max-width: 46rem; width: 100%; }
+table.rules td, table.rules th { border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left; }
+footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .9rem; text-align: center; }
+.promptbox { max-width: 52rem; margin: 0 auto; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.pbar { display: flex; justify-content: space-between; align-items: center; padding: .45rem .8rem; border-bottom: 1px solid var(--line); background: var(--soft); font: .8rem var(--mono); color: var(--muted); }
+.pbar button { font: 600 .8rem var(--font); padding: .25rem .7rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; margin-right: .6rem; }
+.promptbox pre { margin: 0; padding: 1rem; max-height: 26rem; overflow: auto; font: .8rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.gh { text-align: center; margin: 1.6rem 0 .5rem; font-size: 1.15rem; }
+.gallery { list-style: none; margin: 1rem auto 2rem; padding: 0; max-width: 64rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
+.gtile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+.gtile h4 { margin: 0; font-size: 1.05rem; }
+.gtile p { margin: 0; color: var(--muted); font-size: .92rem; overflow-wrap: anywhere; }
+.glinks { display: flex; flex-wrap: wrap; gap: .4rem 1rem; }
+.gtile.soon { border-style: dashed; }
+.badge { display: inline-block; font: 600 .72rem var(--mono); padding: .1rem .5rem; border-radius: 999px; border: 1px solid var(--warn); color: var(--warn); vertical-align: middle; white-space: nowrap; }
+.rule { display: inline-block; margin-top: .3rem; font: 600 .78rem var(--mono); color: var(--bad); }
+svg.bars { width: 100%; height: auto; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; }
+svg.bars .bar { fill: var(--accent); }
+svg.bars .axis { stroke: var(--muted); stroke-width: 1; }
+svg.bars .tick { fill: var(--muted); font: 10px var(--mono); }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href=".">cancho-quantum</a>
+  <nav>
+    <a href="#why">Why</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
+    <a href="https://github.com/alpibrusl/cancho-quantum">GitHub</a>
+  </nav>
+</div></header>
+
+<div class="wrap hero">
+  <h1>Can a compiler refuse to clone a qubit?</h1>
+  <p class="sub">A small quantum simulator written in <a href="https://github.com/alpibrusl/cancho">cancho</a>, built to find out what a language with linear types and capabilities catches in quantum code, and to say plainly what it does not.</p>
+  <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#humans">For humans</a><a class="btn" href="#agents">For agents</a><a class="btn" href="#gallery">Gallery</a></div>
+</div>
+
+<div class="wrap" style="padding-bottom:2.5rem">
+  <div class="term" role="img" aria-label="Replay of real compiler output: three programs refused because a qubit was cloned, dropped, or used after measurement">
+    <div class="bar"><i></i><i></i><i></i> the terminal <button id="replay" type="button">&#8635; replay</button></div>
+    <pre id="screen"></pre>
+  </div>
+  <p class="caption">Real output of the compiler on the fixtures in <code>tests/reject/</code>, replayed. Each refusal has a stable rule tag; an agent reads the tag from <code>--output json</code>, not the sentence. Not a live session.</p>
+</div>
+
+<section class="alt" id="why"><div class="wrap">
+  <h2>What was tried, and what came out</h2>
+  <p class="lead">The idea: qubits are linear resources. The test: write the simulator, then try to write the mistakes, and see which ones the checker stops.</p>
+  <div class="cards">
+    <div class="card"><h3>No-cloning is a type error</h3><p>A <code>Qubit</code> is a <code>res</code>: it cannot be copied, cannot be dropped, and only <code>measure</code> ends it. Cloning, dropping, measuring twice and escaping a borrow are all refused by rules cancho already had. No compiler change was made.</p></div>
+    <div class="card"><h3>Reproducible to the byte</h3><p>{{N_GOLDEN}} circuits, each run six ways (interpreted and compiled; Cranelift and LLVM; aarch64 under emulation). The outputs are identical, and their hashes are checked in.</p></div>
+    <div class="card"><h3>A gap, stated up front</h3><p>CNOT with one qubit as both control and target is <em>not</em> refused at check time: it is accepted, and stops at run time. The page lists this, and what would close it, in the gallery.</p></div>
+  </div>
+</div></section>
+
+<section id="humans"><div class="wrap">
+  <h2>For humans</h2>
+  <p class="lead">What this is, what you can do with it today, and how far to trust it.</p>
+  <div class="two">
+    <div class="card"><h3>What you can do</h3>
+      <ul>
+        <li>Run a circuit: write a few lines (<code>h 0</code>, <code>cx 0 1</code>, <code>rz 2 1 4</code>, <code>m 1</code>) and read the amplitudes.</li>
+        <li>Write a typed program with <code>Qubit</code> values and see the checker say no when you clone one.</li>
+        <li>Check the numbers yourself against Qiskit, and the bytes against the checked-in hashes.</li>
+      </ul></div>
+    <div class="card"><h3>How far to trust it</h3>
+      <ul>
+        <li>Amplitudes match Qiskit 2.6.1 to {{WORST}} on {{N_CIRCUITS}} circuits (the gate is 1e-12). Up to 20 qubits.</li>
+        <li>It is a research prototype: one reference implementation, one compiler revision, one machine plus emulation.</li>
+        <li>It is not fast and not a rival to Qiskit Aer or qsim, and does not try to be.</li>
+      </ul></div>
+  </div>
+  <p class="fine">The input is plain text, one operation per line, so a circuit can be hashed and kept beside its reference output:</p>
+<pre class="code">n 2        # two qubits
+h 0        # Hadamard on qubit 0
+cx 0 1     # CNOT, control 0, target 1
+m 0        # measure qubit 0 (seeded, deterministic)</pre>
+</div></section>
+
+<section class="alt" id="agents"><div class="wrap">
+  <h2>For agents</h2>
+  <p class="lead">Everything an agent needs is checked, tagged or hashed. No key, no model, no network after the clone.</p>
+  <div class="two">
+    <div class="card"><h3>Read rule tags, not prose</h3><p>Every refusal has a stable tag in <code>cancho check ... --output json</code>, field <code>rule</code>. The fixtures use these:</p>
+      <table class="rules"><tr><th>rule</th><th>fixture</th></tr>
+{{REJECT_TABLE}}
+      </table></div>
+    <div class="card"><h3>What not to get wrong</h3>
+      <ul>
+        <li>Do not fix a refusal by copying a qubit. It cannot be copied; <code>qubit.measure</code> ends it.</li>
+        <li>CNOT on one qubit twice compiles. It is a known gap, not a bug in your setup; do not report it as a refusal.</li>
+        <li><code>Qubit { ... }</code> can be written by hand from any module. That is a known gap too.</li>
+        <li>Do not edit <code>tests/golden/</code> to make a check pass.</li>
+        <li>The aarch64 result is emulation, not hardware.</li>
+      </ul>
+      <p style="margin-top:.6rem"><a href="llms.txt">llms.txt</a> has the short version.</p></div>
+  </div>
+  <h3 class="gh">Ask your coding agent to try it</h3>
+  <p class="lead">Paste this into Claude Code, Codex or any agent that can run commands. It builds the compiler at the measured revision, runs the checks, and has the agent watch a clone get refused.</p>
+  <div class="promptbox">
+    <div class="pbar"><span>prompt</span><span><button type="button" id="copyprompt">Copy</button> <a href="https://raw.githubusercontent.com/alpibrusl/cancho-quantum/main/docs/agent-prompt.md">raw</a></span></div>
+    <pre id="agentprompt">{{AGENT_PROMPT}}</pre>
+  </div>
+</div></section>
+
+<!-- gallery:start -->
+<section id="gallery"><div class="wrap">
+  <h2>Gallery</h2>
+  <p class="lead">What runs today (every number below comes from running the tools, and a script checks the page has not drifted), what the checker refuses, what it should refuse and does not, and what is planned.</p>
+  <h3 class="gh">Supported: circuits and programs that run</h3>
+{{GAL_SUPPORTED}}
+  <h3 class="gh">Refused: mistakes the checker catches</h3>
+  <p class="lead">Each is a real fixture; the red line is the compiler's own message and the tag under the title is the rule.</p>
+{{GAL_REFUSED}}
+  <h3 class="gh">Accepted, and should not be</h3>
+  <p class="lead">Pinned as passing fixtures so that the day a rule refuses them, the build goes red.</p>
+{{GAL_GAPS}}
+  <h3 class="gh">Planned</h3>
+  <p class="lead">Not built, and not promised for any date. Each tile says what is missing.</p>
+{{GAL_PLANNED}}
+</div></section>
+<!-- gallery:end -->
+
+<section class="alt" id="measured"><div class="wrap">
+  <h2>Measured, not promised</h2>
+  <p class="lead">What the repository can show today.</p>
+  <div class="nums">
+    <div class="num"><b>{{WORST}}</b><span>worst amplitude error against Qiskit over {{N_CIRCUITS}} circuits (gate: 1e-12)</span></div>
+    <div class="num"><b>{{ULP}} ulp</b><span>worst distance of <code>sin</code>/<code>cos</code> from the C library on the angles tested</span></div>
+    <div class="num"><b>{{FIX_OK}} / {{FIX_ALL}}</b><span>accept and reject fixtures behave as stated</span></div>
+    <div class="num"><b>{{N_GOLDEN}} &times; 6</b><span>circuits &times; builds, all byte-identical</span></div>
+  </div>
+  <p class="fine">Not measured: arm64 hardware (the aarch64 runs are emulation), a second reference such as Cirq, anything above 20 qubits, and whether an agent writes better quantum code with these refusals than without. Timings in <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m1-results.md">m1-results.md</a> are single runs on one machine.</p>
+</div></section>
+
+<section id="try"><div class="wrap">
+  <h2>Try it</h2>
+  <p class="lead">You need a Rust toolchain (to build the compiler) and Python 3. The compiler revision matters: rule tags can change between revisions.</p>
+<pre class="code"><code>git clone https://github.com/alpibrusl/cancho.git &amp;&amp; git -C cancho checkout 3fa3fbb
+(cd cancho &amp;&amp; cargo build -p cancho)
+git clone https://github.com/alpibrusl/cancho-quantum.git &amp;&amp; cd cancho-quantum
+export CANCHO=../cancho/target/debug/cancho
+$CANCHO build src/*.cho --std -o qsim
+printf 'n 2\nh 0\ncx 0 1\n' | ./qsim
+python3 scripts/check_types.py</code></pre>
+</div></section>
+
+<section class="alt"><div class="wrap">
+  <h2>Go deeper</h2>
+  <div class="cards">
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Design</a></h3><p>The mapping from quantum facts to checks, and what the checker cannot say.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md">The must-reject list</a></h3><p>Five entries, four refused, one not, and why.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Determinism</a></h3><p>Six builds, one set of bytes, and what the emulation does not show.</p></div>
+  </div>
+</div></section>
+<footer><div class="wrap">cancho-quantum &middot; part of the <a href="https://github.com/alpibrusl/cancho">cancho</a> ecosystem &middot; <a href="https://github.com/alpibrusl/cancho-ui">cancho-ui</a> is its sibling for interfaces</div></footer>
+<script>
+(function () {
+  var screen = document.getElementById("screen");
+  var script = {{TERMINAL}};
+  var timer = null;
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  function play() {
+    if (timer) clearTimeout(timer);
+    screen.innerHTML = "";
+    var flat = [];
+    script.forEach(function (block, bi) { block.forEach(function (l) { flat.push(l); }); flat.push(["d", ""]); });
+    var i = 0;
+    (function next() {
+      if (i >= flat.length) return;
+      var l = flat[i++];
+      screen.innerHTML += '<span class="' + l[0] + '">' + esc(l[1]) + "</span>\n";
+      timer = setTimeout(next, l[0] === "d" && l[1].charAt(0) === "$" ? 700 : 350);
+    })();
+  }
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    script.forEach(function (b) { b.forEach(function (l) { screen.innerHTML += '<span class="' + l[0] + '">' + esc(l[1]) + "</span>\n"; }); screen.innerHTML += "\n"; });
+  } else { play(); }
+  document.getElementById("replay").addEventListener("click", play);
+  var btn = document.getElementById("copyprompt");
+  btn.addEventListener("click", function () {
+    var t = document.getElementById("agentprompt").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(
+      function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); },
+      function () { var r = document.createRange(); r.selectNodeContents(document.getElementById("agentprompt")); var s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected"; });
+  });
+})();
+</script>
+</body>
+</html>
