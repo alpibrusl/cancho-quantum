@@ -77,6 +77,12 @@ pub fn pi() -> [] float {
     return 3.141592653589793;
 }
 
+// An angle is `pi * num / den`, evaluated in that order, so a reference
+// implementation can compute the identical double.
+pub fn angle(num: int, den: int) -> [] float {
+    return pi() * float_of(num) / float_of(den);
+}
+
 // X swaps the two amplitudes that differ in qubit `q`.
 pub fn x[&s](st: &!s [float], n: int, q: int) -> [] int {
     in_range(n, q);

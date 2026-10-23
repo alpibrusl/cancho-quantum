@@ -23,12 +23,11 @@
 // Floats are the shortest decimal that reads back to the same bits
 // (`std.fmt.float_into`), so the reader recovers the exact double.
 
+import qc.dump;
 import qc.gates;
 import qc.measure;
 import qc.state;
-import std.fmt;
 import std.io;
-import std.math;
 
 fn is_space(c: int) -> [] bool {
     return c == 32 || c == 10 || c == 13 || c == 9;
@@ -70,15 +69,6 @@ fn read_int[&i](io: &!i Io) -> [io_read] int {
     return sign * v;
 }
 
-fn put_float[&i, &b](io: &!i Io, scratch: &!b [byte], x: float) -> [io_write] int {
-    let k = fmt.float_into(scratch, x);
-    return io.write_all(io, scratch[0..k]);
-}
-
-fn angle(num: int, den: int) -> [] float {
-    return gates.pi() * float_of(num) / float_of(den);
-}
-
 // Run every operation on the state and answer the number executed.
 fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int], scratch: &!b [byte]) -> [io_read, io_write] int {
     var ops = 0;
@@ -106,28 +96,19 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
             let q = read_int(io);
             let num = read_int(io);
             let den = read_int(io);
-            gates.rz(st, n, q, angle(num, den));
+            gates.rz(st, n, q, gates.angle(num, den));
         } else if w == 1936024932 {
             rng[0] = read_int(io);
         } else if w == 109 {
             let q = read_int(io);
             let bit = measure.measure(st, n, q, rng);
-            io.write_all(io, "m ");
-            io.print_int(io, q);
-            io.write_all(io, " ");
-            io.print_int(io, bit);
-            io.newline(io);
+            dump.measurement(io, q, bit);
         } else if w == 487301145972 {
             rng[1] = 1;
         } else if w == 1953655143 {
             let num = read_int(io);
             let den = read_int(io);
-            let half = angle(num, den) * 0.5;
-            io.write_all(io, "trig ");
-            put_float(io, scratch, math.cos(half));
-            io.write_all(io, " ");
-            put_float(io, scratch, math.sin(half));
-            io.newline(io);
+            dump.trig(io, scratch, num, den);
         } else {
             return 0 - 1;
         }
@@ -161,19 +142,8 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
             if interpret(io, st, n, rng, scratch) < 0 {
                 status = 2;
             }
-            var k = 0;
-            if rng[1] != 0 {
-                k = state.amplitudes_for(n);
-            }
-            while k < state.amplitudes_for(n) {
-                io.write_all(io, "amp ");
-                io.print_int(io, k);
-                io.write_all(io, " ");
-                put_float(io, scratch, st[2 * k]);
-                io.write_all(io, " ");
-                put_float(io, scratch, st[2 * k + 1]);
-                io.newline(io);
-                k = k + 1;
+            if rng[1] == 0 {
+                dump.amplitudes(io, st, n, scratch);
             }
         }
     }
