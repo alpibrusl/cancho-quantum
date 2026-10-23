@@ -297,9 +297,6 @@ Caveats on the probes. They run `cancho check`, not `cancho run`; they show
 what is accepted, not what the program does. Probe 5's refusal is
 reported at the `return`; a separate probe that copies a `val` field out of
 the reference (`k = y.idx`) is correctly accepted, because an `int` is not
-a reference, and is not an escape. The rule tags in §4 are taken from the
-corresponding compiler fixtures
-(`tests/reject/use_after_move.cho`, `unconsumed_at_scope_end.cho`,
-`borrow_after_move.cho`, `reference_escapes_borrow.cho`), not from the
-tag printed by `check`, which the plain-text output does not show; M2 must
-confirm each against `--output json` before pinning it.
+a reference, and is not an escape. The rule tags in §4 were read from
+`cancho check --output json` on probes 1, 2, 3 and 5 (the `"rule"`
+field); the plain-text output does not print them.
