@@ -30,7 +30,8 @@ import sys
 
 import numpy as np
 import qiskit
-from qiskit.circuit.library import CXGate, CZGate, HGate, RZGate, SGate, TGate, XGate, ZGate
+from qiskit.circuit.library import (CCXGate, CPhaseGate, CXGate, CZGate, HGate, PhaseGate, RXGate, RYGate, RZGate,
+                                    SdgGate, SGate, SwapGate, TdgGate, TGate, XGate, YGate, ZGate)
 from qiskit.quantum_info import Statevector
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "diff")
@@ -65,9 +66,31 @@ def reference(n, ops):
     lines = []
     for op in ops:
         name, args = op[0], op[1:]
-        if name in ("h", "x", "z", "s", "t"):
-            gate = {"h": HGate, "x": XGate, "z": ZGate, "s": SGate, "t": TGate}[name]()
+        if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
+            gate = {"h": HGate, "x": XGate, "y": YGate, "z": ZGate, "s": SGate, "t": TGate, "sdg": SdgGate, "tdg": TdgGate}[name]()
             sv = sv.evolve(gate, qargs=[args[0]])
+        elif name == "swap":
+            sv = sv.evolve(SwapGate(), qargs=[args[0], args[1]])
+        elif name == "ccx":
+            sv = sv.evolve(CCXGate(), qargs=[args[0], args[1], args[2]])
+        elif name in ("rx", "ry", "p"):
+            gate = {"rx": RXGate, "ry": RYGate, "p": PhaseGate}[name](angle(args[1], args[2]))
+            sv = sv.evolve(gate, qargs=[args[0]])
+        elif name == "cp":
+            sv = sv.evolve(CPhaseGate(angle(args[2], args[3])), qargs=[args[0], args[1]])
+        elif name == "sample":
+            # An independent method: a cumulative sum and a binary search, where
+            # the simulator adds up probabilities one state at a time.
+            probs = np.abs(np.array(sv.data)) ** 2
+            cum = np.cumsum(probs)
+            last = int(np.nonzero(probs)[0][-1])
+            picks = []
+            for _ in range(args[0]):
+                u = rng.next()
+                k = int(np.searchsorted(cum, u, side="right"))
+                picks.append(k if k < len(cum) and probs[k] > 0 else last)
+            for k in sorted(set(picks)):
+                lines.append(f"sample {k:0{n}b} {picks.count(k)}")
         elif name == "cx":
             sv = sv.evolve(CXGate(), qargs=[args[0], args[1]])
         elif name == "cz":
@@ -119,6 +142,43 @@ def random_circuit(rng, n, count):
     return ops
 
 
+def feature_circuits():
+    """Circuits that use the gates and `sample` added after M3: algorithms with a known answer."""
+    c = {}
+    c["gates_extra"] = (3, [("h", 0), ("y", 1), ("rx", 0, 1, 3), ("ry", 2, 2, 5), ("p", 1, 1, 7), ("sdg", 0), ("tdg", 1),
+                            ("swap", 0, 2), ("cp", 1, 2, 3, 8), ("ccx", 0, 1, 2), ("h", 1), ("rx", 2, -3, 4)])
+    c["toffoli"] = (3, [("x", 0), ("x", 1), ("ccx", 0, 1, 2)])
+    c["rx_ry_sweep"] = (1, [op for k in (1, 3, 7, 11, 31, 100) for op in (("rx", 0, k, 5), ("ry", 0, -k, 7), ("p", 0, k, 3))])
+    # Quantum Fourier transform of |5> on 4 qubits (QFT = H and controlled phases, then reversal).
+    qft = [("x", 0), ("x", 2)]
+    for j in range(3, -1, -1):
+        qft.append(("h", j))
+        for k in range(j - 1, -1, -1):
+            qft.append(("cp", k, j, 1, 2 ** (j - k)))
+    qft += [("swap", 0, 3), ("swap", 1, 2)]
+    c["qft4"] = (4, qft)
+    # Grover on 3 qubits, marked item 101 (= 5), two iterations. After them the marked
+    # item has probability about 0.945; `sample` shows it.
+    g = [("h", q) for q in range(3)]
+    for _ in range(2):
+        g += [("x", 1), ("h", 2), ("ccx", 0, 1, 2), ("h", 2), ("x", 1)]       # oracle: phase-flip |101>
+        g += [("h", q) for q in range(3)] + [("x", q) for q in range(3)]       # diffuser
+        g += [("h", 2), ("ccx", 0, 1, 2), ("h", 2)]
+        g += [("x", q) for q in range(3)] + [("h", q) for q in range(3)]
+    g += [("seed", 2026), ("sample", 1000)]
+    c["grover3"] = (3, g)
+    # Bernstein-Vazirani, secret 1011 on 4 qubits plus an ancilla (qubit 4).
+    bv = [("x", 4)] + [("h", q) for q in range(5)] + [("cx", q, 4) for q in range(4) if (0b1011 >> q) & 1]
+    bv += [("h", q) for q in range(4)] + [("seed", 7), ("sample", 200)]
+    c["bernstein_vazirani"] = (5, bv)
+    # Deutsch-Jozsa, a balanced oracle (parity of qubits 0 and 2) on 3 qubits plus an ancilla.
+    dj = [("x", 3)] + [("h", q) for q in range(4)] + [("cx", 0, 3), ("cx", 2, 3)] + [("h", q) for q in range(3)]
+    dj += [("seed", 11), ("sample", 100)]
+    c["deutsch_jozsa"] = (4, dj)
+    c["ghz5_sample"] = (5, [("h", 0)] + [("cx", i, i + 1) for i in range(4)] + [("seed", 5), ("sample", 500)])
+    return c
+
+
 def circuits():
     c = {}
     c["bell"] = (2, [("h", 0), ("cx", 0, 1)])
@@ -143,6 +203,7 @@ def circuits():
     trig = [("trig", num, den) for num in (1, 3, 7, 31, 100, 997, 12345, 99991, 500000, 999983, 4000000)
             for den in (1, 2, 3, 5, 8, 16, 97)]
     c["trig"] = (1, trig)
+    c.update(feature_circuits())
     # The unitary half of teleportation (the landing page steps through it):
     # prepare a state on qubit 0, entangle 1 and 2, then rotate 0 and 1 into the Bell basis.
     c["teleport_unitary"] = (3, [("h", 0), ("rz", 0, 1, 3), ("h", 1), ("cx", 1, 2), ("cx", 0, 1), ("h", 0)])

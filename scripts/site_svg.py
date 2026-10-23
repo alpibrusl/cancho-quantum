@@ -16,7 +16,7 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
-def circuit_svg(n, ops, label, current=None):
+def circuit_svg(n, ops, label, current=None, natural=False):
     """A circuit diagram. `ops` are tuples like ('h', 0), ('cx', 0, 1), ('rz', 0, 1, 3), ('m', 0).
 
     `current` highlights one op index (the stepper uses it from JS by id)."""
@@ -25,7 +25,8 @@ def circuit_svg(n, ops, label, current=None):
     left, top, gap = 36, 18, 34
     w = left + col * max(len(drawn), 1) + 16
     h = top * 2 + gap * (n - 1) + 8
-    o = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(label)}" class="circ">']
+    size = f' style="min-width:{w}px"' if natural else ""
+    o = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(label)}" class="circ"{size}>']
     for q in range(n):
         y = top + gap * q
         o.append(f'<text x="6" y="{y + 4}" class="qlab">q{q}</text>')
@@ -35,29 +36,47 @@ def circuit_svg(n, ops, label, current=None):
         name, a = op[0], op[1:]
         cid = f'id="op{i}" ' if current is not None else ""
         o.append(f'<g {cid}class="op">')
-        if name in ("cx", "cz"):
+        if name in ("cx", "cz", "cp"):
             yc, yt = top + gap * a[0], top + gap * a[1]
             o.append(f'<line x1="{x}" y1="{yc}" x2="{x}" y2="{yt}" class="link"/>')
             o.append(f'<circle cx="{x}" cy="{yc}" r="4" class="dot"/>')
             if name == "cx":
-                o.append(f'<circle cx="{x}" cy="{yt}" r="9" class="tgt"/>')
-                o.append(f'<line x1="{x - 9}" y1="{yt}" x2="{x + 9}" y2="{yt}" class="link"/><line x1="{x}" y1="{yt - 9}" x2="{x}" y2="{yt + 9}" class="link"/>')
+                _target(o, x, yt)
             else:
                 o.append(f'<circle cx="{x}" cy="{yt}" r="4" class="dot"/>')
+                if name == "cp":
+                    o.append(f'<text x="{x + 6}" y="{(yc + yt) / 2 + 3}" class="sub">{a[2]}&#960;/{a[3]}</text>')
+        elif name == "ccx":
+            ys = [top + gap * q for q in a]
+            o.append(f'<line x1="{x}" y1="{min(ys)}" x2="{x}" y2="{max(ys)}" class="link"/>')
+            for yy in ys[:2]:
+                o.append(f'<circle cx="{x}" cy="{yy}" r="4" class="dot"/>')
+            _target(o, x, ys[2])
+        elif name == "swap":
+            ya, yb = top + gap * a[0], top + gap * a[1]
+            o.append(f'<line x1="{x}" y1="{ya}" x2="{x}" y2="{yb}" class="link"/>')
+            for yy in (ya, yb):
+                o.append(f'<line x1="{x - 6}" y1="{yy - 6}" x2="{x + 6}" y2="{yy + 6}" class="link"/><line x1="{x - 6}" y1="{yy + 6}" x2="{x + 6}" y2="{yy - 6}" class="link"/>')
         elif name == "m":
             y = top + gap * a[0]
             o.append(f'<rect x="{x - 12}" y="{y - 11}" width="24" height="22" rx="3" class="box meas"/>')
             o.append(f'<path d="M {x - 8} {y + 4} A 8 8 0 0 1 {x + 8} {y + 4}" class="arc"/><line x1="{x}" y1="{y + 4}" x2="{x + 6}" y2="{y - 6}" class="link"/>')
         else:
             y = top + gap * a[0]
-            lab = {"h": "H", "x": "X", "z": "Z", "s": "S", "t": "T", "rz": "Rz"}[name]
+            lab = {"h": "H", "x": "X", "y": "Y", "z": "Z", "s": "S", "t": "T", "sdg": "S\u2020", "tdg": "T\u2020",
+                   "rz": "Rz", "rx": "Rx", "ry": "Ry", "p": "P"}[name]
             o.append(f'<rect x="{x - 12}" y="{y - 11}" width="24" height="22" rx="3" class="box"/>')
             o.append(f'<text x="{x}" y="{y + 4}" text-anchor="middle" class="glab">{lab}</text>')
-            if name == "rz":
+            if name in ("rz", "rx", "ry", "p"):
                 o.append(f'<text x="{x}" y="{y + 22}" text-anchor="middle" class="sub">{a[1]}&#960;/{a[2]}</text>')
         o.append("</g>")
     o.append("</svg>")
     return "".join(o)
+
+
+def _target(o, x, y):
+    o.append(f'<circle cx="{x}" cy="{y}" r="9" class="tgt"/>')
+    o.append(f'<line x1="{x - 9}" y1="{y}" x2="{x + 9}" y2="{y}" class="link"/><line x1="{x}" y1="{y - 9}" x2="{x}" y2="{y + 9}" class="link"/>')
 
 
 def phase_color(re, im):

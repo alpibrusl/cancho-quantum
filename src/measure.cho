@@ -71,3 +71,49 @@ pub fn measure[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] in
     }
     return outcome;
 }
+
+// Draw `len(picks)` outcomes from the whole distribution without collapsing
+// the state, and leave them sorted. Each draw is one uniform number `u` from
+// the sampler: the outcome is the first basis state whose running total of
+// probability exceeds `u`. If rounding leaves the total just short of `u`,
+// the last state with any probability is taken.
+pub fn sample[&s, &r, &p](st: &s [float], n: int, rng: &!r [int], picks: &!p [int]) -> [] int {
+    let total = state.amplitudes_for(n);
+    var k = 0;
+    while k < len(picks) {
+        let u = next(rng);
+        var acc = 0.0;
+        var pick = 0 - 1;
+        var last = 0;
+        var i = 0;
+        while i < total && pick < 0 {
+            let w = complex.norm_sqr(state.get(st, i));
+            if w > 0.0 {
+                last = i;
+            }
+            acc = acc + w;
+            if u < acc {
+                pick = i;
+            }
+            i = i + 1;
+        }
+        if pick < 0 {
+            pick = last;
+        }
+        picks[k] = pick;
+        k = k + 1;
+    }
+    // Insertion sort: `len(picks)` is at most a few thousand.
+    var a = 1;
+    while a < len(picks) {
+        let v = picks[a];
+        var b = a;
+        while b > 0 && picks[b - 1] > v {
+            picks[b] = picks[b - 1];
+            b = b - 1;
+        }
+        picks[b] = v;
+        a = a + 1;
+    }
+    return 0;
+}

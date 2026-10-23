@@ -1,0 +1,97 @@
+// Bernstein-Vazirani with typed qubits. The oracle hides the secret 101 as
+// CNOTs onto an ancilla; one run of the circuit reads the whole secret off the
+// three data qubits, so every shot answers 5 (binary 101, qubit 0 first).
+// The ancilla and each data qubit are ended by `measure`; nothing can be left over
+// (`tests/reject/drop_qubit.cho`).
+//~ STDOUT secret 5 found in 20 of 20 shots
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+import std.io;
+
+fn shot[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    state.reset(st);
+    let q0 = qubit.fresh(4, 0);
+    let q1 = qubit.fresh(4, 1);
+    let q2 = qubit.fresh(4, 2);
+    let anc = qubit.fresh(4, 3);
+    borrow mut anc as &!a in {
+        qubit.x(a, st);
+        qubit.h(a, st);
+    }
+    borrow mut q0 as &!a in {
+        qubit.h(a, st);
+    }
+    borrow mut q1 as &!a in {
+        qubit.h(a, st);
+    }
+    borrow mut q2 as &!a in {
+        qubit.h(a, st);
+    }
+    // The oracle for the secret 101: a CNOT from each data qubit whose bit is 1.
+    borrow q0 as &c in {
+        borrow mut anc as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    borrow q2 as &c in {
+        borrow mut anc as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    borrow mut q0 as &!a in {
+        qubit.h(a, st);
+    }
+    borrow mut q1 as &!a in {
+        qubit.h(a, st);
+    }
+    borrow mut q2 as &!a in {
+        qubit.h(a, st);
+    }
+    let dropped = qubit.measure(anc, st, rng);
+    let b0 = qubit.measure(q0, st, rng);
+    let b1 = qubit.measure(q1, st, rng);
+    let b2 = qubit.measure(q2, st, rng);
+    return b0 + 2 * b1 + 4 * b2 + 0 * dropped;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(4), 0.0);
+    var found = 0;
+    region r {
+        let rng = alloc_slice[r](1, 31);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            var k = 0;
+            while k < 20 {
+                if shot(st, rng) == 5 {
+                    found = found + 1;
+                }
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    io.write_all(io, "secret 5 found in ");
+    io.print_int(io, found);
+    io.write_all(io, " of 20 shots");
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

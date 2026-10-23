@@ -1,0 +1,28 @@
+//~ RULE type-mismatch
+
+// Both Toffoli controls are borrowed `&`; a gate that writes its control
+// would need `&!` and is refused.
+
+import qc.qubit;
+import qc.state;
+
+fn flipped[&s](a: qubit.Qubit, b: qubit.Qubit, c: qubit.Qubit, st: &!s [float]) -> [] int {
+    borrow a as &x in {
+        borrow b as &y in {
+            borrow c as &z in {
+                qubit.ccx(y, z, x, st);
+            }
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

@@ -219,6 +219,33 @@ def build(cancho):
         f'      <pre class="code small">bell\ncircuit  {esc(prov["bell"]["circuit_body_id"][:16])}...\noutput   {esc(prov["bell"]["output_sha256"][:16])}...\nlibrary  {esc(prov["bell"]["library_digest"][:16])}...</pre>\n'
         + links(("Provenance", blob("tests/golden/provenance.json")), ("Results", blob("docs/m3-results.md")))))
 
+    _, g_out = t.run_qc("grover3")
+    g_samples = [(l.split()[1], int(l.split()[2])) for l in g_out.splitlines() if l.startswith("sample")]
+    g_all = {f"{i:03b}": 0 for i in range(8)}
+    for b, c in g_samples:
+        g_all[b] = c
+    g_n, g_ops = parse_qc("grover3")
+    g_gates = len([o for o in g_ops if o[0] not in ("seed", "sample")])
+    sup.append(tile("Grover search",
+        f"Three qubits, {g_gates} gates, two rounds: find the one marked item (101) among 8. Sampling the final state 1000 times gives <b>{g_all['101']}</b> hits on it, where a blind guess gives about 125. The counts match an independent sampler exactly.",
+        f'      {svgs.count_hist(list(g_all), list(g_all.values()), 125, 0, "Counts of each three-bit outcome over 1000 samples of the Grover state: the marked item 101 dominates")}\n'
+        + links(("Circuit", blob("tests/diff/grover3.qc")), ("Reference", blob("tests/diff/grover3.ref")))))
+    _, bv_out = t.run_qc("bernstein_vazirani")
+    bv_lines = [l for l in bv_out.splitlines() if l.startswith("sample")]
+    _, bv_typed = t.accept_run("bernstein_vazirani_typed")
+    sup.append(tile("Bernstein\u2013Vazirani, typed",
+        f"A hidden 4-bit string is read in one run of the circuit. The simulator samples <code>{esc(' | '.join(l.replace('sample ', '') for l in bv_lines))}</code>: the low four bits are always 1011 (the ancilla bit is random). The typed version, with every qubit ended by <code>measure</code>, prints <b>{esc(bv_typed.strip())}</b>.",
+        links(("Circuit", blob("tests/diff/bernstein_vazirani.qc")), ("Typed", blob("tests/accept/bernstein_vazirani_typed.cho")))))
+    _, tof = t.accept_run("toffoli_typed")
+    sup.append(tile("Toffoli, typed",
+        "Two controls borrowed shared, one target borrowed unique; the truth table (controls then result):",
+        f'      <pre class="code small">{esc(tof.strip())}</pre>\n' + links(("Source", blob("tests/accept/toffoli_typed.cho")))))
+    qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
+    sup.append(tile("OpenQASM 2.0 in",
+        f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
+        '      <pre class="code small">OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nh q[0];\ncx q[0],q[1];\nrz(pi/4) q[1];</pre>\n'
+        + links(("Reader", blob("src/qasm.cho")), ("Files", blob("tests/qasm")), ("Check", blob("scripts/check_qasm.py")))))
+
     # ---- gallery: refused -------------------------------------------------------
     why = {
         "clone_qubit": ("No cloning", "Measuring the same qubit twice. The first <code>measure</code> consumes it."),
@@ -251,7 +278,8 @@ def build(cancho):
         ("A Qpu capability", "Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.", "Needs the compiler", [("Tracked in cancho#612", "https://github.com/alpibrusl/cancho/issues/612"), ("Plan", blob("docs/qubit-types.md"))]),
         ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
-        ("OpenQASM in and out", "Emit first, parse later. The circuit format today is a stand-in.", "Planned", []),
+        ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
+        ("Noise and mixed states", "A density-matrix simulator for noise. The state vector here is pure, and a measurement samples one outcome.", "Later", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
         ("A cloud quantum service", "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.", "Later", []),
@@ -331,6 +359,14 @@ def op_text(op):
         return f"Rz({a[1]}&pi;/{a[2]}) on q{a[0]}"
     if name == "m":
         return f"measure q{a[0]}"
+    if name == "swap":
+        return f"SWAP q{a[0]} and q{a[1]}"
+    if name == "ccx":
+        return f"Toffoli, controls q{a[0]} and q{a[1]}, target q{a[2]}"
+    if name == "cp":
+        return f"controlled phase {a[2]}&pi;/{a[3]}, q{a[0]} and q{a[1]}"
+    if name in ("rx", "ry", "p"):
+        return f"{name.capitalize() if name != 'p' else 'P'}({a[1]}&pi;/{a[2]}) on q{a[0]}"
     return f"{name.upper()} on q{a[0]}"
 
 
@@ -344,8 +380,10 @@ def ulp_distance(a, b):
 def extras(t, P, diff_stdout):
     # ---- the stepper: real amplitudes after every prefix of three circuits -----------
     data, diagrams, tabs = {}, [], []
-    for name, title in (("bell", "Bell pair"), ("ghz4", "GHZ, 4 qubits"), ("teleport_unitary", "Teleportation, before the measurements")):
+    for name, title in (("bell", "Bell pair"), ("ghz4", "GHZ, 4 qubits"), ("teleport_unitary", "Teleportation, before the measurements"),
+                        ("qft4", "Fourier transform of |5>"), ("grover3", "Grover search for 101")):
         n, ops = parse_qc(name)
+        ops = [o for o in ops if o[0] not in ("seed", "sample")]
         frames = []
         for k in range(len(ops) + 1):
             text = f"n {n}\n" + "".join(" ".join(str(x) for x in o) + "\n" for o in ops[:k])
@@ -358,7 +396,7 @@ def extras(t, P, diff_stdout):
                 fr.append([round(p, 6), svgs.phase_color(ar, ai) if p > 1e-12 else "none", round(ar, 4), round(ai, 4)])
             frames.append(fr)
         data[name] = {"n": n, "title": title, "ops": [re.sub("<[^>]*>", "", op_text(o)).replace("&pi;", "pi") for o in ops], "frames": frames}
-        diagrams.append(f'<div class="stepcirc" data-circuit="{name}" hidden>{svgs.circuit_svg(n, ops, f"Circuit diagram: {title}", current=True)}</div>')
+        diagrams.append(f'<div class="stepcirc" data-circuit="{name}" hidden>{svgs.circuit_svg(n, ops, f"Circuit diagram: {title}", current=True, natural=True)}</div>')
         tabs.append(f'<button type="button" class="tab" data-circuit="{name}">{esc(title)}</button>')
     P["STEPPER_DATA"] = json.dumps(data, separators=(",", ":"))
     P["STEPPER_DIAGRAMS"] = "\n    ".join(diagrams)
