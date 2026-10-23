@@ -1,5 +1,7 @@
 # cancho-quantum
 
+**Live page: <https://alpibrusl.github.io/cancho-quantum/>**
+
 A small quantum state-vector simulator written in [cancho](https://github.com/alpibrusl/cancho),
 built to test whether cancho's linear resources and capability-typed
 effects fit quantum information. Status: pre-PoC, milestones M0 to M3 of the plan
