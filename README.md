@@ -6,7 +6,8 @@ A small quantum state-vector simulator written in [cancho](https://github.com/al
 built to test whether cancho's linear resources and capability-typed
 effects fit quantum information. Status: pre-PoC, milestones M0 to M3 of the plan
 in `docs/qubit-types.md`, plus more gates, sampling, OpenQASM input,
-algorithms (`docs/features-results.md`) and noise (`docs/noise-results.md`).
+algorithms (`docs/features-results.md`), noise by sampling (`docs/noise-results.md`) and exact
+noise on the density matrix (`docs/density-results.md`).
 
 - `docs/index.html`: the landing page (for humans, for agents, a gallery of what runs, what is refused and what is planned). Rebuild with `python3 scripts/build_site.py`; `--check` fails if it has drifted from the tools. Serve it with GitHub Pages from `/docs`.
 - `docs/llms.txt`, `docs/agent-prompt.md`: the same facts for agents
@@ -14,6 +15,7 @@ algorithms (`docs/features-results.md`) and noise (`docs/noise-results.md`).
 - `docs/m1-results.md`: M1 results (simulator, diff against Qiskit)
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
+- `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
 - `docs/noise-results.md`: bit flip, phase flip, depolarizing and amplitude-damping noise by trajectories, checked against exact density matrices
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 

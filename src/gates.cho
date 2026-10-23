@@ -25,7 +25,7 @@ pub fn in_range(n: int, q: int) -> [] int {
     return test.assert(q >= 0 && q < n);
 }
 
-fn distinct(n: int, a: int, b: int) -> [] int {
+pub fn distinct(n: int, a: int, b: int) -> [] int {
     in_range(n, a);
     in_range(n, b);
     return test.assert(a != b);

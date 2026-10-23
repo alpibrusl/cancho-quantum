@@ -82,6 +82,8 @@ def main():
     args = ap.parse_args()
 
     names = args.names or sorted(f[:-3] for f in os.listdir(os.path.join(ROOT, "tests", "diff")) if f.endswith(".qc"))
+    # Density-matrix circuits (`dm_*`) have no compiled form: they run interpreted only.
+    compiled_names = [n for n in names if not n.startswith("dm_")]
     tmp = tempfile.mkdtemp(prefix="m3-")
     shim = os.path.join(tmp, "shim")
     os.makedirs(shim)
@@ -104,7 +106,7 @@ def main():
                 files = [os.path.join(SRC, f) for f in sorted(os.listdir(SRC)) if f.endswith(".cho")]
                 jobs[(kind, backend, arm, None)] = (exe, pool.submit(build, args.compiler, files, exe, backend, arm, shim))
             else:
-                for n in names:
+                for n in compiled_names:
                     exe = os.path.join(tmp, f"{label(kind, backend, arm)}-{n}")
                     files = LIB + [os.path.join(ROOT, "tests", "circuits", n + ".cho")]
                     jobs[(kind, backend, arm, n)] = (exe, pool.submit(build, args.compiler, files, exe, backend, arm, shim))
@@ -125,13 +127,18 @@ def main():
         data = open(os.path.join(ROOT, "tests", "diff", n + ".qc"), "rb").read()
         outs = {}
         for kind, backend, arm in configs:
+            if kind == "compiled" and n.startswith("dm_"):
+                continue
             exe = jobs[(kind, backend, arm, None if kind == "interp" else n)][0]
             outs[label(kind, backend, arm)] = run(exe, data, arm)
         hashes = {sha(o) for o in outs.values()}
-        circ = ids(args.compiler, LIB + [os.path.join(ROOT, "tests", "circuits", n + ".cho")])
-        # `ids` over the same file twice must agree.
-        again = ids(args.compiler, LIB + [os.path.join(ROOT, "tests", "circuits", n + ".cho")])
-        stable = circ == again
+        if n.startswith("dm_"):
+            circ, stable = {("body", "circuit"): "none (density-matrix circuits are interpreted, not compiled)"}, True
+        else:
+            circ = ids(args.compiler, LIB + [os.path.join(ROOT, "tests", "circuits", n + ".cho")])
+            # `ids` over the same file twice must agree.
+            again = ids(args.compiler, LIB + [os.path.join(ROOT, "tests", "circuits", n + ".cho")])
+            stable = circ == again
         h = next(iter(hashes))
         new_golden[n] = h
         ok = len(hashes) == 1 and stable and (args.update or golden.get(n) == h)

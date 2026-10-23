@@ -24,6 +24,7 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
    $CANCHO build src/*.cho --std -o qsim
    printf 'n 2\nh 0\ncx 0 1\n' | ./qsim     # a Bell state: amp 0 and amp 3 are 7.071067811865475e-1
    cat tests/qasm/qft4.qasm | ./qsim | head -3   # the same simulator reading OpenQASM 2.0
+   printf 'dm 2\nh 0\ncx 0 1\ndepol 1 1 4\npurity\nquiet\n' | ./qsim   # exact noise; prints purity 5.833333333333328e-1
    printf 'n 3\nh 0\nh 1\nh 2\nseed 1\nsample 100\n' | ./qsim | head -8   # 100 samples, counts per outcome
    Now make a program that clones a qubit and watch it be refused. Copy tests/reject/clone_qubit.cho, read it, and run:
    $CANCHO check src/complex.cho src/state.cho src/gates.cho src/measure.cho src/noise.cho src/qubit.cho tests/reject/clone_qubit.cho --std ; echo "exit $?"           # expect exit 1

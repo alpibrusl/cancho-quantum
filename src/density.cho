@@ -1,0 +1,325 @@
+module qc.density;
+
+import qc.complex;
+import qc.dump;
+import qc.gates;
+import qc.measure;
+import qc.noise;
+import qc.reader;
+import qc.state;
+import std.io;
+
+// The exact way to simulate noise: keep the density matrix rho (2^n by 2^n)
+// and apply each operation as rho -> U rho U^dagger, each channel as
+// rho -> sum_k K rho K^dagger. No sampling, so one run is the answer that the
+// trajectory method of `noise.cho` approaches only on average.
+//
+// The matrix is stored as a state vector of 2n qubits: entry rho[i][j] is the
+// amplitude at index `i + j * 2^n`. Qubit q of the circuit is qubit q of the
+// vector for the row index and qubit q + n for the column index, so U on the
+// rows is the gate on qubit q, and U-conjugate on the columns is the
+// *conjugated* gate on qubit q + n. That is all of it: every gate in `gates.cho`
+// runs unchanged, on 2n qubits. This is why the limit is 10 qubits (2n = 20).
+//
+// Conjugating a gate: the real ones (H, X, Z, CX, CZ, SWAP, CCX, RY) are their own
+// conjugate; S, T swap with S-dagger, T-dagger; Y is replaced by -Y's matrix;
+// RX, RZ, P and CP flip the sign of their angle.
+
+// A Kraus operator [[a, b], [c, d]] applied to the rows and its conjugate to the
+// columns of a copy of rho, then added into `acc`.
+fn kraus[&s, &t, &c](st: &s [float], tmp: &!t [float], acc: &!c [float], n: int, q: int, a: complex.Complex, b: complex.Complex, c: complex.Complex, d: complex.Complex) -> [] int {
+    var i = 0;
+    while i < len(st) {
+        tmp[i] = st[i];
+        i = i + 1;
+    }
+    gates.unitary(tmp, 2 * n, q, a, b, c, d);
+    gates.unitary(tmp, 2 * n, q + n, conj(a), conj(b), conj(c), conj(d));
+    i = 0;
+    while i < len(st) {
+        acc[i] = acc[i] + tmp[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn conj(a: complex.Complex) -> [] complex.Complex {
+    return complex.make(a.re, 0.0 - a.im);
+}
+
+fn real(x: float) -> [] complex.Complex {
+    return complex.make(x, 0.0);
+}
+
+// Apply a one-qubit channel with probability (or decay) `p` to qubit `q`.
+fn channel[&s, &t, &c](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, q: int, w: int, p: float) -> [] int {
+    var i = 0;
+    while i < len(acc) {
+        acc[i] = 0.0;
+        i = i + 1;
+    }
+    let zero = complex.zero();
+    let one = real(1.0);
+    if w == 27423402228804976 {
+        // amplitude damping
+        kraus(st, tmp, acc, n, q, one, zero, zero, real(sqrt(1.0 - p)));
+        kraus(st, tmp, acc, n, q, zero, real(sqrt(p)), zero, zero);
+    } else {
+        let keep = real(sqrt(1.0 - p));
+        kraus(st, tmp, acc, n, q, keep, zero, zero, keep);
+        if w == 27700496373148016 {
+            let f = sqrt(p);
+            kraus(st, tmp, acc, n, q, zero, real(f), real(f), zero);
+        } else if w == 31639965148735084 {
+            let f = sqrt(p);
+            kraus(st, tmp, acc, n, q, real(f), zero, zero, real(0.0 - f));
+        } else {
+            let f = sqrt(p / 3.0);
+            kraus(st, tmp, acc, n, q, zero, real(f), real(f), zero);
+            kraus(st, tmp, acc, n, q, zero, complex.make(0.0, 0.0 - f), complex.make(0.0, f), zero);
+            kraus(st, tmp, acc, n, q, real(f), zero, zero, real(0.0 - f));
+        }
+    }
+    i = 0;
+    while i < len(st) {
+        st[i] = acc[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One-qubit unitaries by word: the gate on the rows, its conjugate on the columns.
+fn gate1[&s](st: &!s [float], n: int, w: int, q: int, theta: float) -> [] int {
+    gates.in_range(n, q);
+    let m = 2 * n;
+    let c = q + n;
+    if w == 104 {
+        gates.h(st, m, q);
+        gates.h(st, m, c);
+    } else if w == 120 {
+        gates.x(st, m, q);
+        gates.x(st, m, c);
+    } else if w == 121 {
+        gates.y(st, m, q);
+        gates.unitary(st, m, c, complex.zero(), complex.make(0.0, 1.0), complex.make(0.0, 0.0 - 1.0), complex.zero());
+    } else if w == 122 {
+        gates.z(st, m, q);
+        gates.z(st, m, c);
+    } else if w == 115 {
+        gates.s(st, m, q);
+        gates.sdg(st, m, c);
+    } else if w == 7562343 {
+        gates.sdg(st, m, q);
+        gates.s(st, m, c);
+    } else if w == 116 {
+        gates.t(st, m, q);
+        gates.tdg(st, m, c);
+    } else if w == 7627879 {
+        gates.tdg(st, m, q);
+        gates.t(st, m, c);
+    } else if w == 29304 {
+        gates.rx(st, m, q, theta);
+        gates.rx(st, m, c, 0.0 - theta);
+    } else if w == 29305 {
+        gates.ry(st, m, q, theta);
+        gates.ry(st, m, c, theta);
+    } else if w == 29306 {
+        gates.rz(st, m, q, theta);
+        gates.rz(st, m, c, 0.0 - theta);
+    } else {
+        gates.p(st, m, q, theta);
+        gates.p(st, m, c, 0.0 - theta);
+    }
+    return 0;
+}
+
+// Probability that qubit `q` reads 1: the sum of the diagonal entries with that bit set.
+fn prob_one[&s](st: &s [float], n: int, q: int) -> [] float {
+    var p = 0.0;
+    var i = 0;
+    while i < 1 << n {
+        if i & 1 << q != 0 {
+            p = p + st[2 * (i + (i << n))];
+        }
+        i = i + 1;
+    }
+    return p;
+}
+
+// Projective measurement of qubit `q`: draw an outcome, keep only the entries
+// whose row and column both agree with it, and divide by its probability.
+fn measure_q[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
+    let p1 = prob_one(st, n, q);
+    let u = measure.next(rng);
+    var outcome = 0;
+    var p = 1.0 - p1;
+    if u < p1 {
+        outcome = 1;
+        p = p1;
+    }
+    var i = 0;
+    while i < 1 << n {
+        var j = 0;
+        while j < 1 << n {
+            let idx = i + (j << n);
+            var ri = 0;
+            if i & 1 << q != 0 {
+                ri = 1;
+            }
+            var cj = 0;
+            if j & 1 << q != 0 {
+                cj = 1;
+            }
+            if ri == outcome && cj == outcome {
+                st[2 * idx] = st[2 * idx] / p;
+                st[2 * idx + 1] = st[2 * idx + 1] / p;
+            } else {
+                st[2 * idx] = 0.0;
+                st[2 * idx + 1] = 0.0;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return outcome;
+}
+
+// `rho <row> <col> <re> <im>` for every entry that is not exactly zero.
+fn print_rho[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [byte]) -> [io_write] int {
+    var i = 0;
+    while i < 1 << n {
+        var j = 0;
+        while j < 1 << n {
+            let idx = i + (j << n);
+            if st[2 * idx] != 0.0 || st[2 * idx + 1] != 0.0 {
+                io.write_all(io, "rho ");
+                io.print_int(io, i);
+                io.write_all(io, " ");
+                io.print_int(io, j);
+                io.write_all(io, " ");
+                dump.put_float(io, scratch, st[2 * idx]);
+                io.write_all(io, " ");
+                dump.put_float(io, scratch, st[2 * idx + 1]);
+                io.newline(io);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `probs`: `prob <bits> <p>` for each basis state with probability above zero.
+fn print_probs[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [byte]) -> [io_write] int {
+    var i = 0;
+    while i < 1 << n {
+        let p = st[2 * (i + (i << n))];
+        if p > 0.0 {
+            io.write_all(io, "prob ");
+            var q = n - 1;
+            while q >= 0 {
+                putchar(io, '0' + (i >> q & 1));
+                q = q - 1;
+            }
+            io.write_all(io, " ");
+            dump.put_float(io, scratch, p);
+            io.newline(io);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Run the operations after a `dm <n>` header. Answers 0, or 2 for a bad operation.
+// `tmp` and `acc` are scratch matrices the size of `st`.
+pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, rng: &!r [int], scratch: &!b [byte], quiet: &!q [int]) -> [io_read, io_write] int {
+    var w = reader.read_word(io);
+    while w >= 0 {
+        if w == 104 || w == 120 || w == 121 || w == 122 || w == 115 || w == 116 || w == 7562343 || w == 7627879 {
+            gate1(st, n, w, reader.read_int(io), 0.0);
+        } else if w == 29304 || w == 29305 || w == 29306 || w == 112 {
+            let a = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            gate1(st, n, w, a, gates.angle(num, den));
+        } else if w == 25464 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            gates.distinct(n, a, b);
+            gates.cx(st, 2 * n, a, b);
+            gates.cx(st, 2 * n, a + n, b + n);
+        } else if w == 25466 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            gates.distinct(n, a, b);
+            gates.cz(st, 2 * n, a, b);
+            gates.cz(st, 2 * n, a + n, b + n);
+        } else if w == 1937203568 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            gates.distinct(n, a, b);
+            gates.swap(st, 2 * n, a, b);
+            gates.swap(st, 2 * n, a + n, b + n);
+        } else if w == 6513528 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            let c2 = reader.read_int(io);
+            gates.distinct(n, a, b);
+            gates.distinct(n, a, c2);
+            gates.distinct(n, b, c2);
+            gates.ccx(st, 2 * n, a, b, c2);
+            gates.ccx(st, 2 * n, a + n, b + n, c2 + n);
+        } else if w == 25456 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            gates.distinct(n, a, b);
+            gates.cp(st, 2 * n, a, b, gates.angle(num, den));
+            gates.cp(st, 2 * n, a + n, b + n, 0.0 - gates.angle(num, den));
+        } else if w == 27700496373148016 || w == 31639965148735084 || w == 431198596972 || w == 27423402228804976 {
+            let a = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            gates.in_range(n, a);
+            channel(st, tmp, acc, n, a, w, noise.prob(num, den));
+        } else if w == 1936024932 {
+            rng[0] = reader.read_int(io);
+        } else if w == 109 {
+            let a = reader.read_int(io);
+            gates.in_range(n, a);
+            dump.measurement(io, a, measure_q(st, n, a, rng));
+        } else if w == 123649732998265 {
+            var total = 0.0;
+            var k = 0;
+            while k < len(st) {
+                total = total + st[k] * st[k];
+                k = k + 1;
+            }
+            io.write_all(io, "purity ");
+            dump.put_float(io, scratch, total);
+            io.newline(io);
+        } else if w == 500135191397 {
+            var total = 0.0;
+            var k = 0;
+            while k < 1 << n {
+                total = total + st[2 * (k + (k << n))];
+                k = k + 1;
+            }
+            io.write_all(io, "trace ");
+            dump.put_float(io, scratch, total);
+            io.newline(io);
+        } else if w == 482956239475 {
+            print_probs(io, st, n, scratch);
+        } else if w == 487301145972 {
+            quiet[0] = 1;
+        } else {
+            return 2;
+        }
+        w = reader.read_word(io);
+    }
+    if quiet[0] == 0 {
+        print_rho(io, st, n, scratch);
+    }
+    return 0;
+}
