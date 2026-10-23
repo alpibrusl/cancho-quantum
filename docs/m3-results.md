@@ -1,7 +1,7 @@
 # M3 results: determinism and provenance
 
 > **Status: M3 gate met on x86-64, and on aarch64 under emulation.**
-> Compiler `3fa3fbb`, x86-64 Linux host, `qemu-aarch64` 8.x for the second
+> Compiler `3fa3fbb`, x86-64 Linux host, `qemu-aarch64` 8.2.2 for the second
 > architecture. Everything below is produced by
 > `python3 scripts/check_determinism.py --arm64`.
 
@@ -27,8 +27,8 @@ passes the other.
 
 **What the arm64 result is and is not.** It is the aarch64 code LLVM
 generated, run on `qemu-user`. That tests the compiler's output (including
-whether it fused any multiply-add: it did not change a single bit) and
-the program's use of its own `sin`/`cos`. It is not arm64 *hardware*, and
+whether any fused multiply-add changed a result: none did, on these
+circuits) and the program's use of its own `sin`/`cos`. It is not arm64 *hardware*, and
 the repository's `llvm-backend.md` records that real aarch64 hosts
 differ from x86-64 on at least one point (the sign of `0.0 / 0.0`). This
 program never produces a NaN, so that difference is not exercised here. A
