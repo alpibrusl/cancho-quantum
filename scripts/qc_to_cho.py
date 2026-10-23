@@ -75,6 +75,8 @@ def convert(name):
             body.append(f"gates.{k}(st, {n}, {a[0]}, gates.angle({a[1]}, {a[2]}));")
         elif k == "cp":
             body.append(f"gates.cp(st, {n}, {a[0]}, {a[1]}, gates.angle({a[2]}, {a[3]}));")
+        elif k in ("bitflip", "phaseflip", "depol", "ampdamp"):
+            body.append(f"noise.{k}(st, {n}, {a[0]}, noise.prob({a[1]}, {a[2]}), rng);")
         elif k == "sample":
             prints = True
             body.append(f"dump.samples(io, st, {n}, rng, {a[0]});")
@@ -95,6 +97,7 @@ def convert(name):
         "import qc.dump;",
         "import qc.gates;",
         "import qc.measure;",
+        "import qc.noise;",
         "import qc.state;",
         "import std.io;",
         "",

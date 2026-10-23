@@ -13,6 +13,7 @@
 //     trig 1 4       print cos and sin of theta/2, theta = pi * 1 / 4
 //     y sdg tdg swap ccx rx ry p cp   more gates (see docs/features-results.md); rx ry p take
 //                    `q num den`, cp takes `a b num den`, swap `a b`, ccx `c1 c2 t`
+//     bitflip|phaseflip|depol|ampdamp q num den   noise with probability num/den (docs/noise-results.md)
 //     sample 1000    draw 1000 outcomes from the state (no collapse), print counts
 //     quiet          print no `amp` lines (for timing the gates, not the printer)
 //
@@ -30,6 +31,7 @@
 
 import qc.dump;
 import qc.gates;
+import qc.noise;
 import qc.qasm;
 import qc.measure;
 import qc.state;
@@ -147,6 +149,20 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
             let num = read_int(io);
             let den = read_int(io);
             gates.cp(st, n, a, b, gates.angle(num, den));
+        } else if w == 27700496373148016 || w == 31639965148735084 || w == 431198596972 || w == 27423402228804976 {
+            let q = read_int(io);
+            let num = read_int(io);
+            let den = read_int(io);
+            let p = noise.prob(num, den);
+            if w == 27700496373148016 {
+                noise.bitflip(st, n, q, p, rng);
+            } else if w == 31639965148735084 {
+                noise.phaseflip(st, n, q, p, rng);
+            } else if w == 431198596972 {
+                noise.depol(st, n, q, p, rng);
+            } else {
+                noise.ampdamp(st, n, q, p, rng);
+            }
         } else if w == 126862285106277 {
             if dump.samples(io, st, n, rng, read_int(io)) != 0 {
                 return 0 - 1;

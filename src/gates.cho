@@ -20,7 +20,8 @@ import std.test;
 //     must-reject entry #4 the checker cannot see (§4 of the doc);
 //     here it is the runtime check §4.2 names.
 
-fn in_range(n: int, q: int) -> [] int {
+// A qubit outside 0..n is a trap, not a silent no-op.
+pub fn in_range(n: int, q: int) -> [] int {
     return test.assert(q >= 0 && q < n);
 }
 

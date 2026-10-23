@@ -32,7 +32,7 @@ import numpy as np
 import qiskit
 from qiskit.circuit.library import (CCXGate, CPhaseGate, CXGate, CZGate, HGate, PhaseGate, RXGate, RYGate, RZGate,
                                     SdgGate, SGate, SwapGate, TdgGate, TGate, XGate, YGate, ZGate)
-from qiskit.quantum_info import Statevector
+from qiskit.quantum_info import Operator, Statevector
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "diff")
 MASK = (1 << 64) - 1
@@ -78,6 +78,28 @@ def reference(n, ops):
             sv = sv.evolve(gate, qargs=[args[0]])
         elif name == "cp":
             sv = sv.evolve(CPhaseGate(angle(args[2], args[3])), qargs=[args[0], args[1]])
+        elif name in ("bitflip", "phaseflip", "depol", "ampdamp"):
+            # Quantum trajectories, as in src/noise.cho: one draw per channel; a
+            # Kraus operator is chosen with its probability and the state renormalised.
+            q, p = args[0], args[1] / args[2]
+            u = rng.next()
+            if name == "bitflip" and u < p:
+                sv = sv.evolve(XGate(), qargs=[q])
+            elif name == "phaseflip" and u < p:
+                sv = sv.evolve(ZGate(), qargs=[q])
+            elif name == "depol" and u < p:
+                k = u / p
+                gate = XGate() if k < 1.0 / 3.0 else (YGate() if k < 2.0 / 3.0 else ZGate())
+                sv = sv.evolve(gate, qargs=[q])
+            elif name == "ampdamp":
+                p1 = p * float(sv.probabilities([q])[1])
+                if u < p1:
+                    k1 = np.array([[0, math.sqrt(p) / math.sqrt(p1)], [0, 0]], dtype=complex)
+                    sv = sv.evolve(Operator(k1), qargs=[q])
+                else:
+                    keep = 1.0 / math.sqrt(1.0 - p1)
+                    k0 = np.array([[keep, 0], [0, math.sqrt(1.0 - p) * keep]], dtype=complex)
+                    sv = sv.evolve(Operator(k0), qargs=[q])
         elif name == "sample":
             # An independent method: a cumulative sum and a binary search, where
             # the simulator adds up probabilities one state at a time.
@@ -175,6 +197,14 @@ def feature_circuits():
     dj = [("x", 3)] + [("h", q) for q in range(4)] + [("cx", 0, 3), ("cx", 2, 3)] + [("h", q) for q in range(3)]
     dj += [("seed", 11), ("sample", 100)]
     c["deutsch_jozsa"] = (4, dj)
+    body = [("h", 0), ("cx", 0, 1), ("ry", 0, 1, 3), ("depol", 0, 1, 2), ("ampdamp", 1, 1, 2),
+            ("bitflip", 0, 1, 2), ("phaseflip", 1, 1, 2), ("depol", 1, 1, 3)]
+    for k in range(1, 9):
+        c[f"noise_seed{k}"] = (2, [("seed", k)] + body)
+    c["noise_p0"] = (2, [op if op[0] in ("h", "cx", "ry") else (op[0], op[1], 0, 1) for op in body])
+    c["noise_p1"] = (2, [op if op[0] in ("h", "cx", "ry") else (op[0], op[1], 1, 1) for op in body])
+    c["noise_ghz4"] = (4, [("seed", 21), ("h", 0)] + [op for i in range(3) for op in (("cx", i, i + 1), ("depol", i + 1, 1, 5))]
+                       + [("ampdamp", 3, 1, 4), ("sample", 300)])
     c["ghz5_sample"] = (5, [("h", 0)] + [("cx", i, i + 1) for i in range(4)] + [("seed", 5), ("sample", 500)])
     return c
 

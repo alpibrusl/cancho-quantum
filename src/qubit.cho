@@ -2,6 +2,7 @@ module qc.qubit;
 
 import qc.gates;
 import qc.measure;
+import qc.noise;
 
 // The linear qubit layer (M2, `docs/qubit-types.md`). A `Qubit` is a
 // `res`: it cannot be copied, it cannot be dropped, and the only
@@ -111,6 +112,25 @@ pub fn swap[&a, &b, &s](q: &!a Qubit, r: &!b Qubit, st: &!s [float]) -> [] int {
 // Toffoli: two controls read, one target written.
 pub fn ccx[&c1, &c2, &t, &s](ctl1: &c1 Qubit, ctl2: &c2 Qubit, tgt: &!t Qubit, st: &!s [float]) -> [] int {
     return gates.ccx(st, ctl1.n, ctl1.idx, ctl2.idx, tgt.idx);
+}
+
+// Noise acts on a qubit in place, so it takes the qubit `&!`. It does not end
+// the qubit and does not change what the checker enforces: a noisy qubit is
+// still a `res`. The probability is `num / den`.
+pub fn depol[&a, &s, &r](q: &!a Qubit, st: &!s [float], rng: &!r [int], num: int, den: int) -> [] int {
+    return noise.depol(st, q.n, q.idx, noise.prob(num, den), rng);
+}
+
+pub fn bitflip[&a, &s, &r](q: &!a Qubit, st: &!s [float], rng: &!r [int], num: int, den: int) -> [] int {
+    return noise.bitflip(st, q.n, q.idx, noise.prob(num, den), rng);
+}
+
+pub fn phaseflip[&a, &s, &r](q: &!a Qubit, st: &!s [float], rng: &!r [int], num: int, den: int) -> [] int {
+    return noise.phaseflip(st, q.n, q.idx, noise.prob(num, den), rng);
+}
+
+pub fn ampdamp[&a, &s, &r](q: &!a Qubit, st: &!s [float], rng: &!r [int], num: int, den: int) -> [] int {
+    return noise.ampdamp(st, q.n, q.idx, noise.prob(num, den), rng);
 }
 
 // Consumes the qubit and answers the classical bit. The bit is `int`,

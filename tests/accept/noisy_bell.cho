@@ -1,0 +1,73 @@
+// A Bell pair through a depolarizing channel on one qubit (probability 1/4:
+// X, Y or Z each with 1/12). Only X and Y flip the bit, so the two bits
+// disagree in 1/6 of the shots: about 50 of 300 (59 here, 1.4 standard deviations high). The exact count is a fact of
+// the seeded sampler, pinned here, and `scripts/check_noise.py` checks the
+// channel itself against a density-matrix calculation.
+//
+// Noise needs the qubit `&!` and the sampler, and nothing else changes: both
+// qubits are still ended by `measure`.
+//~ STDOUT disagree 59 of 300
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+import std.io;
+
+fn shot[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    state.reset(st);
+    let a = qubit.fresh(2, 0);
+    let b = qubit.fresh(2, 1);
+    borrow mut a as &!x in {
+        qubit.h(x, st);
+    }
+    borrow a as &c in {
+        borrow mut b as &!t in {
+            qubit.cx(c, t, st);
+            qubit.depol(t, st, rng, 1, 4);
+        }
+    }
+    let ma = qubit.measure(a, st, rng);
+    let mb = qubit.measure(b, st, rng);
+    if ma != mb {
+        return 1;
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    var disagree = 0;
+    region r {
+        let rng = alloc_slice[r](1, 4242);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            var k = 0;
+            while k < 300 {
+                disagree = disagree + shot(st, rng);
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    io.write_all(io, "disagree ");
+    io.print_int(io, disagree);
+    io.write_all(io, " of 300");
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
