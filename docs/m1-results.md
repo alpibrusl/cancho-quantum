@@ -30,12 +30,12 @@ The state lives in a zero-filled `Box[[float]]` (a `calloc`), so `n = 20`
 - **25 circuits** in `tests/diff/`: Bell; GHZ(3..10) and GHZ(20); every
   gate once; random circuits on 5, 8 and 12 qubits (60 to 160 gates);
   an RZ sweep over 40 angles up to `pi * 999983 / 1`; a `sin`/`cos`
-  isolation set; and eleven circuits with mid-circuit measurement.
+  isolation set; and nine circuits with measurement.
 - **Worst amplitude error: 1.22e-15** (absolute, real or imaginary part),
   against a gate of 1e-12. It is on `measure_random6`. GHZ and Bell are
   exact (0).
 - **`sin`/`cos`: at most 1 ulp from the C library** over 77 angle pairs,
-  half-angles from 0.5 to 6.3e6. The upper end is past the `10^6` where
+  half-angles from 0.016 to 6.3e6. The upper end is past the `10^6` where
   `float-math.md` §8's fast reduction stops and Payne–Hanek takes over,
   so both reductions are covered. RZ's contribution to the amplitude
   error is within the 4.6e-16 of `rz_sweep`.
@@ -43,7 +43,7 @@ The state lives in a zero-filled `Box[[float]]` (a `calloc`), so `n = 20`
   `t` to `s` in `random5.qc` fails it at error 1.9e-1.
 - **Measurement is checked against an independent implementation**
   (`gen_reference.py` carries its own xorshift64* and projects Qiskit's
-  state with numpy). All eleven measurement circuits agree on every bit
+  state with numpy). All nine measurement circuits agree on every bit
   and on the collapsed state. Six seeds of one circuit give six
   different outcomes, so the seed is doing something.
 - **Five programs must stop** (`tests/trap/`): CNOT or CZ on one qubit
@@ -110,10 +110,12 @@ computation.
   parameter `t` collide in a reader's head, and `measure.measure` reads
   badly. Cosmetic, but M2's `Qubit` API will want distinct names for the
   module and its main function.
-- **Everything in M1 checks on the first try once the syntax is known.**
-  Two real errors in the whole milestone: `std.test.assert(...)` is not
+- **The compiler's diagnostics were enough to write M1.** The only
+  refusals met were: `std.test.assert(...)` is not
   a valid qualified call (use the import's last segment), and `std.math`
-  needs its own `import`. Compiler diagnostics named both.
+  needs its own `import`. Each was named by the message. (A missing
+  `[&s]` on two helpers was fixed before the first `check`, so it is not
+  counted.)
 
 ## Not done
 

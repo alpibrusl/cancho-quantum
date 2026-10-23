@@ -122,7 +122,7 @@ def main():
             print(f"FAIL trap {f[:-3]}: exit {run.returncode}, {len(run.stdout)} bytes out")
             failed.append(f)
     print(f"\nworst amplitude error over {len(names)} circuits: {worst_all:.3e} (gate {args.tol:g})")
-    print(f"worst sin/cos distance from libm over the trig and RZ angles: {trig_worst} ulp")
+    print(f"worst sin/cos distance from libm over the `trig` lines: {trig_worst} ulp")
     sys.exit(1 if failed else 0)
 
 
