@@ -1,0 +1,50 @@
+module qc.state;
+
+import qc.complex;
+
+// The state vector of `n` qubits is `2^n` complex amplitudes, stored as
+// `2^(n+1)` floats with the real part of amplitude `i` at `2*i` and the
+// imaginary part at `2*i + 1`.
+//
+// It lives behind a `Box[[float]]` and not in a `region`: a region is one
+// 64 KiB chunk (`cancho/docs/region-limit.md`) and `n = 20` is 16 MiB.
+// The fill is a constant zero, so `box_slice` is a `calloc` and the
+// vector costs nothing until a gate touches it (`zeroed-slices.md`).
+//
+// Qubit `k` is bit `k` of the amplitude index, little-endian, which is
+// Qiskit's convention (qubit 0 is the least significant bit).
+
+pub fn floats_for(n: int) -> [] int {
+    return 2 << n;
+}
+
+pub fn amplitudes_for(n: int) -> [] int {
+    return 1 << n;
+}
+
+// |0...0>: amplitude 0 is 1 + 0i, every other is zero.
+pub fn start[&s](st: &!s [float]) -> [] int {
+    st[0] = 1.0;
+    return 0;
+}
+
+pub fn get[&s](st: &s [float], i: int) -> [] complex.Complex {
+    return complex.make(st[2 * i], st[2 * i + 1]);
+}
+
+pub fn put[&s](st: &!s [float], i: int, c: complex.Complex) -> [] int {
+    st[2 * i] = c.re;
+    st[2 * i + 1] = c.im;
+    return 0;
+}
+
+// Back to |0...0>, so one state vector serves many shots.
+pub fn reset[&s](st: &!s [float]) -> [] int {
+    var i = 0;
+    while i < len(st) {
+        st[i] = 0.0;
+        i = i + 1;
+    }
+    st[0] = 1.0;
+    return 0;
+}

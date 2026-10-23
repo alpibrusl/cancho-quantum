@@ -1,0 +1,23 @@
+//~ RULE linear-value-unconsumed
+
+// Linear, not affine: the `else` path leaves the qubit live.
+
+import qc.qubit;
+import qc.state;
+
+fn maybe[&s, &r](q: qubit.Qubit, st: &!s [float], rng: &!r [int], go: bool) -> [] int {
+    if go {
+        return qubit.measure(q, st, rng);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

@@ -1,0 +1,153 @@
+module qc.gates;
+
+import qc.complex;
+import qc.state;
+import std.math;
+import std.test;
+
+// Gates on a state vector of `n` qubits. Every function takes the
+// amplitudes, the qubit count, and the qubits it acts on, and answers 0:
+// the work is the write through `st`.
+//
+// This is M1, "the simulator without types" (`docs/qubit-types.md`
+// M1): qubits here are plain `int` indices, so nothing stops a caller
+// passing one twice. Two checks are made at run time instead, and both
+// are traps rather than refusals:
+//
+//   * an index outside `0..n` (a diagonal gate on qubit `n` would
+//     otherwise silently do nothing), and
+//   * a two-qubit gate whose operands are the same qubit. That is the
+//     must-reject entry #4 the checker cannot see (§4 of the doc);
+//     here it is the runtime check §4.2 names.
+
+fn in_range(n: int, q: int) -> [] int {
+    return test.assert(q >= 0 && q < n);
+}
+
+fn distinct(n: int, a: int, b: int) -> [] int {
+    in_range(n, a);
+    in_range(n, b);
+    return test.assert(a != b);
+}
+
+// Multiply every amplitude whose qubit `q` is 0 by `p0` and every one
+// whose qubit `q` is 1 by `p1`. Z, S, T and RZ are this with different
+// phases; they differ only in the two complex numbers.
+pub fn diagonal[&s](st: &!s [float], n: int, q: int, p0: complex.Complex, p1: complex.Complex) -> [] int {
+    in_range(n, q);
+    let bit = 1 << q;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & bit == 0 {
+            state.put(st, i, complex.mul(state.get(st, i), p0));
+        } else {
+            state.put(st, i, complex.mul(state.get(st, i), p1));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn z[&s](st: &!s [float], n: int, q: int) -> [] int {
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(0.0 - 1.0, 0.0));
+}
+
+pub fn s[&s](st: &!s [float], n: int, q: int) -> [] int {
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(0.0, 1.0));
+}
+
+// T = diag(1, e^{i pi/4}).
+pub fn t[&s](st: &!s [float], n: int, q: int) -> [] int {
+    let a = pi() / 4.0;
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(math.cos(a), math.sin(a)));
+}
+
+// RZ(theta) = diag(e^{-i theta/2}, e^{i theta/2}). Qiskit's matrix, with
+// no global phase dropped. This is the only place `sin` and `cos` are
+// used, so it is the only place their error can reach a state.
+pub fn rz[&s](st: &!s [float], n: int, q: int, theta: float) -> [] int {
+    let half = theta * 0.5;
+    let c = math.cos(half);
+    let sn = math.sin(half);
+    return diagonal(st, n, q, complex.make(c, 0.0 - sn), complex.make(c, sn));
+}
+
+pub fn pi() -> [] float {
+    return 3.141592653589793;
+}
+
+// An angle is `pi * num / den`, evaluated in that order, so a reference
+// implementation can compute the identical double.
+pub fn angle(num: int, den: int) -> [] float {
+    return pi() * float_of(num) / float_of(den);
+}
+
+// X swaps the two amplitudes that differ in qubit `q`.
+pub fn x[&s](st: &!s [float], n: int, q: int) -> [] int {
+    in_range(n, q);
+    let bit = 1 << q;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & bit == 0 {
+            let a = state.get(st, i);
+            state.put(st, i, state.get(st, i | bit));
+            state.put(st, i | bit, a);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// H on the pair (a, b) is ((a + b), (a - b)) / sqrt 2.
+pub fn h[&s](st: &!s [float], n: int, q: int) -> [] int {
+    in_range(n, q);
+    let bit = 1 << q;
+    let total = state.amplitudes_for(n);
+    let r = 1.0 / sqrt(2.0);
+    var i = 0;
+    while i < total {
+        if i & bit == 0 {
+            let a = state.get(st, i);
+            let b = state.get(st, i | bit);
+            state.put(st, i, complex.scale(complex.add(a, b), r));
+            state.put(st, i | bit, complex.scale(complex.sub(a, b), r));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// CNOT: where the control is 1, swap the target pair.
+pub fn cx[&s](st: &!s [float], n: int, control: int, target: int) -> [] int {
+    distinct(n, control, target);
+    let cbit = 1 << control;
+    let tbit = 1 << target;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & cbit != 0 && i & tbit == 0 {
+            let a = state.get(st, i);
+            state.put(st, i, state.get(st, i | tbit));
+            state.put(st, i | tbit, a);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// CZ: negate the amplitude where both qubits are 1.
+pub fn cz[&s](st: &!s [float], n: int, a: int, b: int) -> [] int {
+    distinct(n, a, b);
+    let both = 1 << a | 1 << b;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & both == both {
+            state.put(st, i, complex.scale(state.get(st, i), 0.0 - 1.0));
+        }
+        i = i + 1;
+    }
+    return 0;
+}

@@ -1,0 +1,27 @@
+//~ RULE borrow-conflict
+
+// A gate in flight locks the qubit: no second unique borrow while the
+// first block runs.
+
+import qc.qubit;
+import qc.state;
+
+fn nested[&s, &r](q: qubit.Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
+    borrow mut q as &!a in {
+        borrow mut q as &!b in {
+            qubit.h(a, st);
+            qubit.h(b, st);
+        }
+    }
+    return qubit.measure(q, st, rng);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

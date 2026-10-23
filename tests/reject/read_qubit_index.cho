@@ -1,0 +1,22 @@
+//~ RULE linear-value-taken-apart
+
+// An owned qubit's fields cannot be read out of it: the index would be a
+// copy of the qubit's identity. Reading through a borrow is fine.
+
+import qc.qubit;
+import qc.state;
+
+fn peek[&s, &r](q: qubit.Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
+    let which = q.idx;
+    return which + qubit.measure(q, st, rng);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

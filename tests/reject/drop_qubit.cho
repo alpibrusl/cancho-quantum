@@ -1,0 +1,24 @@
+//~ RULE linear-value-unconsumed
+
+// Discarding is not free (must-reject #2): a gate borrows the qubit and
+// hands it back, so the function still owes a consumption at its end.
+
+import qc.qubit;
+import qc.state;
+
+fn forget[&s](q: qubit.Qubit, st: &!s [float]) -> [] int {
+    borrow mut q as &!a in {
+        qubit.h(a, st);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

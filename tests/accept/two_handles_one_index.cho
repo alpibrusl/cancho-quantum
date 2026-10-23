@@ -1,0 +1,48 @@
+// Must-reject #4, way 3: two live `Qubit`s with the same index, because
+// `fresh` does not track what it has handed out. Accepted; traps at run
+// time. This is why "the simulator mints distinct indices" (D1) is not
+// enforced by the checker.
+//~ TRAPS
+
+import qc.qubit;
+import qc.state;
+
+fn twin[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    let a = qubit.fresh(2, 0);
+    let b = qubit.fresh(2, 0);
+    borrow a as &c in {
+        borrow mut b as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    return qubit.measure(a, st, rng) + qubit.measure(b, st, rng);
+}
+
+fn run[&h](heap: &!h Heap) -> [heap] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    var out = 0;
+    region r {
+        let rng = alloc_slice[r](1, 7);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            state.start(st);
+            out = twin(st, rng);
+        }
+    }
+    unbox_slice(heap, amp);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    var out = 0;
+    borrow mut heap as &!h in {
+        out = run(h);
+    }
+    release(heap);
+    return out;
+}
