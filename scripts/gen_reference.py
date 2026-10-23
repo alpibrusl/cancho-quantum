@@ -143,6 +143,9 @@ def circuits():
     trig = [("trig", num, den) for num in (1, 3, 7, 31, 100, 997, 12345, 99991, 500000, 999983, 4000000)
             for den in (1, 2, 3, 5, 8, 16, 97)]
     c["trig"] = (1, trig)
+    # The unitary half of teleportation (the landing page steps through it):
+    # prepare a state on qubit 0, entangle 1 and 2, then rotate 0 and 1 into the Bell basis.
+    c["teleport_unitary"] = (3, [("h", 0), ("rz", 0, 1, 3), ("h", 1), ("cx", 1, 2), ("cx", 0, 1), ("h", 0)])
     # Measurement: the sampler and the collapse.
     c["measure_bell"] = (2, [("seed", 7), ("h", 0), ("cx", 0, 1), ("m", 0), ("m", 1)])
     c["measure_ghz5"] = (5, [("seed", 2026), ("h", 0)] + [("cx", i, i + 1) for i in range(4)] + [("m", 2), ("m", 0)])

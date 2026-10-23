@@ -26,6 +26,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import math
+import struct
+import shutil
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import site_svg as svgs
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOCS = os.path.join(ROOT, "docs")
@@ -187,6 +193,7 @@ def build(cancho):
     sup = []
     sup.append(tile("Bell pair",
         "H then CNOT. Two amplitudes of 1/&radic;2 and nothing else, matching Qiskit to the last bit.",
+        '      {{DIAGRAM_BELL}}\n'
         f'      <pre class="code small">{esc(bell_qc.strip())}</pre>\n'
         f'      {bars_svg(2, bell_amps, "Probability of each two-qubit outcome of the Bell state: 00 and 11 at one half, 01 and 10 at zero")}\n'
         f'      <pre class="code small">amp 0 = {esc(fmt_amp(bell_amps.get(0, (0, 0))))}\namp 3 = {esc(fmt_amp(bell_amps.get(3, (0, 0))))}</pre>\n'
@@ -205,7 +212,8 @@ def build(cancho):
         links(("Source", blob("tests/accept/bell.cho")))))
     sup.append(tile("Teleportation",
         f"Qubit 0 holds an unknown state; measuring it and its Bell partner <em>consumes</em> both, and two classical bits say which of X and Z to apply to qubit 2. Over 80 different states: <b>{field(tele, 'failures')}</b> failures, all <b>{field(tele, 'outcomes')}</b> measurement outcomes seen. With the Z correction deleted the same check fails <b>{field(tele_mut, 'failures')}</b> of 80, so the check is not vacuous.",
-        links(("Source", blob("tests/accept/teleport.cho")))))
+        '      {{DIAGRAM_TELEPORT}}\n'
+        + links(("Source", blob("tests/accept/teleport.cho")), ("Unitary half", blob("tests/diff/teleport_unitary.qc")))))
     sup.append(tile("The same bytes, six ways",
         f"Every one of the {P['N_GOLDEN']} circuits runs interpreted and as a compiled cancho function, on Cranelift and LLVM (x86-64) and LLVM aarch64 under <code>qemu-user</code>. All six outputs are byte-identical and match the SHA-256 checked in. The aarch64 run is emulation, not arm64 hardware.",
         f'      <pre class="code small">bell\ncircuit  {esc(prov["bell"]["circuit_body_id"][:16])}...\noutput   {esc(prov["bell"]["output_sha256"][:16])}...\nlibrary  {esc(prov["bell"]["library_digest"][:16])}...</pre>\n'
@@ -240,9 +248,9 @@ def build(cancho):
 
     # ---- gallery: planned -------------------------------------------------------
     plan = [
-        ("A Qpu capability", "Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.", "Needs the compiler", [("Plan", blob("docs/qubit-types.md"))]),
-        ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Design", "https://github.com/alpibrusl/cancho/pull/608"), ("Asker", blob("docs/m2-results.md"))]),
-        ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Design", "https://github.com/alpibrusl/cancho/pull/608"), ("Asker", blob("tests/accept/forged_qubit.cho"))]),
+        ("A Qpu capability", "Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.", "Needs the compiler", [("Tracked in cancho#612", "https://github.com/alpibrusl/cancho/issues/612"), ("Plan", blob("docs/qubit-types.md"))]),
+        ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
+        ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("OpenQASM in and out", "Emit first, parse later. The circuit format today is a stand-in.", "Planned", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
@@ -261,18 +269,188 @@ def build(cancho):
     P["GAL_PLANNED"] = ul(soon)
     P["REJECT_TABLE"] = "\n".join(
         f"      <tr><td><code>{esc(t.refusal(f)[1])}</code></td><td><code>{esc(f)}</code></td></tr>" for f in why)
+    P["_diff"] = d
+    P["_t"] = t
     return P
+
+
+
+SVG_CSS = """
+.circ .wire { stroke: var(--muted); stroke-width: 1; }
+.circ .qlab, .circ .sub, .chart .tick { fill: var(--muted); font: 10px var(--mono); }
+.circ .box { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+.circ .meas { stroke: var(--muted); }
+.circ .glab { fill: var(--fg); font: 600 11px var(--mono); }
+.circ .dot { fill: var(--accent); }
+.circ .tgt { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+.circ .link, .circ .arc { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.circ .op.active .box { fill: var(--accent); }
+.circ .op.active .glab { fill: var(--accent-fg); }
+.circ .op.active .link, .circ .op.active .arc { stroke-width: 2.5; }
+.circ .op.active .dot { r: 5.5px; }
+.circ .op { transition: opacity .3s; }
+.circ .op.later { opacity: .35; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { stroke: var(--muted); stroke-width: 1; }
+.chart .bar { fill: var(--accent); }
+.chart .band { fill: var(--accent); opacity: .14; }
+.chart .gateline { stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.chart .gtext { fill: var(--bad); font: 10px var(--mono); }
+.chart .line { fill: none; stroke-width: 2; }
+.chart .line.s0, .chart .pt.s0 { stroke: var(--accent); }
+.chart .line.s1, .chart .pt.s1 { stroke: var(--good); }
+.chart .pt { fill: var(--surface); stroke-width: 1.5; }
+.chart .ltext.s0 { fill: var(--accent); font: 600 10px var(--mono); }
+.chart .ltext.s1 { fill: var(--good); font: 600 10px var(--mono); }
+"""
+
+LIGHT = "--bg:#fbfbfd;--fg:#15151c;--muted:#585a68;--line:#e1e2ea;--surface:#fff;--soft:#f1f1f7;--accent:#5b3fb0;--accent-fg:#fff;--good:#0f7b5f;--bad:#b42d27;--mono:ui-monospace,Menlo,Consolas,monospace;"
+DARK = "--bg:#0d0c14;--fg:#e9e8f0;--muted:#a09eb4;--line:#25243a;--surface:#14131f;--soft:#1a1927;--accent:#b9a4ff;--accent-fg:#170f33;--good:#4fd1a5;--bad:#ff7b73;"
+
+
+def standalone(svg):
+    """The same figure as a file: variables defined inside, light and dark."""
+    style = f"<style>svg{{{LIGHT}}}@media (prefers-color-scheme: dark){{svg{{{DARK}}}}}{SVG_CSS}</style>"
+    head, rest = svg.split(">", 1)
+    return head + ' xmlns="http://www.w3.org/2000/svg">' + style + f'<rect width="100%" height="100%" fill="var(--bg)"/>' + rest
+
+
+def parse_qc(name):
+    lines = [l.split() for l in open(os.path.join(ROOT, "tests", "diff", name + ".qc")) if l.strip()]
+    n = int(lines[0][1])
+    return n, [tuple([l[0]] + [int(x) for x in l[1:]]) for l in lines[1:]]
+
+
+def op_text(op):
+    name, a = op[0], op[1:]
+    if name == "cx":
+        return f"CNOT, control q{a[0]}, target q{a[1]}"
+    if name == "cz":
+        return f"CZ on q{a[0]} and q{a[1]}"
+    if name == "rz":
+        return f"Rz({a[1]}&pi;/{a[2]}) on q{a[0]}"
+    if name == "m":
+        return f"measure q{a[0]}"
+    return f"{name.upper()} on q{a[0]}"
+
+
+def ulp_distance(a, b):
+    def key(x):
+        (i,) = struct.unpack("<q", struct.pack("<d", x))
+        return i if i >= 0 else -(1 << 63) - i
+    return abs(key(a) - key(b))
+
+
+def extras(t, P, diff_stdout):
+    # ---- the stepper: real amplitudes after every prefix of three circuits -----------
+    data, diagrams, tabs = {}, [], []
+    for name, title in (("bell", "Bell pair"), ("ghz4", "GHZ, 4 qubits"), ("teleport_unitary", "Teleportation, before the measurements")):
+        n, ops = parse_qc(name)
+        frames = []
+        for k in range(len(ops) + 1):
+            text = f"n {n}\n" + "".join(" ".join(str(x) for x in o) + "\n" for o in ops[:k])
+            out = subprocess.run([t.qsim], input=text, capture_output=True, text=True).stdout
+            amps = amplitudes(out)
+            fr = []
+            for i in range(2 ** n):
+                ar, ai = amps.get(i, (0.0, 0.0))
+                p = ar * ar + ai * ai
+                fr.append([round(p, 6), svgs.phase_color(ar, ai) if p > 1e-12 else "none", round(ar, 4), round(ai, 4)])
+            frames.append(fr)
+        data[name] = {"n": n, "title": title, "ops": [re.sub("<[^>]*>", "", op_text(o)).replace("&pi;", "pi") for o in ops], "frames": frames}
+        diagrams.append(f'<div class="stepcirc" data-circuit="{name}" hidden>{svgs.circuit_svg(n, ops, f"Circuit diagram: {title}", current=True)}</div>')
+        tabs.append(f'<button type="button" class="tab" data-circuit="{name}">{esc(title)}</button>')
+    P["STEPPER_DATA"] = json.dumps(data, separators=(",", ":"))
+    P["STEPPER_DIAGRAMS"] = "\n    ".join(diagrams)
+    P["STEPPER_TABS"] = "\n      ".join(tabs)
+
+    # ---- diagrams for gallery tiles ----------------------------------------------------
+    n, ops = parse_qc("bell")
+    P["DIAGRAM_BELL"] = svgs.circuit_svg(n, ops, "Circuit diagram: H on qubit 0, then CNOT from qubit 0 to qubit 1")
+    n, ops = parse_qc("teleport_unitary")
+    P["DIAGRAM_TELEPORT"] = svgs.circuit_svg(n, ops, "Circuit diagram of the unitary half of teleportation")
+
+    # ---- graph: worst error per circuit, from the real diff run -----------------------------
+    rows = []
+    for line in diff_stdout.splitlines():
+        m = re.match(r"ok\s+(\S+)\s+worst\s+([0-9.e+-]+)", line)
+        if m and m.group(1) not in ("trig",):
+            rows.append((m.group(1), float(m.group(2))))
+    rows.sort()
+    P["CHART_ERROR"] = svgs.hbar_chart(rows, "Worst amplitude error against Qiskit for each circuit, on a log axis, all far below the 1e-12 gate", gate=1e-12)
+    P["N_ERR_ROWS"] = str(len(rows))
+    P["N_ERR_ALL"] = str(len(rows) + 1)
+    P["N_ERR_EXACT"] = str(sum(1 for _, v in rows if v == 0.0))
+
+    # ---- graph: 800 seeded runs of a uniform 3-qubit state ---------------------------------
+    counts = [0] * 8
+    shots = 800
+    for seed in range(1, shots + 1):
+        text = f"n 3\nseed {seed}\nh 0\nh 1\nh 2\nm 0\nm 1\nm 2\nquiet\n"
+        out = subprocess.run([t.qsim], input=text, capture_output=True, text=True).stdout
+        bits = [int(l.split()[2]) for l in out.splitlines() if l.startswith("m ")]
+        counts[bits[0] + 2 * bits[1] + 4 * bits[2]] += 1
+    exp = shots / 8
+    sigma = math.sqrt(shots * (1 / 8) * (7 / 8))
+    chi2 = sum((c - exp) ** 2 / exp for c in counts)
+    P["CHART_UNIFORM"] = svgs.count_hist([f"{i:03b}" for i in range(8)], counts, exp, 2 * sigma,
+                                         f"Counts of each three-bit outcome over {shots} seeded runs, expected {exp:.0f}, shaded band is two standard deviations")
+    P["UNIFORM_TEXT"] = f"{shots} runs, seeds 1 to {shots}: chi-squared {chi2:.1f} on 7 degrees of freedom (a fair sampler exceeds 14.1 about 5% of the time)"
+
+    # ---- graph: Bell correlations ---------------------------------------------------------------
+    bc = [0] * 4
+    for seed in range(1, shots + 1):
+        text = f"n 2\nseed {seed}\nh 0\ncx 0 1\nm 0\nm 1\nquiet\n"
+        out = subprocess.run([t.qsim], input=text, capture_output=True, text=True).stdout
+        bits = [int(l.split()[2]) for l in out.splitlines() if l.startswith("m ")]
+        bc[bits[0] + 2 * bits[1]] += 1
+    P["CHART_BELL"] = svgs.count_hist(["q0=0 q1=0", "q0=1 q1=0", "q0=0 q1=1", "q0=1 q1=1"], bc, shots / 2, 0,
+                                      f"Counts of the four outcomes of measuring both Bell-pair qubits over {shots} seeded runs: the two mixed outcomes never occur")
+    P["BELL_TEXT"] = f"{bc[0]} + {bc[3]} agree, {bc[1]} + {bc[2]} disagree, of {shots}"
+
+    # ---- graph: ulp distance of sin/cos from the C library -------------------------------------
+    _, tq = t.run_qc("trig")
+    ulps = []
+    ref = [l for l in open(os.path.join(ROOT, "tests", "diff", "trig.ref")) if l.startswith("trig")]
+    got = [l for l in tq.splitlines() if l.startswith("trig")]
+    for g, r in zip(got, ref):
+        gf, rf = g.split()[1:], r.split()[1:]
+        for a, b in zip(gf, rf):
+            ulps.append(ulp_distance(float(a), float(b)))
+    hist = [ulps.count(0), ulps.count(1), sum(1 for u in ulps if u >= 2)]
+    P["CHART_ULP"] = svgs.count_hist(["0 ulp", "1 ulp", "2+ ulp"], hist, 0, 0,
+                                     f"Distance of cancho's sin and cos from the C library over {len(ulps)} values: {hist[0]} identical, {hist[1]} one ulp away, {hist[2]} further")
+    P["ULP_TEXT"] = f"{len(ulps)} values from {len(ulps) // 2} angles; none more than {max(ulps)} ulp away"
+
+    # ---- graph: timings (a checked-in file, not re-measured) ------------------------------
+    tm = json.load(open(os.path.join(DOCS, "data", "timings.json")))
+    P["CHART_TIMING"] = svgs.line_chart([("Cranelift", tm["seconds"]["cranelift"]), ("LLVM", tm["seconds"]["llvm"])], tm["qubits"],
+                                        "Seconds to apply H to every qubit, against the number of qubits, on a log axis; each added qubit roughly doubles the time",
+                                        "qubits", "seconds")
+    P["TIMING_TEXT"] = f"Measured {tm['measured']} on {tm['machine']}: minimum of 3 runs, output off. 20 qubits is {tm['seconds']['cranelift'][-1] * 1000:.0f} ms (Cranelift) and {tm['seconds']['llvm'][-1] * 1000:.0f} ms (LLVM); 2^20 amplitudes is 16 MiB."
+
+    # ---- standalone images for the README ----------------------------------------------------------
+    img = os.path.join(DOCS, "img")
+    return {
+        os.path.join(img, "bell-circuit.svg"): standalone(P["DIAGRAM_BELL"]),
+        os.path.join(img, "teleport-circuit.svg"): standalone(P["DIAGRAM_TELEPORT"]),
+        os.path.join(img, "error-per-circuit.svg"): standalone(P["CHART_ERROR"]),
+        os.path.join(img, "timings.svg"): standalone(P["CHART_TIMING"]),
+    }
 
 
 def render(cancho):
     tpl = open(os.path.join(DOCS, "index.template.html")).read()
     P = build(cancho)
+    t, d = P.pop("_t"), P.pop("_diff")
+    files = extras(t, P, d)
+    P["SVG_CSS"] = SVG_CSS
     for k, v in P.items():
         tpl = tpl.replace("{{" + k + "}}", v)
     left = re.findall(r"\{\{[A-Z_]+\}\}", tpl)
     if left:
         sys.exit(f"unfilled placeholders: {sorted(set(left))}")
-    return tpl
+    return tpl, files
 
 
 def main():
@@ -280,15 +458,18 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--compiler", default=os.environ.get("CANCHO", "cancho"))
     args = ap.parse_args()
-    out = render(args.compiler)
-    path = os.path.join(DOCS, "index.html")
+    out, files = render(args.compiler)
+    files[os.path.join(DOCS, "index.html")] = out
+    stale = [p for p, v in files.items() if not os.path.exists(p) or open(p).read() != v]
     if args.check:
-        if not os.path.exists(path) or open(path).read() != out:
-            sys.exit("docs/index.html is out of date: run scripts/build_site.py")
-        print("docs/index.html is up to date")
+        if stale:
+            sys.exit("out of date, run scripts/build_site.py: " + ", ".join(os.path.relpath(p, ROOT) for p in stale))
+        print(f"docs/index.html and {len(files) - 1} images are up to date")
     else:
-        open(path, "w").write(out)
-        print(f"wrote {path} ({len(out)} bytes)")
+        for p, v in files.items():
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w").write(v)
+        print(f"wrote {len(files)} files")
 
 
 if __name__ == "__main__":

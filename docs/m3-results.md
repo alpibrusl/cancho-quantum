@@ -13,7 +13,7 @@
 
 **Met for backends; the "two machines" half is met only as emulation.**
 
-For each of the 25 circuits in `tests/diff/`, six builds ran it, and all
+For each of the 25 circuits in `tests/diff/` (26 since `teleport_unitary` was added for the landing page; the result holds for all 26), six builds ran it, and all
 six outputs are byte-identical (SHA-256 equal):
 
 | | Cranelift x86-64 | LLVM x86-64 | LLVM aarch64 (qemu) |

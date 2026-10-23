@@ -12,6 +12,10 @@ in `docs/qubit-types.md`.
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
+![The Bell-pair circuit](docs/img/bell-circuit.svg)
+
+![Worst amplitude error against Qiskit, per circuit](docs/img/error-per-circuit.svg)
+
 ```sh
 cancho build src/*.cho --std -o qsim
 printf 'n 2\nh 0\ncx 0 1\n' | ./qsim          # a Bell state

@@ -85,6 +85,31 @@ svg.bars { width: 100%; height: auto; background: var(--soft); border: 1px solid
 svg.bars .bar { fill: var(--accent); }
 svg.bars .axis { stroke: var(--muted); stroke-width: 1; }
 svg.bars .tick { fill: var(--muted); font: 10px var(--mono); }
+{{SVG_CSS}}
+svg.circ, svg.chart { width: 100%; height: auto; display: block; }
+svg.circ { max-height: 11rem; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.2rem; max-width: 64rem; margin: 0 auto; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+.fig h3 { margin: 0 0 .2rem; font-size: 1rem; }
+.fig p { margin: .4rem 0 0; color: var(--muted); font-size: .85rem; }
+.stepper { max-width: 52rem; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem; }
+.tab { font: 600 .82rem var(--font); padding: .3rem .8rem; border-radius: 999px; border: 1px solid var(--line); background: var(--soft); color: var(--fg); cursor: pointer; }
+.tab[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.stepbars { margin-top: .8rem; }
+.stepbars svg { width: 100%; height: auto; display: block; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; }
+.stepbars .sb { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .5s ease, fill .5s ease; }
+@media (prefers-reduced-motion: reduce) { .stepbars .sb, .circ .op { transition: none; } }
+.stepbars text { fill: var(--muted); font: 10px var(--mono); }
+.stepctl { display: flex; align-items: center; gap: .6rem; margin-top: .8rem; flex-wrap: wrap; }
+.stepctl button { font: 600 .85rem var(--font); padding: .35rem .8rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+.stepctl button.ghost { background: var(--surface); color: var(--accent); }
+.stepctl input[type=range] { flex: 1; min-width: 8rem; accent-color: var(--accent); }
+.stepnote { font: .85rem var(--mono); color: var(--fg); min-height: 1.4rem; margin-top: .4rem; overflow-wrap: anywhere; }
+.legend { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--muted); margin-top: .5rem; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 8rem; height: .6rem; border-radius: 3px; background: linear-gradient(90deg, hsl(0 55% 48%), hsl(90 55% 48%), hsl(180 55% 48%), hsl(270 55% 48%), hsl(360 55% 48%)); }
+.vid { max-width: 52rem; margin: 1.5rem auto 0; }
+.vid video { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); background: var(--term-bg); }
 a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
@@ -92,7 +117,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 <header class="top"><div class="wrap">
   <a class="brand" href=".">cancho-quantum</a>
   <nav>
-    <a href="#why">Why</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
+    <a href="#why">Why</a><a class="opt" href="#watch">Watch it run</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
     <a href="https://github.com/alpibrusl/cancho-quantum">GitHub</a>
   </nav>
 </div></header>
@@ -121,7 +146,28 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
   </div>
 </div></section>
 
-<section id="humans"><div class="wrap">
+<section id="watch"><div class="wrap">
+  <h2>Watch a circuit run</h2>
+  <p class="lead">Each frame is the simulator's real output after the gates so far (the circuit is run once per prefix). Bar height is probability; bar colour is the phase of the amplitude.</p>
+  <div class="stepper">
+    <div class="tabs" role="group" aria-label="Choose a circuit">
+      {{STEPPER_TABS}}
+    </div>
+    {{STEPPER_DIAGRAMS}}
+    <div class="stepbars" id="stepbars"></div>
+    <div class="legend"><span>phase</span> <i></i> <span>0 &rarr; 2&pi;; grey bars carry no amplitude</span></div>
+    <div class="stepctl">
+      <button type="button" id="stepplay">Pause</button>
+      <button type="button" class="ghost" id="stepprev" aria-label="Previous gate">&larr;</button>
+      <input type="range" id="stepslide" min="0" max="0" value="0" aria-label="Gate step">
+      <button type="button" class="ghost" id="stepnext" aria-label="Next gate">&rarr;</button>
+    </div>
+    <div class="stepnote" id="stepnote" aria-live="polite"></div>
+  </div>
+  <p class="caption">Plays when scrolled into view unless your system asks for reduced motion. The frames are the simulator's own output, embedded in the page; the same simulator is what the numbers further down measure.</p>
+</div></section>
+
+<section class="alt" id="humans"><div class="wrap">
   <h2>For humans</h2>
   <p class="lead">What this is, what you can do with it today, and how far to trust it.</p>
   <div class="two">
@@ -143,9 +189,16 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 h 0        # Hadamard on qubit 0
 cx 0 1     # CNOT, control 0, target 1
 m 0        # measure qubit 0 (seeded, deterministic)</pre>
+  <div class="vid">
+    <video controls preload="none" playsinline poster="demo/tour.poster.jpg" aria-label="A recording of this page: the refusals replaying, then a circuit stepping through its gates">
+      <source src="demo/tour.mp4" type="video/mp4">
+      Your browser cannot play this video: <a href="demo/tour.mp4">download the recording</a>.
+    </video>
+    <p class="caption">A short recording of this page (scripts/record_demo.py): the refusals replaying, then the stepper running Bell, GHZ and teleportation. It is a recording, not a live session.</p>
+  </div>
 </div></section>
 
-<section class="alt" id="agents"><div class="wrap">
+<section id="agents"><div class="wrap">
   <h2>For agents</h2>
   <p class="lead">Everything an agent needs is checked, tagged or hashed. No key, no model, no network after the clone.</p>
   <div class="two">
@@ -197,6 +250,13 @@ m 0        # measure qubit 0 (seeded, deterministic)</pre>
     <div class="num"><b>{{ULP}} ulp</b><span>worst distance of <code>sin</code>/<code>cos</code> from the C library on the angles tested</span></div>
     <div class="num"><b>{{FIX_OK}} / {{FIX_ALL}}</b><span>accept and reject fixtures behave as stated</span></div>
     <div class="num"><b>{{N_GOLDEN}} &times; 6</b><span>circuits &times; builds, all byte-identical</span></div>
+  </div>
+  <div class="figs" style="margin-top:2rem">
+    <div class="fig"><h3>Error against Qiskit, per circuit</h3>{{CHART_ERROR}}<p>Worst amplitude error for each of the {{N_ERR_ROWS}} circuits that end in a state ({{N_ERR_EXACT}} are exactly zero; the 26th, <code>trig</code>, prints no state). The dashed line is the 1e-12 gate.</p></div>
+    <div class="fig"><h3>Speed against qubits</h3>{{CHART_TIMING}}<p>{{TIMING_TEXT}}</p></div>
+    <div class="fig"><h3>The sampler is fair</h3>{{CHART_UNIFORM}}<p>{{UNIFORM_TEXT}}. Dashed: the expected count; shaded: two standard deviations.</p></div>
+    <div class="fig"><h3>A Bell pair never disagrees</h3>{{CHART_BELL}}<p>{{BELL_TEXT}}. Dashed: half the runs.</p></div>
+    <div class="fig"><h3>sin and cos against the C library</h3>{{CHART_ULP}}<p>{{ULP_TEXT}}.</p></div>
   </div>
   <p class="fine">Not measured: arm64 hardware (the aarch64 runs are emulation), a second reference such as Cirq, anything above 20 qubits, and whether an agent writes better quantum code with these refusals than without. Timings in <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m1-results.md">m1-results.md</a> are single runs on one machine.</p>
 </div></section>
@@ -253,6 +313,62 @@ python3 scripts/check_types.py</code></pre>
       function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); },
       function () { var r = document.createRange(); r.selectNodeContents(document.getElementById("agentprompt")); var s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected"; });
   });
+})();
+
+(function () {
+  var D = {{STEPPER_DATA}};
+  var host = document.getElementById("stepbars"), note = document.getElementById("stepnote");
+  var slide = document.getElementById("stepslide"), playBtn = document.getElementById("stepplay");
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+  var cur = null, step = 0, timer = null, playing = false, visible = false, SVG = "http://www.w3.org/2000/svg";
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function el(n, a) { var e = document.createElementNS(SVG, n); for (var k in a) e.setAttribute(k, a[k]); return e; }
+  function build(name) {
+    cur = name; var c = D[name], n = c.n, N = 1 << n, W = 560, H = 150, pad = 22, bw = (W - 2 * pad) / N;
+    host.innerHTML = ""; var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Probability of each basis state after the chosen gate" });
+    svg.appendChild(el("line", { x1: pad, y1: H - pad, x2: W - pad, y2: H - pad, stroke: "currentColor", opacity: .3 }));
+    for (var i = 0; i < N; i++) {
+      var r = el("rect", { "class": "sb", x: pad + i * bw + 1, y: 14, width: Math.max(bw - 2, 2), height: H - pad - 14, id: "sb" + i });
+      svg.appendChild(r);
+      if (N <= 16 || i % (N / 8) === 0) { var t = el("text", { x: pad + (i + .5) * bw, y: H - 8, "text-anchor": "middle" }); t.textContent = ("0000000000" + i.toString(2)).slice(-n); svg.appendChild(t); }
+    }
+    host.appendChild(svg);
+    tabs.forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-circuit") === name ? "true" : "false"); });
+    document.querySelectorAll(".stepcirc").forEach(function (d) { d.hidden = d.getAttribute("data-circuit") !== name; });
+    slide.max = c.ops.length; set(0);
+  }
+  function set(k) {
+    step = k; slide.value = k; var c = D[cur], f = c.frames[k];
+    for (var i = 0; i < f.length; i++) {
+      var r = document.getElementById("sb" + i);
+      r.style.transform = "scaleY(" + Math.max(f[i][0] / maxP(f), 0.004) + ")";
+      r.style.fill = f[i][1] === "none" ? "rgba(128,128,150,.35)" : f[i][1];
+    }
+    var box = document.querySelector('.stepcirc[data-circuit="' + cur + '"]');
+    box.querySelectorAll(".op").forEach(function (g, j) { g.classList.toggle("active", j === k - 1); g.classList.toggle("later", j >= k); });
+    var big = 0; for (i = 0; i < f.length; i++) if (f[i][0] > 1e-9) big++;
+    note.textContent = (k === 0 ? "start: |" + "0".repeat(c.n) + ">" : "after " + k + " of " + c.ops.length + ": " + c.ops[k - 1]) + "  \u2014  " + big + " of " + f.length + " states have probability";
+  }
+  function maxP(f) { var m = 0; for (var i = 0; i < f.length; i++) if (f[i][0] > m) m = f[i][0]; return m || 1; }
+  function tick() {
+    if (!playing) return;
+    var c = D[cur]; var wait = 1100;
+    if (step >= c.ops.length) { wait = 2200; timer = setTimeout(function () { set(0); timer = setTimeout(tick, 900); }, wait); return; }
+    set(step + 1); timer = setTimeout(tick, wait);
+  }
+  function play() { playing = true; playBtn.textContent = "Pause"; clearTimeout(timer); timer = setTimeout(tick, 400); }
+  function pause() { playing = false; playBtn.textContent = "Play"; clearTimeout(timer); }
+  tabs.forEach(function (b) { b.addEventListener("click", function () { build(b.getAttribute("data-circuit")); if (playing) play(); }); });
+  slide.addEventListener("input", function () { pause(); set(+slide.value); });
+  document.getElementById("stepnext").addEventListener("click", function () { pause(); set(Math.min(step + 1, D[cur].ops.length)); });
+  document.getElementById("stepprev").addEventListener("click", function () { pause(); set(Math.max(step - 1, 0)); });
+  playBtn.addEventListener("click", function () { playing ? pause() : play(); });
+  build("bell");
+  if (reduce) { pause(); set(D.bell.ops.length); }
+  else if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (es) { es.forEach(function (e) { visible = e.isIntersecting; if (visible && !playing && step === 0) play(); if (!visible && playing) pause(); }); }, { threshold: .4 }).observe(document.querySelector(".stepper"));
+    pause();
+  } else { play(); }
 })();
 </script>
 </body>
