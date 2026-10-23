@@ -27,7 +27,7 @@ The state lives in a zero-filled `Box[[float]]` (a `calloc`), so `n = 20`
 > (e.g. 1e-12) on a fixed set of circuits. Record the ulp error of
 > `sin`/`cos` use in RZ.
 
-- **25 circuits** in `tests/diff/`: Bell; GHZ(3..10) and GHZ(20); every
+- **25 circuits** in `tests/diff/` (26 since `teleport_unitary` was added for the landing page; every figure below holds for all 26): Bell; GHZ(3..10) and GHZ(20); every
   gate once; random circuits on 5, 8 and 12 qubits (60 to 160 gates);
   an RZ sweep over 40 angles up to `pi * 999983 / 1`; a `sin`/`cos`
   isolation set; and nine circuits with measurement.
@@ -101,11 +101,12 @@ computation.
 
 ## Findings that change M2's plan
 
-- **`cancho fmt` cannot reproduce `import ... as`.** Formatting fails on
-  a file that uses it ("`as` has no counterpart in the canonical
-  rendering"), so imports use the module's last segment. This is a
-  compiler-side nit, not a cancho-quantum problem; recorded here, not
-  filed.
+- **`cancho fmt` refuses a *redundant* alias.** `import qc.measure as
+  measure;` (an alias equal to the module's last segment) type-checks, but
+  `fmt` answers "`as` has no counterpart in the canonical rendering"; an
+  alias that differs (`import t.a as alpha;`) formats fine. This file said
+  otherwise (that `fmt` could not reproduce any `import ... as`); that was
+  wrong in scope, and is corrected here. Filed as alpibrusl/cancho#609.
 - **A function and an import cannot share a short name.** `gates.t` and a
   parameter `t` collide in a reader's head, and `measure.measure` reads
   badly. Cosmetic, but M2's `Qubit` API will want distinct names for the

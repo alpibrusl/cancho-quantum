@@ -143,6 +143,12 @@
     "library_digest": "05060d020ad8dd606a2ddb067fc7867c5646547cee8f995e746aac7cec002c47",
     "output_sha256": "8954ff62f303fe9c0e389f1a5c2b7dc3f1dff9f981db53e13f2747b832eab356"
   },
+  "teleport_unitary": {
+    "circuit_body_id": "94370ba5909129e688f1119f6234e0c954431c7595536c2aca5a81af4092c39a",
+    "input_sha256": "bea493e428f8ae747d56430f6c767af82473bcfeb0db05e5f949ac1ab9e95f94",
+    "library_digest": "05060d020ad8dd606a2ddb067fc7867c5646547cee8f995e746aac7cec002c47",
+    "output_sha256": "4823471a5c45f503ab8a1f50876c6d58cda3c890c4f755887343155b538cc12b"
+  },
   "trig": {
     "circuit_body_id": "2e708b21509242df7bc7a8be7de0411bb53bb7ffa6c4748a50e0f1169deeb1ea",
     "input_sha256": "5e14cf52b74551feb58dfc02abb721c0c3d64ec96d6e95d8297fd8dad42df33a",
