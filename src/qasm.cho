@@ -1,0 +1,305 @@
+module qc.qasm;
+
+import qc.dump;
+import qc.gates;
+import qc.measure;
+import std.io;
+
+// A subset of OpenQASM 2.0, read from standard input and run on the state
+// vector. It is what Qiskit writes for circuits of the gates this simulator
+// has, and what `scripts/qc_to_qasm.py` writes from a `.qc` file.
+//
+//   OPENQASM 2.0;  include "qelib1.inc";        skipped
+//   qreg q[N];                                  one register; sets the qubit count
+//   creg c[N];  barrier ...;                    skipped
+//   h x y z s sdg t tdg q[i];                   single-qubit gates
+//   rx(a) ry(a) rz(a) p(a) u1(a) q[i];          one angle
+//   cx cz swap q[i],q[j];  cp(a) cu1(a) q[i],q[j];  ccx q[i],q[j],q[k];
+//   measure q[i] -> c[j];                       measure q[i] (the c[j] is ignored)
+//
+// An angle is a rational multiple of pi: `pi`, `-pi/2`, `3*pi/4`, `0`. A
+// decimal angle is refused (status 3), because the digits of a decimal are
+// rounded and a multiple of pi is not, and the references are compared bit
+// for bit. Anything else (`gate` definitions, `if`, `u3`, a second `qreg`)
+// is refused with a line that says what.
+//
+// A word is its characters packed big-endian into an int, the first seven
+// only, the same trick `main.cho` uses.
+
+// `la[0]` is the character under the cursor, -1 at the end of input.
+fn advance[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    la[0] = getchar(io);
+    return la[0];
+}
+
+fn is_space(c: int) -> [] bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+fn is_word(c: int) -> [] bool {
+    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_';
+}
+
+// Skip white space.
+fn skip[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    while la[0] >= 0 && is_space(la[0]) {
+        advance(io, la);
+    }
+    return 0;
+}
+
+// Skip white space and `//` comments, at the start of a statement only: inside
+// a statement a `/` is division (`pi/4`), and with one character of lookahead
+// the two cannot be told apart anywhere else.
+fn skip_statement[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    skip(io, la);
+    while la[0] == '/' {
+        while la[0] >= 0 && la[0] != 10 {
+            advance(io, la);
+        }
+        skip(io, la);
+    }
+    return 0;
+}
+
+// The next identifier, packed; 0 if the next character does not start one.
+fn word[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    skip(io, la);
+    var w = 0;
+    var count = 0;
+    while la[0] >= 0 && is_word(la[0]) {
+        if count < 7 {
+            w = w * 256 + la[0];
+        }
+        count = count + 1;
+        advance(io, la);
+    }
+    return w;
+}
+
+fn uint[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    skip(io, la);
+    var v = 0;
+    while la[0] >= '0' && la[0] <= '9' {
+        v = v * 10 + (la[0] - '0');
+        advance(io, la);
+    }
+    return v;
+}
+
+// Consume `c`; answer false if it was not next.
+fn expect[&i, &l](io: &!i Io, la: &!l [int], c: int) -> [io_read] bool {
+    skip(io, la);
+    if la[0] == c {
+        advance(io, la);
+        return true;
+    }
+    return false;
+}
+
+fn to_semicolon[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    while la[0] >= 0 && la[0] != ';' {
+        advance(io, la);
+    }
+    advance(io, la);
+    return 0;
+}
+
+// `name[index]`: the register name is skipped, the index answered.
+fn operand[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
+    word(io, la);
+    if !expect(io, la, '[') {
+        return 0 - 1;
+    }
+    let k = uint(io, la);
+    if !expect(io, la, ']') {
+        return 0 - 1;
+    }
+    return k;
+}
+
+// The angle between `(` and `)` as a fraction of pi: answers (num, den), or
+// (0, 0) when the expression is outside the subset.
+fn angle[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int) {
+    skip(io, la);
+    var sign = 1;
+    if la[0] == '-' {
+        sign = 0 - 1;
+        advance(io, la);
+    }
+    skip(io, la);
+    var num = 1;
+    var den = 1;
+    if la[0] >= '0' && la[0] <= '9' {
+        num = uint(io, la);
+        if la[0] == '.' {
+            // A decimal: refused, but consume to the closing parenthesis.
+            while la[0] >= 0 && la[0] != ')' {
+                advance(io, la);
+            }
+            advance(io, la);
+            return (0, 0);
+        }
+        if num == 0 && expect(io, la, ')') {
+            return (0, 1);
+        }
+        if !expect(io, la, '*') {
+            return (0, 0);
+        }
+    }
+    let name = word(io, la);
+    if name != 28777 {
+        return (0, 0);
+    }
+    if expect(io, la, '/') {
+        den = uint(io, la);
+        if den == 0 {
+            return (0, 0);
+        }
+    }
+    if !expect(io, la, ')') {
+        return (0, 0);
+    }
+    return (sign * num, den);
+}
+
+fn refuse[&i, &r](io: &!i Io, why: &r [byte]) -> [io_write] int {
+    io.write_all(io, "error: ");
+    io.write_all(io, why);
+    io.newline(io);
+    return 3;
+}
+
+// Run the statements that follow `OPENQASM`. Answers 0, or a status: 2 for
+// malformed input, 3 for something outside the subset.
+pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int], rng: &!r [int], scratch: &!b [byte], la: &!l [int]) -> [io_read, io_write] int {
+    advance(io, la);
+    to_semicolon(io, la);
+    var status = 0;
+    var n = 0;
+    var done = false;
+    while !done && status == 0 {
+        skip_statement(io, la);
+        let w = word(io, la);
+        if w == 0 {
+            done = true;
+        } else if w == 22324781757055315 || w == 29676245855069285 || w == 1668441447 || w == 27691691891320178 {
+            to_semicolon(io, la);
+        } else if w == 1903322471 {
+            if n != 0 {
+                status = refuse(io, "a second qreg");
+            } else {
+                word(io, la);
+                expect(io, la, '[');
+                n = uint(io, la);
+                expect(io, la, ']');
+                to_semicolon(io, la);
+                if n < 1 || n > 20 {
+                    status = refuse(io, "qreg size must be 1 to 20");
+                } else {
+                    qubits[0] = n;
+                }
+            }
+        } else if n == 0 {
+            status = refuse(io, "a gate before qreg");
+        } else if w == 30792241684771429 {
+            let q = operand(io, la);
+            to_semicolon(io, la);
+            if q < 0 || q >= n {
+                status = 2;
+            } else {
+                dump.measurement(io, q, measure.measure(st, n, q, rng));
+            }
+        } else if w == 104 || w == 120 || w == 121 || w == 122 || w == 115 || w == 116 || w == 7562343 || w == 7627879 {
+            let q = operand(io, la);
+            to_semicolon(io, la);
+            if q < 0 || q >= n {
+                status = 2;
+            } else if w == 104 {
+                gates.h(st, n, q);
+            } else if w == 120 {
+                gates.x(st, n, q);
+            } else if w == 121 {
+                gates.y(st, n, q);
+            } else if w == 122 {
+                gates.z(st, n, q);
+            } else if w == 115 {
+                gates.s(st, n, q);
+            } else if w == 116 {
+                gates.t(st, n, q);
+            } else if w == 7562343 {
+                gates.sdg(st, n, q);
+            } else {
+                gates.tdg(st, n, q);
+            }
+        } else if w == 29304 || w == 29305 || w == 29306 || w == 112 || w == 30001 {
+            if !expect(io, la, '(') {
+                status = 2;
+            } else {
+                let (num, den) = angle(io, la);
+                let q = operand(io, la);
+                to_semicolon(io, la);
+                if den == 0 {
+                    status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+                } else if q < 0 || q >= n {
+                    status = 2;
+                } else if w == 29304 {
+                    gates.rx(st, n, q, gates.angle(num, den));
+                } else if w == 29305 {
+                    gates.ry(st, n, q, gates.angle(num, den));
+                } else if w == 29306 {
+                    gates.rz(st, n, q, gates.angle(num, den));
+                } else {
+                    gates.p(st, n, q, gates.angle(num, den));
+                }
+            }
+        } else if w == 25464 || w == 25466 || w == 1937203568 {
+            let a = operand(io, la);
+            expect(io, la, ',');
+            let c = operand(io, la);
+            to_semicolon(io, la);
+            if a < 0 || c < 0 || a >= n || c >= n {
+                status = 2;
+            } else if w == 25464 {
+                gates.cx(st, n, a, c);
+            } else if w == 25466 {
+                gates.cz(st, n, a, c);
+            } else {
+                gates.swap(st, n, a, c);
+            }
+        } else if w == 25456 || w == 6518065 {
+            if !expect(io, la, '(') {
+                status = 2;
+            } else {
+                let (num, den) = angle(io, la);
+                let a = operand(io, la);
+                expect(io, la, ',');
+                let c = operand(io, la);
+                to_semicolon(io, la);
+                if den == 0 {
+                    status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+                } else if a < 0 || c < 0 || a >= n || c >= n {
+                    status = 2;
+                } else {
+                    gates.cp(st, n, a, c, gates.angle(num, den));
+                }
+            }
+        } else if w == 6513528 {
+            let a = operand(io, la);
+            expect(io, la, ',');
+            let c = operand(io, la);
+            expect(io, la, ',');
+            let t = operand(io, la);
+            to_semicolon(io, la);
+            if a < 0 || c < 0 || t < 0 || a >= n || c >= n || t >= n {
+                status = 2;
+            } else {
+                gates.ccx(st, n, a, c, t);
+            }
+        } else {
+            to_semicolon(io, la);
+            status = refuse(io, "a statement outside the supported OpenQASM subset");
+        }
+    }
+    return status;
+}

@@ -1,0 +1,84 @@
+// The Toffoli gate's truth table on typed qubits: two controls read (`&`), one
+// target written (`&!`), all three ended by `measure`. The target flips exactly
+// when both controls are 1.
+//~ STDOUT 00 -> 000
+//~ STDOUT 01 -> 010
+//~ STDOUT 10 -> 100
+//~ STDOUT 11 -> 111
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+import std.io;
+
+fn row[&s, &r](st: &!s [float], rng: &!r [int], a: int, b: int) -> [] int {
+    state.reset(st);
+    let c1 = qubit.fresh(3, 0);
+    let c2 = qubit.fresh(3, 1);
+    let t = qubit.fresh(3, 2);
+    if a == 1 {
+        borrow mut c1 as &!x in {
+            qubit.x(x, st);
+        }
+    }
+    if b == 1 {
+        borrow mut c2 as &!x in {
+            qubit.x(x, st);
+        }
+    }
+    borrow c1 as &u in {
+        borrow c2 as &v in {
+            borrow mut t as &!w in {
+                qubit.ccx(u, v, w, st);
+            }
+        }
+    }
+    let m1 = qubit.measure(c1, st, rng);
+    let m2 = qubit.measure(c2, st, rng);
+    let mt = qubit.measure(t, st, rng);
+    return m1 * 100 + m2 * 10 + mt;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(3), 0.0);
+    region r {
+        let rng = alloc_slice[r](1, 99);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            var a = 0;
+            while a < 2 {
+                var b = 0;
+                while b < 2 {
+                    let got = row(st, rng, a, b);
+                    io.print_int(io, a);
+                    io.print_int(io, b);
+                    io.write_all(io, " -> ");
+                    io.print_int(io, got / 100);
+                    io.print_int(io, got / 10 % 10);
+                    io.print_int(io, got % 10);
+                    io.newline(io);
+                    b = b + 1;
+                }
+                a = a + 1;
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

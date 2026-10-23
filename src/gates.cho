@@ -151,3 +151,119 @@ pub fn cz[&s](st: &!s [float], n: int, a: int, b: int) -> [] int {
     }
     return 0;
 }
+
+// A general single-qubit gate: the 2x2 matrix [[a, b], [c, d]] applied to
+// every pair of amplitudes that differ in qubit `q`. Y, RX and RY are this
+// with different matrices; H and X keep their own kernels (M1) so their
+// results do not move.
+pub fn unitary[&s](st: &!s [float], n: int, q: int, a: complex.Complex, b: complex.Complex, c: complex.Complex, d: complex.Complex) -> [] int {
+    in_range(n, q);
+    let bit = 1 << q;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & bit == 0 {
+            let lo = state.get(st, i);
+            let hi = state.get(st, i | bit);
+            state.put(st, i, complex.add(complex.mul(a, lo), complex.mul(b, hi)));
+            state.put(st, i | bit, complex.add(complex.mul(c, lo), complex.mul(d, hi)));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Y = [[0, -i], [i, 0]].
+pub fn y[&s](st: &!s [float], n: int, q: int) -> [] int {
+    let o = complex.zero();
+    return unitary(st, n, q, o, complex.make(0.0, 0.0 - 1.0), complex.make(0.0, 1.0), o);
+}
+
+// RX(theta) = [[cos(theta/2), -i sin(theta/2)], [-i sin(theta/2), cos(theta/2)]].
+pub fn rx[&s](st: &!s [float], n: int, q: int, theta: float) -> [] int {
+    let half = theta * 0.5;
+    let c = complex.make(math.cos(half), 0.0);
+    let m = complex.make(0.0, 0.0 - math.sin(half));
+    return unitary(st, n, q, c, m, m, c);
+}
+
+// RY(theta) = [[cos(theta/2), -sin(theta/2)], [sin(theta/2), cos(theta/2)]].
+pub fn ry[&s](st: &!s [float], n: int, q: int, theta: float) -> [] int {
+    let half = theta * 0.5;
+    let cs = math.cos(half);
+    let sn = math.sin(half);
+    return unitary(st, n, q, complex.make(cs, 0.0), complex.make(0.0 - sn, 0.0), complex.make(sn, 0.0), complex.make(cs, 0.0));
+}
+
+// P(lambda) = diag(1, e^{i lambda}), the phase gate (Qiskit's `p`).
+pub fn p[&s](st: &!s [float], n: int, q: int, lambda: float) -> [] int {
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(math.cos(lambda), math.sin(lambda)));
+}
+
+// S-dagger and T-dagger.
+pub fn sdg[&s](st: &!s [float], n: int, q: int) -> [] int {
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(0.0, 0.0 - 1.0));
+}
+
+pub fn tdg[&s](st: &!s [float], n: int, q: int) -> [] int {
+    let a = pi() / 4.0;
+    return diagonal(st, n, q, complex.make(1.0, 0.0), complex.make(math.cos(a), 0.0 - math.sin(a)));
+}
+
+// SWAP: exchange the amplitudes whose qubits `a` and `b` differ.
+pub fn swap[&s](st: &!s [float], n: int, a: int, b: int) -> [] int {
+    distinct(n, a, b);
+    let abit = 1 << a;
+    let bbit = 1 << b;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & abit != 0 && i & bbit == 0 {
+            let j = i ^ abit | bbit;
+            let tmp = state.get(st, i);
+            state.put(st, i, state.get(st, j));
+            state.put(st, j, tmp);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Toffoli (CCX): where both controls are 1, swap the target pair. The
+// three qubits must differ; like `cx`, that is a run-time check here and not
+// something the type checker sees (`docs/qubit-types.md` section 4).
+pub fn ccx[&s](st: &!s [float], n: int, c1: int, c2: int, target: int) -> [] int {
+    distinct(n, c1, c2);
+    distinct(n, c1, target);
+    distinct(n, c2, target);
+    let cbits = 1 << c1 | 1 << c2;
+    let tbit = 1 << target;
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & cbits == cbits && i & tbit == 0 {
+            let tmp = state.get(st, i);
+            state.put(st, i, state.get(st, i | tbit));
+            state.put(st, i | tbit, tmp);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Controlled phase CP(lambda): multiply the amplitude where both qubits are
+// 1 by e^{i lambda}. The quantum Fourier transform is made of these.
+pub fn cp[&s](st: &!s [float], n: int, a: int, b: int, lambda: float) -> [] int {
+    distinct(n, a, b);
+    let both = 1 << a | 1 << b;
+    let ph = complex.make(math.cos(lambda), math.sin(lambda));
+    let total = state.amplitudes_for(n);
+    var i = 0;
+    while i < total {
+        if i & both == both {
+            state.put(st, i, complex.mul(state.get(st, i), ph));
+        }
+        i = i + 1;
+    }
+    return 0;
+}

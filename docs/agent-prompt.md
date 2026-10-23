@@ -13,14 +13,17 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
    cd cancho-quantum
 
 4. Run the checks that need no network after the clone:
-   python3 scripts/check_types.py          # every line must say ok; ends "16 of 16 fixtures behave as stated"
+   python3 scripts/check_types.py          # every line must say ok; ends "22 of 22 fixtures behave as stated"
    Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv && . .venv/bin/activate && pip install qiskit numpy):
    python3 scripts/check_diff.py           # amplitudes against Qiskit; ends with the worst error, which must be under 1e-12
+   python3 scripts/check_qasm.py           # OpenQASM files read by Qiskit's parser and by qsim agree
    python3 scripts/check_determinism.py    # six builds per circuit must give identical bytes (omit --arm64 unless qemu-aarch64 is installed)
 
 5. Try the simulator and the checker on your own input:
    $CANCHO build src/*.cho --std -o qsim
    printf 'n 2\nh 0\ncx 0 1\n' | ./qsim     # a Bell state: amp 0 and amp 3 are 7.071067811865475e-1
+   cat tests/qasm/qft4.qasm | ./qsim | head -3   # the same simulator reading OpenQASM 2.0
+   printf 'n 3\nh 0\nh 1\nh 2\nseed 1\nsample 100\n' | ./qsim | head -8   # 100 samples, counts per outcome
    Now make a program that clones a qubit and watch it be refused. Copy tests/reject/clone_qubit.cho, read it, and run:
    $CANCHO check src/complex.cho src/state.cho src/gates.cho src/measure.cho src/qubit.cho tests/reject/clone_qubit.cho --std ; echo "exit $?"           # expect exit 1
    $CANCHO check src/complex.cho src/state.cho src/gates.cho src/measure.cho src/qubit.cho tests/reject/clone_qubit.cho --std --output json          # the rule is "linear-use-after-move"

@@ -105,6 +105,7 @@ svg.circ { max-height: 11rem; background: var(--soft); border: 1px solid var(--l
 .tab { font: 600 .82rem var(--font); padding: .3rem .8rem; border-radius: 999px; border: 1px solid var(--line); background: var(--soft); color: var(--fg); cursor: pointer; }
 .tab[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .stepbars { margin-top: .8rem; }
+.stepcirc { overflow-x: auto; }
 .stepbars svg { width: 100%; height: auto; display: block; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; }
 .stepbars .sb { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .5s ease, fill .5s ease; }
 @media (prefers-reduced-motion: reduce) { .stepbars .sb, .circ .op { transition: none; } }
@@ -354,6 +355,8 @@ python3 scripts/check_types.py</code></pre>
     }
     var box = document.querySelector('.stepcirc[data-circuit="' + cur + '"]');
     box.querySelectorAll(".op").forEach(function (g, j) { g.classList.toggle("active", j === k - 1); g.classList.toggle("later", j >= k); });
+    var act = box.querySelector(".op.active");
+    if (act) { var br = box.getBoundingClientRect(), ar = act.getBoundingClientRect(); box.scrollLeft += ar.left - br.left - br.width / 2 + ar.width / 2; } else { box.scrollLeft = 0; }
     var big = 0; for (i = 0; i < f.length; i++) if (f[i][0] > 1e-9) big++;
     note.textContent = (k === 0 ? "start: |" + "0".repeat(c.n) + ">" : "after " + k + " of " + c.ops.length + ": " + c.ops[k - 1]) + "  \u2014  " + big + " of " + f.length + " states have probability";
   }

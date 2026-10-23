@@ -1,0 +1,47 @@
+// Toffoli with the target also given as a control. The two controls are shared
+// borrows and the target a unique one of the same qubit; accepted, and `gates.ccx`
+// traps. Three operands make three ways to repeat one, and the type checker sees none.
+//~ TRAPS
+
+import qc.qubit;
+import qc.state;
+
+fn same[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    let q = qubit.fresh(3, 0);
+    let c = qubit.fresh(3, 1);
+    borrow mut q as &!x in {
+        borrow c as &d in {
+            qubit.ccx(x, d, x, st);
+        }
+    }
+    return qubit.measure(q, st, rng) + qubit.measure(c, st, rng);
+}
+
+fn run[&h](heap: &!h Heap) -> [heap] int {
+    let amp = box_slice(heap, state.floats_for(3), 0.0);
+    var out = 0;
+    region r {
+        let rng = alloc_slice[r](1, 7);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            state.start(st);
+            out = same(st, rng);
+        }
+    }
+    unbox_slice(heap, amp);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    var out = 0;
+    borrow mut heap as &!h in {
+        out = run(h);
+    }
+    release(heap);
+    return out;
+}

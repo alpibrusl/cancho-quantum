@@ -61,12 +61,23 @@ def convert(name):
     body, prints = [], False
     for op in lines[1:]:
         k, a = op[0], [int(x) for x in op[1:]]
-        if k in ("h", "x", "z", "s", "t"):
+        if k in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             body.append(f"gates.{k}(st, {n}, {a[0]});")
         elif k in ("cx", "cz"):
             body.append(f"gates.{k}(st, {n}, {a[0]}, {a[1]});")
         elif k == "rz":
             body.append(f"gates.rz(st, {n}, {a[0]}, gates.angle({a[1]}, {a[2]}));")
+        elif k == "swap":
+            body.append(f"gates.swap(st, {n}, {a[0]}, {a[1]});")
+        elif k == "ccx":
+            body.append(f"gates.ccx(st, {n}, {a[0]}, {a[1]}, {a[2]});")
+        elif k in ("rx", "ry", "p"):
+            body.append(f"gates.{k}(st, {n}, {a[0]}, gates.angle({a[1]}, {a[2]}));")
+        elif k == "cp":
+            body.append(f"gates.cp(st, {n}, {a[0]}, {a[1]}, gates.angle({a[2]}, {a[3]}));")
+        elif k == "sample":
+            prints = True
+            body.append(f"dump.samples(io, st, {n}, rng, {a[0]});")
         elif k == "seed":
             body.append(f"rng[0] = {a[0]};")
         elif k == "m":

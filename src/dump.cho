@@ -1,6 +1,7 @@
 module qc.dump;
 
 import qc.gates;
+import qc.measure;
 import qc.state;
 import std.fmt;
 import std.io;
@@ -49,6 +50,39 @@ pub fn amplitudes[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [
         put_float(io, scratch, st[2 * k + 1]);
         io.newline(io);
         k = k + 1;
+    }
+    return 0;
+}
+
+// Sample `shots` outcomes (no collapse) and print one line per distinct
+// outcome, in index order: `sample <bits> <count>`, the bits most significant
+// qubit first. `shots` is at most 4096. Answers 0, or 2 if it is not.
+pub fn samples[&i, &s, &r](io: &!i Io, st: &s [float], n: int, rng: &!r [int], shots: int) -> [io_write] int {
+    if shots < 1 || shots > 4096 {
+        return 2;
+    }
+    region a {
+        let picks = alloc_slice[a](shots, 0);
+        let bits = alloc_slice[a](24, byte_of(0));
+        measure.sample(st, n, rng, picks);
+        var k = 0;
+        while k < shots {
+            var j = k;
+            while j < shots && picks[j] == picks[k] {
+                j = j + 1;
+            }
+            io.write_all(io, "sample ");
+            var q = n - 1;
+            while q >= 0 {
+                bits[n - 1 - q] = byte_of('0' + (picks[k] >> q & 1));
+                q = q - 1;
+            }
+            io.write_all(io, bits[0..n]);
+            io.write_all(io, " ");
+            io.print_int(io, j - k);
+            io.newline(io);
+            k = j;
+        }
     }
     return 0;
 }

@@ -1,0 +1,26 @@
+//~ RULE borrow-conflict
+
+// SWAP of a qubit with itself, written with two borrows: refused, because a
+// unique borrow locks the qubit. (Passing one borrow twice is not: `swap_same_handle`.)
+
+import qc.qubit;
+import qc.state;
+
+fn twice[&s, &r](q: qubit.Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
+    borrow mut q as &!a in {
+        borrow mut q as &!b in {
+            qubit.swap(a, b, st);
+        }
+    }
+    return qubit.measure(q, st, rng);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

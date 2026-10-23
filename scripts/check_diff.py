@@ -8,7 +8,7 @@ on standard input, and compares:
 
   * amplitudes: every real and imaginary part within `--tol` of the
     reference (absolute); a missing index is 0 on either side;
-  * measurement bits and their order: exactly;
+  * measurement bits and their order, and `sample` counts: exactly;
   * `trig` lines: reported as ulp distance from the C library, not gated
     (std.math is fdlibm ported to cancho, not libm; see float-math.md §8).
 
@@ -36,7 +36,7 @@ def ulps(a, b):
 
 
 def parse(text, n_amp=None):
-    ms, trig, amp = [], [], {}
+    ms, trig, amp, smp = [], [], {}, []
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
@@ -45,9 +45,11 @@ def parse(text, n_amp=None):
             ms.append((int(f[1]), int(f[2])))
         elif f[0] == "trig":
             trig.append((float(f[1]), float(f[2])))
+        elif f[0] == "sample":
+            smp.append((f[1], int(f[2])))
         elif f[0] == "amp":
             amp[int(f[1])] = (float(f[2]), float(f[3]))
-    return ms, trig, amp
+    return ms, trig, amp, smp
 
 
 def build(compiler, backend, exe):
@@ -87,6 +89,9 @@ def main():
         ok = True
         if got[0] != want[0]:
             print(f"FAIL {name}: measurements {got[0]} != {want[0]}")
+            ok = False
+        if got[3] != want[3]:
+            print(f"FAIL {name}: sample counts {got[3]} != {want[3]}")
             ok = False
         worst = 0.0
         for i in set(got[2]) | set(want[2]):
