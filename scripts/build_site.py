@@ -36,7 +36,7 @@ import site_svg as svgs
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOCS = os.path.join(ROOT, "docs")
 REPO = "https://github.com/alpibrusl/cancho-quantum"
-LIB = ["complex", "state", "gates", "measure", "qubit"]
+LIB = ["complex", "state", "gates", "measure", "noise", "qubit"]
 
 
 def sh(cmd, **kw):
@@ -240,6 +240,14 @@ def build(cancho):
     sup.append(tile("Toffoli, typed",
         "Two controls borrowed shared, one target borrowed unique; the truth table (controls then result):",
         f'      <pre class="code small">{esc(tof.strip())}</pre>\n' + links(("Source", blob("tests/accept/toffoli_typed.cho")))))
+    nc = json.load(open(os.path.join(DOCS, "data", "noise_curve.json")))
+    nk = json.load(open(os.path.join(DOCS, "data", "noise_check.json")))
+    dev = max(abs(r["estimate"] - r["exact"]) / r["stderr"] for r in nc["rows"] if r["stderr"] > 1e-9)
+    zs = ", ".join(f"{c['max_z']:.1f}" for c in nk["circuits"])
+    sup.append(tile("Noise, checked against the exact answer",
+        f"Four channels (bit flip, phase flip, depolarizing, amplitude damping), each run as one random operator per run. One run is one noisy outcome; the <em>average</em> of many is the density matrix. Here a Bell pair through depolarizing noise on one qubit: {nc['shots']} seeded runs per point against the exact curve (1 &minus; p). The largest gap is {dev:.1f} standard errors. Four noisy circuits (up to 3 qubits) were compared to a density-matrix calculation over {nk['shots']} runs each: worst z-scores {zs}; doubling a probability on purpose is caught at z = {nk['wrong_probability_z']}.",
+        f'      {svgs.curve_chart(nc["rows"], "Fidelity of a Bell pair against the depolarizing probability: runs follow the exact straight line 1 minus p", "depolarizing probability p", "fidelity")}\n'
+        + links(("Channels", blob("src/noise.cho")), ("Check", blob("scripts/check_noise.py")), ("Results", blob("docs/noise-results.md")))))
     qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
     sup.append(tile("OpenQASM 2.0 in",
         f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
@@ -279,7 +287,8 @@ def build(cancho):
         ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
-        ("Noise and mixed states", "A density-matrix simulator for noise. The state vector here is pure, and a measurement samples one outcome.", "Later", []),
+        ("Exact noise: density matrices", "Noise is sampled by trajectories today (many runs, averaged). A density-matrix simulator would give the exact mixed state in one run, at the cost of squaring the memory.", "Later", []),
+        ("Noise after every gate", "Noise is an explicit operation you place; a noise model that attaches channels to gates automatically is not built.", "Planned", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
         ("A cloud quantum service", "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.", "Later", []),
@@ -328,6 +337,7 @@ SVG_CSS = """
 .chart .line.s0, .chart .pt.s0 { stroke: var(--accent); }
 .chart .line.s1, .chart .pt.s1 { stroke: var(--good); }
 .chart .pt { fill: var(--surface); stroke-width: 1.5; }
+.chart .err { stroke: var(--accent); stroke-width: 1.5; }
 .chart .ltext.s0 { fill: var(--accent); font: 600 10px var(--mono); }
 .chart .ltext.s1 { fill: var(--good); font: 600 10px var(--mono); }
 """

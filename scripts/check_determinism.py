@@ -36,7 +36,7 @@ import tempfile
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 SRC = os.path.join(ROOT, "src")
-LIB = [os.path.join(SRC, f) for f in ("complex.cho", "state.cho", "gates.cho", "measure.cho", "dump.cho")]
+LIB = [os.path.join(SRC, f) for f in ("complex.cho", "state.cho", "gates.cho", "measure.cho", "noise.cho", "dump.cho")]
 GOLD = os.path.join(ROOT, "tests", "golden")
 
 

@@ -5,8 +5,8 @@
 A small quantum state-vector simulator written in [cancho](https://github.com/alpibrusl/cancho),
 built to test whether cancho's linear resources and capability-typed
 effects fit quantum information. Status: pre-PoC, milestones M0 to M3 of the plan
-in `docs/qubit-types.md`, plus more gates, sampling, OpenQASM input and
-algorithms (`docs/features-results.md`).
+in `docs/qubit-types.md`, plus more gates, sampling, OpenQASM input,
+algorithms (`docs/features-results.md`) and noise (`docs/noise-results.md`).
 
 - `docs/index.html`: the landing page (for humans, for agents, a gallery of what runs, what is refused and what is planned). Rebuild with `python3 scripts/build_site.py`; `--check` fails if it has drifted from the tools. Serve it with GitHub Pages from `/docs`.
 - `docs/llms.txt`, `docs/agent-prompt.md`: the same facts for agents
@@ -14,6 +14,7 @@ algorithms (`docs/features-results.md`).
 - `docs/m1-results.md`: M1 results (simulator, diff against Qiskit)
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
+- `docs/noise-results.md`: bit flip, phase flip, depolarizing and amplitude-damping noise by trajectories, checked against exact density matrices
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
 ![The Bell-pair circuit](docs/img/bell-circuit.svg)
@@ -46,3 +47,5 @@ with `--arm64`), and the output bytes must match
 `scripts/check_qasm.py` checks the OpenQASM reader: each file in `tests/qasm/`
 is read by Qiskit's parser and by `qsim` and must mean the reference, and
 the circuits are written back out by Qiskit and fed to `qsim`.
+
+`scripts/check_noise.py` averages noisy runs over thousands of seeds and compares the result with an exact density-matrix calculation.

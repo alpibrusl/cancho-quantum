@@ -3,6 +3,7 @@
 import qc.dump;
 import qc.gates;
 import qc.measure;
+import qc.noise;
 import qc.state;
 import std.io;
 

@@ -15,11 +15,12 @@
 - CNOT with one qubit as both operands is accepted by the checker and stops at run time (a trap). Do not report it as a refusal.
 - `Qubit { ... }` can be written directly from any module; `qubit.fresh` is a convention.
 - The aarch64 determinism result is emulation under qemu-user, not arm64 hardware.
-- Circuit text format: `n N`, then `h|x|y|z|s|sdg|t|tdg q`, `cx|cz|swap a b`, `ccx c1 c2 t`, `rx|ry|rz|p q num den` and `cp a b num den` (theta = pi*num/den), `seed S`, `m q`, `sample N` (up to 4096, no collapse), `trig num den`. A file starting `OPENQASM` is read as OpenQASM 2.0 (angles must be multiples of pi; decimals are refused).
+- Circuit text format: `n N`, then `h|x|y|z|s|sdg|t|tdg q`, `cx|cz|swap a b`, `ccx c1 c2 t`, `rx|ry|rz|p q num den` and `cp a b num den` (theta = pi*num/den), `seed S`, `m q`, `sample N` (up to 4096, no collapse), `bitflip|phaseflip|depol|ampdamp q num den` (noise with probability num/den, by trajectories: one noisy outcome per run), `trig num den`. A file starting `OPENQASM` is read as OpenQASM 2.0 (angles must be multiples of pi; decimals are refused).
 - Repeating a qubit in a multi-qubit gate (cx q q, swap q q, ccx with a repeat) type-checks and traps at run time. Qiskit refuses it when the circuit is built; here it is a trap, not a refusal.
 
 ## Checks
-- `python3 scripts/check_types.py`: 22 accept/reject fixtures.
+- `python3 scripts/check_types.py`: 23 accept/reject fixtures.
+- `python3 scripts/check_noise.py`: noisy runs averaged over many seeds against an exact density-matrix calculation (needs qiskit).
 - `python3 scripts/check_qasm.py`: OpenQASM files agree between Qiskit's parser and qsim (needs qiskit).
 - `python3 scripts/check_diff.py`: amplitudes against Qiskit (needs qiskit, numpy).
 - `python3 scripts/check_determinism.py [--arm64]`: byte-identical output across builds.

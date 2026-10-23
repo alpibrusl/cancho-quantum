@@ -1,0 +1,26 @@
+{
+  "shots": 4000,
+  "circuits": [
+    {
+      "circuit": "depolarized Bell pair",
+      "max_z": 0.62,
+      "trace_distance": 0.0039
+    },
+    {
+      "circuit": "bit and phase flips on a rotated qubit",
+      "max_z": 1.02,
+      "trace_distance": 0.0069
+    },
+    {
+      "circuit": "amplitude damping of |+> and a Bell pair",
+      "max_z": 0.1,
+      "trace_distance": 0.0006
+    },
+    {
+      "circuit": "all four channels on 3 qubits",
+      "max_z": 1.43,
+      "trace_distance": 0.0097
+    }
+  ],
+  "wrong_probability_z": 28.0
+}

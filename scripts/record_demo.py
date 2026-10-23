@@ -33,7 +33,7 @@ async def script(pg):
     await pg.evaluate("document.getElementById('watch').scrollIntoView({behavior:'instant'})")
     await pg.evaluate("window.scrollBy(0, 150)")
     await pg.wait_for_timeout(7500)                      # Bell, autoplaying
-    for name, wait in (("ghz4", 6500), ("teleport_unitary", 9500)):
+    for name, wait in (("ghz4", 5500), ("teleport_unitary", 7000), ("qft4", 6500), ("grover3", 9500)):
         await pg.click(f'.tab[data-circuit="{name}"]')
         await pg.wait_for_timeout(wait)
     await pg.evaluate("document.getElementById('gallery').scrollIntoView({behavior:'smooth'})")
