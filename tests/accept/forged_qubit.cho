@@ -1,0 +1,42 @@
+// R2 (`docs/qubit-types.md` §7): a `pub res struct` can be built outside
+// its module, so `fresh` is a convention and not a guard. This program
+// writes `qubit.Qubit { ... }` directly and gets a working qubit. If a
+// rule ever refuses it, move it to `tests/reject/`.
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+
+fn forge[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    let q = qubit.Qubit { idx: 1, n: 2 };
+    return qubit.measure(q, st, rng);
+}
+
+fn run[&h](heap: &!h Heap) -> [heap] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    var out = 0;
+    region r {
+        let rng = alloc_slice[r](1, 7);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            state.start(st);
+            out = forge(st, rng);
+        }
+    }
+    unbox_slice(heap, amp);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    var out = 0;
+    borrow mut heap as &!h in {
+        out = run(h);
+    }
+    release(heap);
+    return out;
+}

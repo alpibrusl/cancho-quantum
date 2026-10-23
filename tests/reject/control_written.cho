@@ -1,0 +1,27 @@
+//~ RULE type-mismatch
+
+// Control is read, target is written: a control qubit is borrowed `&`
+// (shared), and a gate that modifies it wants `&!`. Swapping the roles is
+// refused, so a read-only operand cannot be used as the one that changes.
+
+import qc.qubit;
+import qc.state;
+
+fn flipped[&s](a: qubit.Qubit, b: qubit.Qubit, st: &!s [float]) -> [] int {
+    borrow a as &c in {
+        borrow b as &d in {
+            qubit.cx(d, c, st);
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

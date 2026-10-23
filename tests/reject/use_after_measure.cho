@@ -1,0 +1,25 @@
+//~ RULE linear-use-after-move
+
+// Measurement collapses (must-reject #3): after `measure` there is no
+// qubit left to borrow.
+
+import qc.qubit;
+import qc.state;
+
+fn again[&s, &r](q: qubit.Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
+    let bit = qubit.measure(q, st, rng);
+    borrow mut q as &!a in {
+        qubit.h(a, st);
+    }
+    return bit;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

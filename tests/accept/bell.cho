@@ -1,0 +1,83 @@
+// A Bell pair, measured 200 times. The two qubits are entangled, so the
+// bits always agree; each qubit is 0 about half the time. Every shot makes
+// two `Qubit`s, applies H and CNOT through borrows, and ends both with
+// `measure`, the only function that can.
+//
+// The count of ones (`ones`) is a fact about the seeded sampler, not
+// physics: it is pinned so a change to the generator or the collapse is a
+// red test. `scripts/check_types.py` recomputes it with an independent
+// copy of the generator.
+//~ STDOUT disagree 0
+//~ STDOUT ones 92
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+import std.io;
+
+fn shot[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    state.reset(st);
+    let a = qubit.fresh(2, 0);
+    let b = qubit.fresh(2, 1);
+    borrow mut a as &!x in {
+        qubit.h(x, st);
+    }
+    // The control is read, the target is written.
+    borrow a as &c in {
+        borrow mut b as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    let ma = qubit.measure(a, st, rng);
+    let mb = qubit.measure(b, st, rng);
+    // 2 = disagreement, otherwise the shared bit.
+    if ma != mb {
+        return 2;
+    }
+    return ma;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    var disagree = 0;
+    var ones = 0;
+    region r {
+        let rng = alloc_slice[r](1, 12345);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            var k = 0;
+            while k < 200 {
+                let bit = shot(st, rng);
+                if bit == 2 {
+                    disagree = disagree + 1;
+                } else {
+                    ones = ones + bit;
+                }
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    io.write_all(io, "disagree ");
+    io.print_int(io, disagree);
+    io.newline(io);
+    io.write_all(io, "ones ");
+    io.print_int(io, ones);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

@@ -1,0 +1,128 @@
+// Teleportation. Qubit 0 holds an unknown state |psi> = RZ(theta) H|0>;
+// qubits 1 and 2 are a Bell pair. Measuring qubits 0 and 1 *consumes*
+// them, and the two classical bits (`val`, so they can be branched on)
+// say which of X and Z to apply to qubit 2. Undoing the preparation on
+// qubit 2 must then give |0> with certainty, on every shot and for each
+// of the four measurement outcomes.
+//
+// What the types do here: after `measure(q0)` there is no q0 to touch, so
+// "use the sent qubit again" (which would be cloning) is not a program
+// that compiles (`tests/reject/use_after_measure.cho`).
+//~ STDOUT failures 0
+//~ STDOUT outcomes 4
+//~ EXIT 0
+
+import qc.qubit;
+import qc.state;
+import std.io;
+import std.math;
+
+fn pi() -> [] float {
+    return 3.141592653589793;
+}
+
+fn shot[&s, &r](st: &!s [float], rng: &!r [int], theta: float) -> [] int {
+    state.reset(st);
+    let q0 = qubit.fresh(3, 0);
+    let q1 = qubit.fresh(3, 1);
+    let q2 = qubit.fresh(3, 2);
+
+    // The state to send.
+    borrow mut q0 as &!x in {
+        qubit.h(x, st);
+        qubit.rz(x, st, theta);
+    }
+    // The Bell pair between 1 and 2.
+    borrow mut q1 as &!x in {
+        qubit.h(x, st);
+    }
+    borrow q1 as &c in {
+        borrow mut q2 as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    // Bell measurement of 0 and 1.
+    borrow q0 as &c in {
+        borrow mut q1 as &!t in {
+            qubit.cx(c, t, st);
+        }
+    }
+    borrow mut q0 as &!x in {
+        qubit.h(x, st);
+    }
+    let m0 = qubit.measure(q0, st, rng);
+    let m1 = qubit.measure(q1, st, rng);
+
+    // Classically controlled corrections on the survivor.
+    if m1 == 1 {
+        borrow mut q2 as &!x in {
+            qubit.x(x, st);
+        }
+    }
+    if m0 == 1 {
+        borrow mut q2 as &!x in {
+            qubit.z(x, st);
+        }
+    }
+
+    // Undo the preparation: |0> if and only if q2 holds |psi>.
+    borrow mut q2 as &!x in {
+        qubit.rz(x, st, 0.0 - theta);
+        qubit.h(x, st);
+    }
+    let check = qubit.measure(q2, st, rng);
+    return m0 * 4 + m1 * 2 + check;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(3), 0.0);
+    var failures = 0;
+    var seen = 0;
+    region r {
+        let rng = alloc_slice[r](1, 20260101);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            var k = 0;
+            while k < 80 {
+                // A different state each shot: theta = pi * (k + 1) / 7.
+                let result = shot(st, rng, pi() * float_of(k + 1) / 7.0);
+                if result % 2 != 0 {
+                    failures = failures + 1;
+                }
+                seen = seen | 1 << result / 2;
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    var outcomes = 0;
+    var b = 0;
+    while b < 4 {
+        if seen >> b & 1 == 1 {
+            outcomes = outcomes + 1;
+        }
+        b = b + 1;
+    }
+    io.write_all(io, "failures ");
+    io.print_int(io, failures);
+    io.newline(io);
+    io.write_all(io, "outcomes ");
+    io.print_int(io, outcomes);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

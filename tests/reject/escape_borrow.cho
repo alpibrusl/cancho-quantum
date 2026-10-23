@@ -1,0 +1,27 @@
+//~ RULE reference-escapes-region
+
+// A reference to a qubit may not outlive the `borrow` block that made it
+// (must-reject #5).
+
+import qc.qubit;
+import qc.state;
+
+fn pass[&a](q: &a qubit.Qubit) -> [] &a qubit.Qubit {
+    return q;
+}
+
+fn leak[&s](q: qubit.Qubit, st: &!s [float]) -> [] int {
+    borrow q as &r in {
+        return pass(r);
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

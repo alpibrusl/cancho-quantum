@@ -37,3 +37,14 @@ pub fn put[&s](st: &!s [float], i: int, c: complex.Complex) -> [] int {
     st[2 * i + 1] = c.im;
     return 0;
 }
+
+// Back to |0...0>, so one state vector serves many shots.
+pub fn reset[&s](st: &!s [float]) -> [] int {
+    var i = 0;
+    while i < len(st) {
+        st[i] = 0.0;
+        i = i + 1;
+    }
+    st[0] = 1.0;
+    return 0;
+}

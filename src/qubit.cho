@@ -1,0 +1,80 @@
+module qc.qubit;
+
+import qc.gates;
+import qc.measure;
+
+// The linear qubit layer (M2, `docs/qubit-types.md`). A `Qubit` is a
+// `res`: it cannot be copied, it cannot be dropped, and the only
+// function here that ends one is `measure`. Gates borrow it.
+//
+//   * `h`, `x`, `z`, `s`, `t`, `rz` take the qubit as `&!`: it is
+//     modified in place and still owned afterwards.
+//   * `cx` and `cz` take the control as `&` (read, not modified) and the
+//     target as `&!`.
+//   * `measure` takes the qubit by value, so a measured qubit is gone.
+//
+// A qubit is an index into a state vector that the caller threads through
+// every call, and it remembers the qubit count `n` of that vector so a
+// gate needs no extra argument. What the checker enforces and what it
+// does not is `docs/qubit-types.md` §4; the short version is that
+// ownership is checked here and *distinctness of two operands* is checked
+// at run time, in `gates.cx`.
+//
+// `fresh` is the only constructor this module offers, but not the only
+// one that exists: a `pub res struct` can be built and taken apart from
+// any module (`docs/m2-results.md`, R2), so "only `fresh` mints qubits"
+// is a convention.
+
+pub res struct Qubit {
+    idx: int,
+    n: int,
+}
+
+// Qubit `i` of an `n`-qubit state. The caller promises each `i` is used
+// once; nothing checks that, because the state vector is not a linear
+// resource and a `Qubit` cannot see it.
+pub fn fresh(n: int, i: int) -> [] Qubit {
+    return Qubit { idx: i, n: n };
+}
+
+pub fn h[&a, &s](q: &!a Qubit, st: &!s [float]) -> [] int {
+    return gates.h(st, q.n, q.idx);
+}
+
+pub fn x[&a, &s](q: &!a Qubit, st: &!s [float]) -> [] int {
+    return gates.x(st, q.n, q.idx);
+}
+
+pub fn z[&a, &s](q: &!a Qubit, st: &!s [float]) -> [] int {
+    return gates.z(st, q.n, q.idx);
+}
+
+pub fn s[&a, &s](q: &!a Qubit, st: &!s [float]) -> [] int {
+    return gates.s(st, q.n, q.idx);
+}
+
+pub fn t[&a, &s](q: &!a Qubit, st: &!s [float]) -> [] int {
+    return gates.t(st, q.n, q.idx);
+}
+
+pub fn rz[&a, &s](q: &!a Qubit, st: &!s [float], theta: float) -> [] int {
+    return gates.rz(st, q.n, q.idx, theta);
+}
+
+// Control is read, target is written. Both must belong to one state
+// vector, and be different qubits: `gates.cx` traps on `ctl.idx ==
+// tgt.idx`, the check the type system cannot make.
+pub fn cx[&c, &t, &s](ctl: &c Qubit, tgt: &!t Qubit, st: &!s [float]) -> [] int {
+    return gates.cx(st, ctl.n, ctl.idx, tgt.idx);
+}
+
+pub fn cz[&c, &t, &s](ctl: &c Qubit, tgt: &!t Qubit, st: &!s [float]) -> [] int {
+    return gates.cz(st, ctl.n, ctl.idx, tgt.idx);
+}
+
+// Consumes the qubit and answers the classical bit. The bit is `int`,
+// which is `val`: copy it, branch on it, drop it.
+pub fn measure[&s, &r](q: Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
+    let Qubit { idx, n } = q;
+    return measure.measure(st, n, idx, rng);
+}
