@@ -35,17 +35,17 @@ Times at the two largest sizes (`qsim` is the whole process; Aer is `run` only):
 | workload | qsim (LLVM) | qsim (Cranelift) | Aer, 1 thread | Aer, 4 threads | Qiskit Statevector |
 |---|---|---|---|---|---|
 | **18 qubits** | | | | | |
-| H on every qubit (18 gates) | 9 ms | 41 ms | 18 ms | 7 ms | 97 ms |
-| H, then a CX chain (18 gates) | 9 ms | 22 ms | 26 ms | 14 ms | 64 ms |
-| H layer, then Rz on every qubit (36 gates) | 17 ms | 71 ms | 20 ms | 7 ms | 57 ms |
-| random, depth 20 (540 gates) | 194 ms | 997 ms | 273 ms | 93 ms | 784 ms |
-| QFT (180 gates) | 36 ms | 147 ms | 104 ms | 33 ms | 275 ms |
+| H on every qubit (18 gates) | 10 ms | 41 ms | 20 ms | 6 ms | 86 ms |
+| H, then a CX chain (18 gates) | 7 ms | 23 ms | 26 ms | 14 ms | 55 ms |
+| H layer, then Rz on every qubit (36 gates) | 16 ms | 71 ms | 20 ms | 7 ms | 57 ms |
+| random, depth 20 (540 gates) | 189 ms | 1.04 s | 282 ms | 111 ms | 818 ms |
+| QFT (180 gates) | 38 ms | 144 ms | 104 ms | 33 ms | 283 ms |
 | **20 qubits** | | | | | |
-| H on every qubit (20 gates) | 43 ms | 228 ms | 83 ms | 25 ms | not run |
-| H, then a CX chain (20 gates) | 36 ms | 98 ms | 112 ms | 43 ms | not run |
-| H layer, then Rz on every qubit (40 gates) | 66 ms | 307 ms | 88 ms | 25 ms | not run |
-| random, depth 20 (600 gates) | 896 ms | 4.55 s | 1.20 s | 416 ms | not run |
-| QFT (220 gates) | 187 ms | 786 ms | 487 ms | 162 ms | not run |
+| H on every qubit (20 gates) | 37 ms | 231 ms | 85 ms | 34 ms | not run |
+| H, then a CX chain (20 gates) | 31 ms | 97 ms | 108 ms | 45 ms | not run |
+| H layer, then Rz on every qubit (40 gates) | 69 ms | 323 ms | 83 ms | 26 ms | not run |
+| random, depth 20 (600 gates) | 831 ms | 4.54 s | 1.18 s | 386 ms | not run |
+| QFT (220 gates) | 180 ms | 748 ms | 467 ms | 125 ms | not run |
 <!-- /table -->
 
 Aer's time divided by `qsim` (LLVM) at 20 qubits; above 1, `qsim` is faster:
@@ -53,11 +53,11 @@ Aer's time divided by `qsim` (LLVM) at 20 qubits; above 1, `qsim` is faster:
 <!-- table:ratios -->
 | workload | Aer 1 thread / qsim (LLVM) | Aer 4 threads / qsim (LLVM) | Cranelift / LLVM |
 |---|---|---|---|
-| H on every qubit | 1.93x | 0.57x | 5.3x |
-| H, then a CX chain | 3.10x | 1.20x | 2.7x |
-| H layer, then Rz on every qubit | 1.32x | 0.37x | 4.6x |
-| random, depth 20 | 1.34x | 0.46x | 5.1x |
-| QFT | 2.61x | 0.87x | 4.2x |
+| H on every qubit | 2.28x | 0.91x | 6.2x |
+| H, then a CX chain | 3.49x | 1.45x | 3.1x |
+| H layer, then Rz on every qubit | 1.22x | 0.38x | 4.7x |
+| random, depth 20 | 1.42x | 0.47x | 5.5x |
+| QFT | 2.59x | 0.69x | 4.2x |
 <!-- /table -->
 
 The exact density matrix (`dm`), a random circuit with depolarizing noise after every gate, against Aer's
@@ -67,8 +67,8 @@ density-matrix method on one thread:
 | qubits | qsim `dm` (LLVM) | qsim `dm` (Cranelift) | Aer density matrix, 1 thread | qsim (LLVM) / Aer |
 |---|---|---|---|---|
 | 4 | 1 ms | 2 ms | 4 ms | 0.3x |
-| 6 | 5 ms | 20 ms | 17 ms | 0.3x |
-| 8 | 107 ms | 384 ms | 90 ms | 1.2x |
+| 6 | 5 ms | 22 ms | 16 ms | 0.3x |
+| 8 | 86 ms | 331 ms | 94 ms | 0.9x |
 <!-- /table -->
 
 ## What it says
@@ -86,13 +86,14 @@ density-matrix method on one thread:
    compiles faster.
 4. **Memory is the state and little else**: a 20-qubit run peaks at 17.3 MiB for a 16 MiB state. (Aer's
    figure in `benchmark.json`, 209.5 MiB, includes the Python interpreter and Qiskit and is not comparable.)
-5. **The density matrix was the weak spot, and is now close.** At 8 qubits `dm` took 0.88 s against Aer's 0.12 s on
+5. **The density matrix was the weak spot, and is now level with Aer's.** At 8 qubits `dm` took 0.88 s against Aer's 0.12 s on
    one thread (about 7 times). It stored the matrix as a state of twice as many qubits and built each channel from
    Kraus operators with full-size scratch copies: about 18 passes over the matrix per channel. Each channel is now
-   a single in-place pass over the 2 x 2 (or 4 x 4) blocks it acts on (`src/density.cho`), the two scratch matrices
-   are gone (a third of the memory), and the table above has the result: 8 qubits in 0.11 s, 1.2 times Aer's time. Gates are
-   still two passes each (rows, then columns), which is where the remaining gap is. The amplitudes moved by at most
-   3e-15 (the sums are in another order); four goldens were regenerated for that. The mode is still capped at 10 qubits.
+   a single in-place pass over the 2 x 2 (or 4 x 4) blocks it acts on, one-qubit gates and CX are one pass instead of
+   two (`src/density.cho`), and the two scratch matrices are gone (a third of the memory). The table above has the
+   result: 8 qubits in 0.09 s, 0.9 times Aer's time. The channels moved the amplitudes by at most 3e-15 (the sums are in
+   another order; four goldens were regenerated for that); the gate fusion changed no output bit. CZ, SWAP, CP and
+   CCX are still two passes. The mode is still capped at 10 qubits.
 6. **Capacity**: `qsim` stops at 20 qubits (a fixed layout, 16 MiB); Aer goes well past 30 on memory it
    is given. That is a design limit here, not something the benchmark changes.
 
