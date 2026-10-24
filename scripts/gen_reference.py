@@ -65,6 +65,42 @@ TWO_Q = ("cx", "cz", "cp", "swap")
 PAULI = {1: XGate, 2: YGate, 3: ZGate}
 
 
+class NoiseState:
+    """The noise parameters a circuit sets, with the same override rules as src/profile.cho."""
+
+    def __init__(self):
+        self.ro = self.m1 = self.m2 = 0.0
+        self.g1, self.g2, self.rop = {}, {}, {}
+
+    def set(self, name, a):
+        frac = lambda x, y: x / y if x else 0.0
+        if name == "readout":
+            self.ro = frac(a[0], a[1])
+        elif name == "model1":
+            self.m1 = frac(a[0], a[1])
+        elif name == "model2":
+            self.m2 = frac(a[0], a[1])
+        elif name == "gate1err":
+            self.g1[a[0]] = frac(a[1], a[2])
+        elif name == "gate2err":
+            self.g2[frozenset((a[0], a[1]))] = frac(a[2], a[3])
+        elif name == "readerr":
+            self.rop[a[0]] = (frac(a[1], a[2]), frac(a[3], a[4]))
+
+    def g1p(self, q):
+        return self.g1[q] if q in self.g1 else self.m1
+
+    def g2p(self, a, b):
+        key = frozenset((a, b))
+        return self.g2[key] if key in self.g2 else self.m2
+
+    def rp(self, q, bit):
+        return self.rop[q][bit] if q in self.rop else self.ro
+
+
+NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr")
+
+
 def pauli_pair(sv, a, b, m):
     """Apply Pauli P (m // 4) on qubit a and Q (m % 4) on qubit b; 0 is the identity."""
     for q, k in ((a, m // 4), (b, m % 4)):
@@ -78,7 +114,7 @@ def reference(n, ops):
     sv = Statevector.from_int(0, 2**n)
     rng = Rng()
     lines = []
-    ro = m1 = m2 = 0.0           # readout, one-qubit-gate and two-qubit-gate noise probabilities
+    ns = NoiseState()
     for op in ops:
         name, args = op[0], op[1:]
         if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
@@ -120,14 +156,8 @@ def reference(n, ops):
             u = rng.next()
             if u < p:
                 sv = pauli_pair(sv, a, b, min(int(u / p * 15.0), 14) + 1)
-        elif name in ("readout", "model1", "model2"):
-            val = args[0] / args[1] if args[0] else 0.0
-            if name == "readout":
-                ro = val
-            elif name == "model1":
-                m1 = val
-            else:
-                m2 = val
+        elif name in NOISE_SET:
+            ns.set(name, args)
         elif name == "sample":
             # An independent method: a cumulative sum and a binary search, where
             # the simulator adds up probabilities one state at a time.
@@ -139,11 +169,12 @@ def reference(n, ops):
                 u = rng.next()
                 k = int(np.searchsorted(cum, u, side="right"))
                 pick = k if k < len(cum) and probs[k] > 0 else last
-                if ro > 0.0:
-                    for qq in range(n):
-                        if rng.next() < ro:
-                            pick ^= 1 << qq
-                picks.append(pick)
+                reported = pick
+                for qq in range(n):
+                    pr = ns.rp(qq, (pick >> qq) & 1)
+                    if pr > 0.0 and rng.next() < pr:
+                        reported ^= 1 << qq
+                picks.append(reported)
             for k in sorted(set(picks)):
                 lines.append(f"sample {k:0{n}b} {picks.count(k)}")
         elif name == "cx":
@@ -162,7 +193,7 @@ def reference(n, ops):
             p1 = float(sv.probabilities([q])[1])
             bit = 1 if rng.next() < p1 else 0
             reported = bit
-            if ro > 0.0 and rng.next() < ro:
+            if ns.rp(q, bit) > 0.0 and rng.next() < ns.rp(q, bit):
                 reported = 1 - bit
             data = np.array(sv.data)
             idx = np.arange(len(data))
@@ -174,15 +205,17 @@ def reference(n, ops):
         else:
             raise ValueError(name)
         # The gate-noise model: after a gate, depolarizing noise, one draw each.
-        if name in ONE_Q and m1:
+        if name in ONE_Q and ns.g1p(args[0]) > 0.0:
+            p1 = ns.g1p(args[0])
             u = rng.next()
-            if u < m1:
-                k = u / m1
+            if u < p1:
+                k = u / p1
                 sv = sv.evolve((XGate() if k < 1.0 / 3.0 else (YGate() if k < 2.0 / 3.0 else ZGate())), qargs=[args[0]])
-        if name in TWO_Q and m2:
+        if name in TWO_Q and ns.g2p(args[0], args[1]) > 0.0:
+            p2 = ns.g2p(args[0], args[1])
             u = rng.next()
-            if u < m2:
-                sv = pauli_pair(sv, args[0], args[1], min(int(u / m2 * 15.0), 14) + 1)
+            if u < p2:
+                sv = pauli_pair(sv, args[0], args[1], min(int(u / p2 * 15.0), 14) + 1)
     for i, a in enumerate(sv.data):
         if a != 0:
             lines.append(f"amp {i} {float(a.real)!r} {float(a.imag)!r}")
@@ -196,7 +229,7 @@ def reference_dm(n, ops):
     rho = DensityMatrix.from_int(0, 2**n)
     rng = Rng()
     lines, quiet = [], False
-    ro = m1 = m2 = 0.0
+    ns = NoiseState()
 
     def depol2_kraus(p):
         P = [np.eye(2, dtype=complex), np.array([[0, 1], [1, 0]], dtype=complex),
@@ -223,14 +256,8 @@ def reference_dm(n, ops):
             rho = rho.evolve(Kraus(kraus(name, a[1] / a[2])), qargs=[a[0]])
         elif name == "depol2":
             rho = rho.evolve(Kraus(depol2_kraus(a[2] / a[3])), qargs=[a[0], a[1]])
-        elif name in ("readout", "model1", "model2"):
-            val = a[0] / a[1] if a[0] else 0.0
-            if name == "readout":
-                ro = val
-            elif name == "model1":
-                m1 = val
-            else:
-                m2 = val
+        elif name in NOISE_SET:
+            ns.set(name, a)
         elif name == "seed":
             rng = Rng(a[0])
         elif name == "m":
@@ -244,7 +271,7 @@ def reference_dm(n, ops):
             m = m * np.outer(keep, keep) / pr
             rho = DensityMatrix(m)
             reported = bit
-            if ro > 0.0 and rng.next() < ro:
+            if ns.rp(q, bit) > 0.0 and rng.next() < ns.rp(q, bit):
                 reported = 1 - bit
             lines.append(f"m {q} {reported}")
         elif name == "purity":
@@ -259,10 +286,10 @@ def reference_dm(n, ops):
             quiet = True
         else:
             raise ValueError(name)
-        if name in ONE_Q and m1:
-            rho = rho.evolve(Kraus(kraus("depol", m1)), qargs=[a[0]])
-        if name in TWO_Q and m2:
-            rho = rho.evolve(Kraus(depol2_kraus(m2)), qargs=[a[0], a[1]])
+        if name in ONE_Q and ns.g1p(a[0]) > 0.0:
+            rho = rho.evolve(Kraus(kraus("depol", ns.g1p(a[0]))), qargs=[a[0]])
+        if name in TWO_Q and ns.g2p(a[0], a[1]) > 0.0:
+            rho = rho.evolve(Kraus(depol2_kraus(ns.g2p(a[0], a[1]))), qargs=[a[0], a[1]])
     if not quiet:
         for i in range(2**n):
             for j in range(2**n):
@@ -291,6 +318,12 @@ def random_circuit(rng, n, count):
         else:
             ops.append((kind, rng.randrange(n)))
     return ops
+
+
+# An invented example device (the numbers are made up, not from a real machine): per-qubit
+# one-qubit-gate errors, per-pair two-qubit errors, asymmetric readout on two qubits.
+PROFILE = [("model1", 1, 100), ("gate1err", 0, 1, 15), ("gate1err", 2, 1, 6), ("gate2err", 0, 1, 1, 7), ("gate2err", 2, 1, 1, 9),
+           ("readerr", 0, 1, 12, 1, 6), ("readerr", 1, 1, 30, 1, 5), ("readout", 1, 25)]
 
 
 def feature_circuits():
@@ -340,6 +373,9 @@ def feature_circuits():
     for k in range(1, 4):
         c[f"depol2_seed{k}"] = (3, [("seed", k), ("h", 0), ("cx", 0, 1), ("depol2", 0, 1, 1, 3), ("ry", 2, 1, 5),
                                     ("depol2", 1, 2, 1, 2), ("depol2", 2, 0, 1, 4)])
+    for k in range(1, 5):
+        c[f"profile_seed{k}"] = (3, [("seed", k)] + PROFILE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3), ("rz", 1, 1, 5), ("cx", 2, 0),
+                                                            ("m", 0), ("m", 1), ("sample", 300)])
     c["ghz5_sample"] = (5, [("h", 0)] + [("cx", i, i + 1) for i in range(4)] + [("seed", 5), ("sample", 500)])
     return c
 
@@ -382,6 +418,8 @@ def density_circuits():
     c["dm_model"] = (3, [("model1", 1, 20), ("model2", 1, 10), ("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("rz", 2, 1, 4), ("swap", 0, 2),
                          ("cp", 0, 1, 1, 3), ("purity",), ("probs",)])
     c["dm_readout"] = (2, [("seed", 3), ("readout", 1, 4), ("h", 0), ("cx", 0, 1), ("m", 0), ("m", 1), ("purity",)])
+    c["dm_profile"] = (3, [("seed", 9)] + PROFILE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3), ("rz", 1, 1, 5), ("cx", 2, 0),
+                                                  ("m", 0), ("m", 1), ("purity",), ("probs",)])
     c["dm_p0"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 0, 1), ("bitflip", 1, 0, 1), ("phaseflip", 0, 0, 1), ("ampdamp", 1, 0, 1), ("purity",)])
     c["dm_p1"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 1, 1), ("bitflip", 1, 1, 1), ("phaseflip", 0, 1, 1), ("ampdamp", 1, 1, 1), ("purity",), ("probs",)])
     return c

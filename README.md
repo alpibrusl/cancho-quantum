@@ -16,6 +16,7 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
 - `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
+- `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`scripts/noise_profile.py`; `profiles/example_5q.json` has invented numbers)
 - `docs/noise-results.md`: five channels, readout error and a gate-noise model, by trajectories, checked against exact density matrices
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
@@ -51,3 +52,5 @@ is read by Qiskit's parser and by `qsim` and must mean the reference, and
 the circuits are written back out by Qiskit and fed to `qsim`.
 
 `scripts/check_noise.py` averages noisy runs over thousands of seeds and compares the result with an exact density-matrix calculation.
+
+`scripts/check_profile.py` checks the noise-profile converter and the simulator's use of it against Qiskit.
