@@ -14,9 +14,10 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
 
 4. Run the checks that need no network after the clone:
    python3 scripts/check_types.py          # every line must say ok; ends "24 of 24 fixtures behave as stated"
-   Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv && . .venv/bin/activate && pip install qiskit numpy):
+   Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv && . .venv/bin/activate && pip install qiskit numpy qiskit-aer qiskit-ibm-runtime):
    python3 scripts/check_diff.py           # amplitudes against Qiskit; ends with the worst error, which must be under 1e-12
    python3 scripts/check_qasm.py           # OpenQASM files read by Qiskit's parser and by qsim agree
+   python3 scripts/check_calibration.py    # the real-device (ibm_perth, 2024) profile against Qiskit Aer's noise model from the same snapshot
    python3 scripts/check_profile.py        # the device-style noise profile converter and its use, against Qiskit
    python3 scripts/check_noise.py          # noisy runs averaged over 4000 seeds match an exact density-matrix calculation (about 40 s)
    python3 scripts/check_determinism.py    # six builds per circuit must give identical bytes (omit --arm64 unless qemu-aarch64 is installed)
@@ -26,6 +27,7 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
    printf 'n 2\nh 0\ncx 0 1\n' | ./qsim     # a Bell state: amp 0 and amp 3 are 7.071067811865475e-1
    cat tests/qasm/qft4.qasm | ./qsim | head -3   # the same simulator reading OpenQASM 2.0
    printf 'dm 2\nh 0\ncx 0 1\ndepol 1 1 4\npurity\nquiet\n' | ./qsim   # exact noise; prints purity 5.833333333333328e-1
+   printf 'dm 1\ncoher 0 50000 70000\nx 0\nwait 0 20000\nprobs\nquiet\n' | ./qsim   # T1 decay: prob 1 is exp(-0.4) = 6.703200460356392e-1
    printf 'n 3\nh 0\nh 1\nh 2\nseed 1\nsample 100\n' | ./qsim | head -8   # 100 samples, counts per outcome
    Now make a program that clones a qubit and watch it be refused. Copy tests/reject/clone_qubit.cho, read it, and run:
    $CANCHO check src/complex.cho src/state.cho src/gates.cho src/profile.cho src/measure.cho src/noise.cho src/qubit.cho tests/reject/clone_qubit.cho --std ; echo "exit $?"           # expect exit 1

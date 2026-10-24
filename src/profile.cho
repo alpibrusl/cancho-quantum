@@ -1,5 +1,7 @@
 module qc.profile;
 
+import std.math;
+
 // The noise parameters a run carries, in the sampler's slice (`rng`). Lookups only:
 // nothing here draws, so `measure.cho` can read them and `noise.cho` can use them.
 //
@@ -13,12 +15,17 @@ module qc.profile;
 //   rng[8 + 2q] and the next      qubit q's own one-qubit-gate error (`gate1err`), numerator then denominator
 //   rng[48 + 2 (20 a + b)] ...     the pair (a, b)'s two-qubit-gate error (`gate2err`), stored for both orders
 //   rng[848 + 4q] ...              qubit q's asymmetric readout error (`readerr`): P(report 1 | true 0) then P(report 0 | true 1)
+//   rng[928 + q]      qubit q's T1, in nanoseconds (`coher`); 0: no idle noise on that qubit
+//   rng[948 + q]      qubit q's T2, in nanoseconds
+//   rng[968], rng[969] how long a one-qubit and a two-qubit gate take, in nanoseconds (`time1`, `time2`)
+//   rng[970 + 20a + b] the pair (a, b)'s own two-qubit gate time (`dur2`), stored for both orders; 0: use rng[969]
+//   rng[1370 + q]     qubit q's own one-qubit gate time (`dur1`); 0: use rng[968]
 //
 // A denominator of 0 in an override slot means "not set": the default above applies. An
 // override with numerator 0 and a real denominator is set, and means probability 0.
 
 pub fn size() -> [] int {
-    return 928;
+    return 1390;
 }
 
 pub fn prob(num: int, den: int) -> [] float {
@@ -100,4 +107,64 @@ pub fn ro_p[&r](rng: &r [int], q: int, bit: int) -> [] float {
         return 0.0;
     }
     return prob(rng[2], rng[3]);
+}
+
+pub fn set_coh[&r](rng: &!r [int], q: int, t1: int, t2: int) -> [] int {
+    rng[928 + q] = t1;
+    rng[948 + q] = t2;
+    return 0;
+}
+
+// `slot` is 968 (one-qubit gates) or 969 (two-qubit gates).
+pub fn set_time[&r](rng: &!r [int], slot: int, ns: int) -> [] int {
+    rng[slot] = ns;
+    return 0;
+}
+
+// Whether qubit `q` has coherence times set, so idling for any time changes it.
+pub fn has_coh[&r](rng: &r [int], q: int) -> [] bool {
+    return rng[928 + q] > 0;
+}
+
+// Thermal relaxation over `ns` nanoseconds is amplitude damping then dephasing, which
+// commute. Damping: gamma = 1 - exp(-t / T1). Pure dephasing happens at the rate
+// 1/T2 - 1/(2 T1) (so the coherence decays as exp(-t / T2) overall), and a phase flip
+// with probability (1 - exp(-t * rate)) / 2 has exactly that effect.
+pub fn relax_gamma[&r](rng: &r [int], q: int, ns: int) -> [] float {
+    return 1.0 - math.exp(0.0 - float_of(ns) / float_of(rng[928 + q]));
+}
+
+pub fn relax_flip[&r](rng: &r [int], q: int, ns: int) -> [] float {
+    let rate = 1.0 / float_of(rng[948 + q]) - 0.5 / float_of(rng[928 + q]);
+    if rate <= 0.0 {
+        return 0.0;
+    }
+    return 0.5 * (1.0 - math.exp(0.0 - float_of(ns) * rate));
+}
+
+pub fn set_dur1[&r](rng: &!r [int], q: int, ns: int) -> [] int {
+    rng[1370 + q] = ns;
+    return 0;
+}
+
+pub fn set_dur2[&r](rng: &!r [int], a: int, b: int, ns: int) -> [] int {
+    rng[970 + 20 * a + b] = ns;
+    rng[970 + 20 * b + a] = ns;
+    return 0;
+}
+
+// How long a one-qubit gate on `q` takes, and a two-qubit gate on (a, b): the override if set, else
+// `time1` / `time2`.
+pub fn dur1[&r](rng: &r [int], q: int) -> [] int {
+    if rng[1370 + q] > 0 {
+        return rng[1370 + q];
+    }
+    return rng[968];
+}
+
+pub fn dur2[&r](rng: &r [int], a: int, b: int) -> [] int {
+    if rng[970 + 20 * a + b] > 0 {
+        return rng[970 + 20 * a + b];
+    }
+    return rng[969];
 }

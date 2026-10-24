@@ -71,6 +71,8 @@ class NoiseState:
     def __init__(self):
         self.ro = self.m1 = self.m2 = 0.0
         self.g1, self.g2, self.rop = {}, {}, {}
+        self.coh, self.gt1, self.gt2 = {}, 0, 0
+        self.dur1, self.dur2 = {}, {}
 
     def set(self, name, a):
         frac = lambda x, y: x / y if x else 0.0
@@ -86,6 +88,31 @@ class NoiseState:
             self.g2[frozenset((a[0], a[1]))] = frac(a[2], a[3])
         elif name == "readerr":
             self.rop[a[0]] = (frac(a[1], a[2]), frac(a[3], a[4]))
+        elif name == "coher":
+            self.coh[a[0]] = (a[1], a[2])
+        elif name == "time1":
+            self.gt1 = a[0]
+        elif name == "time2":
+            self.gt2 = a[0]
+        elif name == "dur1":
+            self.dur1[a[0]] = a[1]
+        elif name == "dur2":
+            self.dur2[frozenset((a[0], a[1]))] = a[2]
+
+    def t1q(self, q):
+        return self.dur1[q] if self.dur1.get(q, 0) > 0 else self.gt1
+
+    def t2q(self, a, b):
+        v = self.dur2.get(frozenset((a, b)), 0)
+        return v if v > 0 else self.gt2
+
+    def relax_params(self, q, ns):
+        """(gamma, flip probability) for qubit q idling ns nanoseconds, or None without a `coher`."""
+        if ns <= 0 or q not in self.coh:
+            return None
+        t1, t2 = self.coh[q]
+        rate = 1.0 / t2 - 0.5 / t1
+        return 1.0 - math.exp(-ns / t1), (0.5 * (1.0 - math.exp(-ns * rate)) if rate > 0.0 else 0.0)
 
     def g1p(self, q):
         return self.g1[q] if q in self.g1 else self.m1
@@ -98,7 +125,7 @@ class NoiseState:
         return self.rop[q][bit] if q in self.rop else self.ro
 
 
-NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr")
+NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "dur1", "dur2")
 
 
 def pauli_pair(sv, a, b, m):
@@ -106,6 +133,28 @@ def pauli_pair(sv, a, b, m):
     for q, k in ((a, m // 4), (b, m % 4)):
         if k:
             sv = sv.evolve(PAULI[k](), qargs=[q])
+    return sv
+
+
+def traj_ampdamp(sv, q, p, u):
+    """One amplitude-damping trajectory with decay probability p and draw u (src/noise.cho)."""
+    p1 = p * float(sv.probabilities([q])[1])
+    if u < p1:
+        k1 = np.array([[0, math.sqrt(p) / math.sqrt(p1)], [0, 0]], dtype=complex)
+        return sv.evolve(Operator(k1), qargs=[q])
+    keep = 1.0 / math.sqrt(1.0 - p1)
+    k0 = np.array([[keep, 0], [0, math.sqrt(1.0 - p) * keep]], dtype=complex)
+    return sv.evolve(Operator(k0), qargs=[q])
+
+
+def traj_relax(sv, rng, ns, q, ns_ns):
+    """Idle qubit q for ns_ns nanoseconds: damping then a phase flip, two draws (none without a coher)."""
+    par = ns.relax_params(q, ns_ns)
+    if par is None:
+        return sv
+    sv = traj_ampdamp(sv, q, par[0], rng.next())
+    if rng.next() < par[1]:
+        sv = sv.evolve(ZGate(), qargs=[q])
     return sv
 
 
@@ -143,14 +192,7 @@ def reference(n, ops):
                 gate = XGate() if k < 1.0 / 3.0 else (YGate() if k < 2.0 / 3.0 else ZGate())
                 sv = sv.evolve(gate, qargs=[q])
             elif name == "ampdamp":
-                p1 = p * float(sv.probabilities([q])[1])
-                if u < p1:
-                    k1 = np.array([[0, math.sqrt(p) / math.sqrt(p1)], [0, 0]], dtype=complex)
-                    sv = sv.evolve(Operator(k1), qargs=[q])
-                else:
-                    keep = 1.0 / math.sqrt(1.0 - p1)
-                    k0 = np.array([[keep, 0], [0, math.sqrt(1.0 - p) * keep]], dtype=complex)
-                    sv = sv.evolve(Operator(k0), qargs=[q])
+                sv = traj_ampdamp(sv, q, p, u)
         elif name == "depol2":
             a, b, p = args[0], args[1], args[2] / args[3]
             u = rng.next()
@@ -158,6 +200,8 @@ def reference(n, ops):
                 sv = pauli_pair(sv, a, b, min(int(u / p * 15.0), 14) + 1)
         elif name in NOISE_SET:
             ns.set(name, args)
+        elif name == "wait":
+            sv = traj_relax(sv, rng, ns, args[0], args[1])
         elif name == "sample":
             # An independent method: a cumulative sum and a binary search, where
             # the simulator adds up probabilities one state at a time.
@@ -216,10 +260,25 @@ def reference(n, ops):
             u = rng.next()
             if u < p2:
                 sv = pauli_pair(sv, args[0], args[1], min(int(u / p2 * 15.0), 14) + 1)
+        if name in ONE_Q:
+            sv = traj_relax(sv, rng, ns, args[0], ns.t1q(args[0]))
+        if name in TWO_Q:
+            sv = traj_relax(sv, rng, ns, args[0], ns.t2q(args[0], args[1]))
+            sv = traj_relax(sv, rng, ns, args[1], ns.t2q(args[0], args[1]))
     for i, a in enumerate(sv.data):
         if a != 0:
             lines.append(f"amp {i} {float(a.real)!r} {float(a.imag)!r}")
     return lines
+
+
+def dm_relax(rho, ns, q, ns_ns):
+    """Qiskit Aer's own thermal-relaxation channel: the check on `coher`, built from T1, T2 and the time."""
+    from qiskit.quantum_info import Kraus
+    from qiskit_aer.noise import thermal_relaxation_error
+    if ns_ns <= 0 or q not in ns.coh:
+        return rho
+    t1, t2 = ns.coh[q]
+    return rho.evolve(Kraus(thermal_relaxation_error(t1, t2, ns_ns)), qargs=[q])
 
 
 def reference_dm(n, ops):
@@ -274,6 +333,8 @@ def reference_dm(n, ops):
             if ns.rp(q, bit) > 0.0 and rng.next() < ns.rp(q, bit):
                 reported = 1 - bit
             lines.append(f"m {q} {reported}")
+        elif name == "wait":
+            rho = dm_relax(rho, ns, a[0], a[1])
         elif name == "purity":
             lines.append(f"purity {float(np.real(np.trace(rho.data @ rho.data)))!r}")
         elif name == "trace":
@@ -290,6 +351,11 @@ def reference_dm(n, ops):
             rho = rho.evolve(Kraus(kraus("depol", ns.g1p(a[0]))), qargs=[a[0]])
         if name in TWO_Q and ns.g2p(a[0], a[1]) > 0.0:
             rho = rho.evolve(Kraus(depol2_kraus(ns.g2p(a[0], a[1]))), qargs=[a[0], a[1]])
+        if name in ONE_Q:
+            rho = dm_relax(rho, ns, a[0], ns.t1q(a[0]))
+        if name in TWO_Q:
+            rho = dm_relax(rho, ns, a[0], ns.t2q(a[0], a[1]))
+            rho = dm_relax(rho, ns, a[1], ns.t2q(a[0], a[1]))
     if not quiet:
         for i in range(2**n):
             for j in range(2**n):
@@ -420,6 +486,17 @@ def density_circuits():
     c["dm_readout"] = (2, [("seed", 3), ("readout", 1, 4), ("h", 0), ("cx", 0, 1), ("m", 0), ("m", 1), ("purity",)])
     c["dm_profile"] = (3, [("seed", 9)] + PROFILE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3), ("rz", 1, 1, 5), ("cx", 2, 0),
                                                   ("m", 0), ("m", 1), ("purity",), ("probs",)])
+    IDLE = [("coher", 0, 50000, 70000), ("coher", 1, 30000, 20000), ("coher", 2, 40000, 80000), ("time1", 35), ("time2", 300), ("dur2", 0, 1, 520), ("dur1", 2, 50)]
+    c["dm_idle_t1"] = (1, [("coher", 0, 50000, 70000), ("x", 0), ("wait", 0, 20000), ("probs",), ("purity",)])
+    c["dm_idle_ramsey"] = (1, [("coher", 0, 50000, 70000), ("h", 0), ("wait", 0, 30000), ("h", 0), ("probs",)])
+    c["dm_idle_t2max"] = (1, [("coher", 0, 40000, 80000), ("h", 0), ("wait", 0, 40000), ("purity",)])
+    c["dm_idle_gates"] = (3, IDLE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3), ("swap", 0, 2), ("wait", 1, 5000),
+                                     ("purity",), ("probs",)])
+    c["dm_idle_nocoher"] = (2, [("time1", 1000), ("wait", 0, 1000), ("h", 0), ("cx", 0, 1), ("purity",)])
+    c["dm_idle_model"] = (3, IDLE + [("model1", 1, 100), ("model2", 1, 40), ("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("purity",), ("probs",)])
+    for k in range(1, 5):
+        c[f"idle_seed{k}"] = (3, [("seed", k)] + IDLE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("wait", 0, 15000), ("wait", 2, 9000),
+                                                        ("ry", 2, 1, 3), ("cx", 2, 0), ("m", 0), ("m", 1), ("sample", 50)])
     c["dm_p0"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 0, 1), ("bitflip", 1, 0, 1), ("phaseflip", 0, 0, 1), ("ampdamp", 1, 0, 1), ("purity",)])
     c["dm_p1"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 1, 1), ("bitflip", 1, 1, 1), ("phaseflip", 0, 1, 1), ("ampdamp", 1, 1, 1), ("purity",), ("probs",)])
     return c

@@ -216,6 +216,8 @@ model2 1 50  # or: noise after every two-qubit gate from here on
 ry 2 1 3   # rotate qubit 2 by pi/3
 seed 7     # the sampler is seeded: same seed, same bits
 readout 1 20 # report each measured bit flipped, 1 time in 20
+coher 0 50000 70000  # qubit 0: T1 50 us, T2 70 us (nanoseconds)
+wait 0 20000  # ...and it idles for 20 us, so it decays
 sample 1000  # 1000 outcomes, counted per bit string
 m 0        # or measure qubit 0 and collapse the state</pre>
   <p class="fine">The same noise, exactly (<code>dm</code> in place of <code>n</code>, up to 10 qubits): one run prints the density matrix, and <code>purity</code>, <code>trace</code> and <code>probs</code> ask for its properties.</p>
@@ -320,6 +322,7 @@ python3 scripts/check_types.py</code></pre>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/features-results.md">Gates, sampling, OpenQASM</a></h3><p>What was added after the type checker, and what each check found.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/noise-results.md">Noise by sampling</a></h3><p>Four channels, checked as an average against the exact answer.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/density-results.md">Exact noise</a></h3><p>The density matrix as a state of twice as many qubits.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/idle-noise.md">Idle noise</a></h3><p>T1 and T2 decay while a qubit waits, checked against Qiskit Aer&rsquo;s own channel.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Determinism</a></h3><p>Six builds, one set of bytes, and what the emulation does not show.</p></div>
   </div>
 </div></section>

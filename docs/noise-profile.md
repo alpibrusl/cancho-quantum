@@ -31,6 +31,16 @@ input and touches no file, which `cancho authority` confirms.
  "readout": {"default": [0.01, 0.03], "per_qubit": {"4": [0.02, 0.07]}}}
 ```
 
+The profile also takes idle-noise fields, in nanoseconds:
+
+```json
+ "coherence": {"default": [50000, 70000], "per_qubit": {"2": [30000, 40000]}},
+ "gate1": {"time_ns": {"default": 36, "per_qubit": {"0": 35}}},
+ "gate2": {"time_ns": {"default": 400, "per_pair": {"0-1": 300}}}
+```
+
+which become `coher`, `time1` / `dur1`, `time2` / `dur2`. T2 above 2 T1 is refused.
+
 A probability becomes the fraction round(p * 10^6) / 10^6. Probabilities above 1, qubits outside the
 device, a pair of one qubit, a readout entry that is not a pair, and a circuit larger than the profile
 are refused with a message. **The example (`profiles/example_5q.json`) is invented**: its numbers are of the
@@ -55,9 +65,9 @@ size reported for superconducting devices, and none comes from a real machine.
 
 ## Not done
 
-- No idle noise, T1/T2 decoherence, gate-duration dependence, crosstalk or non-Pauli two-qubit noise.
+- Idle noise (T1/T2, gate durations) was added afterwards: `idle-noise.md`, and the profile file takes `coherence` and `time_ns` (below). No crosstalk or non-Pauli two-qubit noise.
 - The noise after a gate is always depolarizing; there is no per-gate-type rate (all one-qubit gates share
   a qubit's rate).
 - No Toffoli noise (a three-qubit gate has no rate).
-- No real device's calibration has been used; reading one is not built.
+- A real device's calibration is read by `scripts/calibration_import.py`: `calibration.md`.
 - Rates are rounded to a millionth.

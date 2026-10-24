@@ -17,6 +17,8 @@
 //     depol2 a b num den   two-qubit depolarizing: one of the 15 non-identity Pauli pairs
 //     readout num den  each measured or sampled bit is reported flipped with probability num/den
 //     model1 num den   depolarizing noise after every one-qubit gate; model2 for two-qubit gates (num 0: off)
+//     coher q T1 T2    idle noise: this qubit relaxes (nanoseconds, T2 <= 2 T1); time1 ns, time2 ns set a gate's
+//                    duration, and each gate qubit relaxes for it (dur1 q ns, dur2 a b ns: one qubit's or pair's own); wait q ns idles a qubit (docs/idle-noise.md)
 //     sample 1000    draw 1000 outcomes from the state (no collapse), print counts
 //     quiet          print no `amp` lines (for timing the gates, not the printer)
 //
@@ -207,6 +209,50 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 return 0 - 1;
             }
             profile.set_ro(rng, q, n01, d01, n10, d10);
+        } else if w == 427070874994 {
+            // `coher q T1 T2` (nanoseconds; 0 < T1, 0 < T2 <= 2 T1): this qubit relaxes while it idles.
+            let q = reader.read_int(io);
+            let t1 = reader.read_int(io);
+            let t2 = reader.read_int(io);
+            if q < 0 || q >= 20 || t1 < 1 || t2 < 1 || t2 > 2 * t1 {
+                return 0 - 1;
+            }
+            profile.set_coh(rng, q, t1, t2);
+        } else if w == 499984983345 || w == 499984983346 {
+            // `time1 ns`, `time2 ns`: how long a one- or two-qubit gate takes; each gate qubit then relaxes.
+            let ns = reader.read_int(io);
+            if ns < 0 {
+                return 0 - 1;
+            }
+            if w == 499984983345 {
+                profile.set_time(rng, 968, ns);
+            } else {
+                profile.set_time(rng, 969, ns);
+            }
+        } else if w == 1685418545 || w == 1685418546 {
+            // `dur1 q ns`, `dur2 a b ns`: one qubit's or one pair's own gate time.
+            let a = reader.read_int(io);
+            if w == 1685418545 {
+                let ns = reader.read_int(io);
+                if a < 0 || a >= 20 || ns < 0 {
+                    return 0 - 1;
+                }
+                profile.set_dur1(rng, a, ns);
+            } else {
+                let b = reader.read_int(io);
+                let ns = reader.read_int(io);
+                if a < 0 || a >= 20 || b < 0 || b >= 20 || a == b || ns < 0 {
+                    return 0 - 1;
+                }
+                profile.set_dur2(rng, a, b, ns);
+            }
+        } else if w == 2002872692 {
+            let q = reader.read_int(io);
+            let ns = reader.read_int(io);
+            if q < 0 || q >= n || ns < 0 {
+                return 0 - 1;
+            }
+            noise.relax(st, n, q, ns, rng);
         } else if w == 487301145972 {
             rng[1] = 1;
         } else if w == 1953655143 {

@@ -13,7 +13,10 @@ Format (probabilities are numbers in [0, 1]):
     {"qubits": 5,
      "gate1":   {"default": p, "per_qubit": {"0": p, ...}},     depolarizing after a one-qubit gate
      "gate2":   {"default": p, "per_pair":  {"0-1": p, ...}},   two-qubit depolarizing after a two-qubit gate
-     "readout": {"default": [p01, p10], "per_qubit": {"4": [p01, p10]}}}
+     "readout": {"default": [p01, p10], "per_qubit": {"4": [p01, p10]}},
+     "coherence": {"default": [t1_ns, t2_ns], "per_qubit": {"2": [t1_ns, t2_ns]}},   idle decay (`coher`)
+     "gate1": {..., "time_ns": {"default": ns, "per_qubit": {"0": ns}}},             how long a gate takes
+     "gate2": {..., "time_ns": {"default": ns, "per_pair": {"0-1": ns}}}}            (`time1`, `dur1`, `time2`, `dur2`)
 
 `p01` is the probability a true 0 is reported as 1, `p10` that a true 1 is reported as 0. A
 probability becomes the fraction round(p * 10^6) / 10^6, which is what `qsim` reads
@@ -37,6 +40,28 @@ def qubit_ok(q, n, what):
     return q
 
 
+def ns_int(x, what):
+    if not isinstance(x, (int, float)) or isinstance(x, bool) or x < 0:
+        raise ValueError(f"{what}: {x!r} is not a duration in nanoseconds")
+    return max(1, round(x)) if x > 0 else 0
+
+
+def durations(block, n, what, default_op, per_op, per_key):
+    ops = []
+    if "default" in block:
+        ops.append("%s %d" % (default_op, ns_int(block["default"], what + ".default")))
+    for key, v in sorted(block.get(per_key, {}).items()):
+        if per_key == "per_qubit":
+            ops.append("%s %d %d" % (per_op, qubit_ok(int(key), n, what), ns_int(v, f"{what}.{key}")))
+        else:
+            a, _, b = key.partition("-")
+            a, b = qubit_ok(int(a), n, what), qubit_ok(int(b), n, what)
+            if a == b:
+                raise ValueError(f"{what}.{key}: the two qubits are the same")
+            ops.append("%s %d %d %d" % (per_op, a, b, ns_int(v, f"{what}.{key}")))
+    return ops
+
+
 def operations(profile, circuit_qubits=None):
     n = profile["qubits"]
     if not isinstance(n, int) or not 1 <= n <= 20:
@@ -58,6 +83,21 @@ def operations(profile, circuit_qubits=None):
         if a == b:
             raise ValueError(f"gate2.per_pair.{pair}: the two qubits are the same")
         ops.append("gate2err %d %d %d %d" % ((a, b) + frac(p, f"gate2.per_pair.{pair}")))
+    ops += durations(g1.get("time_ns", {}), n, "gate1.time_ns", "time1", "dur1", "per_qubit")
+    ops += durations(g2.get("time_ns", {}), n, "gate2.time_ns", "time2", "dur2", "per_pair")
+    coh = profile.get("coherence", {})
+    cper = {int(q): v for q, v in coh.get("per_qubit", {}).items()}
+    for q in range(n):
+        pair = cper.get(q, coh.get("default"))
+        if pair is not None:
+            if not (isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in pair)):
+                raise ValueError(f"coherence for qubit {q} must be [t1_ns, t2_ns]")
+            t1, t2 = (max(1, round(x)) if x > 0 else 0 for x in pair)
+            if t1 < 1 or t2 < 1 or t2 > 2 * t1:
+                raise ValueError(f"coherence for qubit {q}: T1 {pair[0]!r} and T2 {pair[1]!r} must be positive with T2 <= 2 T1")
+            ops.append("coher %d %d %d" % (q, t1, t2))
+    for q in cper:
+        qubit_ok(q, n, "coherence.per_qubit")
     ro = profile.get("readout", {})
     default = ro.get("default")
     per = {int(q): v for q, v in ro.get("per_qubit", {}).items()}
