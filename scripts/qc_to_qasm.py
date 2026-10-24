@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Write each circuit in tests/diff/ that OpenQASM 2.0 can express as tests/qasm/<name>.qasm.
+"""REFERENCE IMPLEMENTATION of `tools/qcconv.cho` (run by `sh scripts/regen.sh`); the oracle it is differentially tested against.
+
+Write each circuit in tests/diff/ that OpenQASM 2.0 can express as tests/qasm/<name>.qasm.
 
     python3 scripts/qc_to_qasm.py
 

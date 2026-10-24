@@ -27,11 +27,10 @@ noise on the density matrix (`docs/density-results.md`).
 
 ![Worst amplitude error against Qiskit, per circuit](docs/img/error-per-circuit.svg)
 
-**What is cancho and what is Python.** The simulator (`src/`) and the tools a user runs (`tools/`: `qprofile`, which
-turns a device-style JSON noise profile into `qsim` operations, and `qcalib`, which turns a published IBM calibration into
-such a profile) are cancho, with no Python and no file or network access (`cancho authority` says so). Python is only the
-test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks, the generators of the test
-circuits and the landing-page builder. `scripts/noise_profile.py` and `scripts/calibration_import.py` are reference
+**What is cancho and what is Python.** The simulator (`src/`) and the tools (`tools/`: `qprofile`, which
+turns a device-style JSON noise profile into `qsim` operations; `qcalib`, which turns a published IBM calibration into
+such a profile; and `qcconv`, which writes a `.qc` circuit as a compiled cancho circuit or as OpenQASM, run by `sh scripts/regen.sh`) are cancho, with no Python and no file or network access (`cancho authority` says so). Python is only the
+test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks and the landing-page builder. `scripts/noise_profile.py`, `calibration_import.py`, `qc_to_cho.py` and `qc_to_qasm.py` are reference
 implementations the cancho tools are differentially tested against, not what you run.
 
 ```sh

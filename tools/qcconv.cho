@@ -1,0 +1,470 @@
+// `qcconv` — turn a circuit in the `.qc` text format into a compiled cancho circuit, or into OpenQASM 2.0.
+//
+//     (echo "cho bell"; cat tests/diff/bell.qc)  | qcconv > tests/circuits/bell.cho
+//     (echo "qasm";     cat tests/diff/bell.qc)  | qcconv > tests/qasm/bell.qasm
+//
+// Standard input is one line, `cho NAME` or `qasm`, and then the circuit. Standard output is the
+// result. Exit status: 0 done; 3 the circuit has no such form (a `dm` circuit has no compiled form
+// and no QASM one; QASM has no `seed`, `sample`, `trig` or noise); 2 the input is malformed or has
+// an operation this tool does not know. Nothing is printed unless the status is 0.
+//
+// `cho`: the circuit as a cancho function, so that it can be compiled, run, and given a content
+// identity by `cancho ids`, plus the small driver that prints what `qsim` prints. The compiled
+// circuits call the same functions as the interpreter (`scripts/check_determinism.py` requires the
+// two to agree byte for byte). `qasm`: `swap` becomes three `cx`; `p` and `cp` are written `u1` and
+// `cu1`, the names `qelib1.inc` defines; angles are written `num*pi/den`; a measurement is
+// `measure q[i] -> c[i];`.
+//
+// `scripts/qc_to_cho.py` and `scripts/qc_to_qasm.py` are the Python reference implementations this is
+// differentially tested against (`scripts/check_tools.py`).
+
+import std.buffer;
+import std.bytes;
+import std.io;
+
+fn refuse[&i](io: &!i Io, what: &static [byte]) -> [err_write] int {
+    io.error_all(io, "qcconv: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 0;
+}
+
+fn is_space(c: int) -> [] bool {
+    return c == 32 || c == 9 || c == 13;
+}
+
+// The end of the line starting at `at`.
+fn line_end[&s](text: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(text) && int_of(text[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+// Token number `k` of the line text[ls..le] as (start, end); start == end when there is none.
+fn token[&s](text: &s [byte], ls: int, le: int, k: int) -> [] (int, int) {
+    var p = ls;
+    var seen = 0;
+    while p < le {
+        while p < le && is_space(int_of(text[p])) {
+            p = p + 1;
+        }
+        let a = p;
+        while p < le && !is_space(int_of(text[p])) {
+            p = p + 1;
+        }
+        if p > a {
+            if seen == k {
+                return (a, p);
+            }
+            seen = seen + 1;
+        }
+    }
+    return (le, le);
+}
+
+// A decimal integer (optionally signed) from text[a..b]; ok is 0 when it is not one.
+fn parse_int[&s](text: &s [byte], a: int, b: int) -> [] (int, int) {
+    if b <= a {
+        return (0, 0);
+    }
+    var p = a;
+    var sign = 1;
+    if int_of(text[p]) == '-' {
+        sign = 0 - 1;
+        p = p + 1;
+    }
+    if p >= b || b - p > 15 {
+        return (0, 0);
+    }
+    var v = 0;
+    while p < b {
+        let c = int_of(text[p]);
+        if c < '0' || c > '9' {
+            return (0, 0);
+        }
+        v = v * 10 + (c - '0');
+        p = p + 1;
+    }
+    return (sign * v, 1);
+}
+
+fn put[&h](heap: &!h Heap, buf: buffer.Buffer, text: &static [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buf, text);
+}
+
+fn put_int[&h](heap: &!h Heap, buf: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    if n < 0 {
+        return buffer.push_nat(heap, buffer.push(heap, buf, byte_of('-')), 0 - n);
+    }
+    return buffer.push_nat(heap, buf, n);
+}
+
+// Append `tmpl` with `$n` replaced by the qubit count, `$0`..`$4` by the operation's arguments and `$w` by its word.
+fn emit[&h, &w](heap: &!h Heap, buf: buffer.Buffer, tmpl: &static [byte], n: int, a0: int, a1: int, a2: int, a3: int, a4: int, word: &w [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    var k = 0;
+    while k < len(tmpl) {
+        let c = int_of(tmpl[k]);
+        if c == '$' && k + 1 < len(tmpl) {
+            let d = int_of(tmpl[k + 1]);
+            if d == 'n' {
+                out = put_int(heap, out, n);
+            } else if d == 'w' {
+                out = buffer.append(heap, out, word);
+            } else if d == '0' {
+                out = put_int(heap, out, a0);
+            } else if d == '1' {
+                out = put_int(heap, out, a1);
+            } else if d == '2' {
+                out = put_int(heap, out, a2);
+            } else if d == '3' {
+                out = put_int(heap, out, a3);
+            } else {
+                out = put_int(heap, out, a4);
+            }
+            k = k + 2;
+        } else {
+            out = buffer.push(heap, out, byte_of(c));
+            k = k + 1;
+        }
+    }
+    return out;
+}
+
+fn eq[&s](word: &s [byte], lit: &static [byte]) -> [] bool {
+    return bytes.equal(word, lit);
+}
+
+fn one_q[&s](w: &s [byte]) -> [] bool {
+    return eq(w, "h") || eq(w, "x") || eq(w, "y") || eq(w, "z") || eq(w, "s") || eq(w, "t") || eq(w, "sdg") || eq(w, "tdg");
+}
+
+fn one_q_angle[&s](w: &s [byte]) -> [] bool {
+    return eq(w, "rx") || eq(w, "ry") || eq(w, "rz") || eq(w, "p");
+}
+
+fn two_q[&s](w: &s [byte]) -> [] bool {
+    return eq(w, "cx") || eq(w, "cz") || eq(w, "cp") || eq(w, "swap");
+}
+
+fn gate_noise_op[&s](w: &s [byte]) -> [] bool {
+    return eq(w, "model1") || eq(w, "model2") || eq(w, "gate1err") || eq(w, "gate2err") || eq(w, "time1") || eq(w, "time2") || eq(w, "dur1") || eq(w, "dur2") || eq(w, "sched");
+}
+
+fn prints_op[&s](w: &s [byte]) -> [] bool {
+    return eq(w, "sample") || eq(w, "m") || eq(w, "trig");
+}
+
+// The driver every compiled circuit ends with.
+fn driver[&h](heap: &!h Heap, buf: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    out = put(heap, out, "\nfn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {\n    let amp = box_slice(heap, state.floats_for(");
+    out = put_int(heap, out, n);
+    out = put(heap, out, "), 0.0);\n    region r {\n        let rng = alloc_slice[r](profile.size(), 0);\n        profile.init(rng, 88172645463325252);\n        let scratch = alloc_slice[r](24, byte_of(0));\n        borrow mut amp as &!w in {\n            let st = contents(w);\n            state.start(st);\n            circuit(io, st, rng, scratch);\n            dump.amplitudes(io, st, ");
+    out = put_int(heap, out, n);
+    out = put(heap, out, ", scratch);\n        }\n    }\n    unbox_slice(heap, amp);\n    return 0;\n}\n\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(ffi);\n    release(fs);\n    release(args);\n    var status = 0;\n    borrow mut heap as &!h in {\n        borrow mut io as &!i in {\n            status = run(h, i);\n        }\n    }\n    release(heap);\n    release(io);\n    return status;\n}\n");
+    return out;
+}
+
+// One operation of a compiled circuit. Answers 1 when the operation is unknown.
+fn cho_op[&h, &s, &f](heap: &!h Heap, buf: buffer.Buffer, w: &s [byte], n: int, a0: int, a1: int, a2: int, a3: int, a4: int, gate_noise: bool, fails: &!f [int]) -> [heap] buffer.Buffer {
+    var out = buf;
+    if gate_noise && two_q(w) {
+        out = emit(heap, out, "    noise.before2(st, $n, $0, $1, rng);\n", n, a0, a1, a2, a3, a4, w);
+    }
+    if eq(w, "sample") {
+        out = emit(heap, out, "    noise.barrier(st, $n, rng);\n", n, a0, a1, a2, a3, a4, w);
+    }
+    if one_q(w) {
+        out = emit(heap, out, "    gates.$w(st, $n, $0);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "cx") || eq(w, "cz") {
+        out = emit(heap, out, "    gates.$w(st, $n, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "rz") || eq(w, "rx") || eq(w, "ry") || eq(w, "p") {
+        out = emit(heap, out, "    gates.$w(st, $n, $0, gates.angle($1, $2));\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "swap") {
+        out = emit(heap, out, "    gates.swap(st, $n, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "ccx") {
+        out = emit(heap, out, "    gates.ccx(st, $n, $0, $1, $2);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "cp") {
+        out = emit(heap, out, "    gates.cp(st, $n, $0, $1, gates.angle($2, $3));\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "bitflip") || eq(w, "phaseflip") || eq(w, "depol") || eq(w, "ampdamp") {
+        out = emit(heap, out, "    noise.$w(st, $n, $0, noise.prob($1, $2), rng);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "sample") {
+        out = emit(heap, out, "    dump.samples(io, st, $n, rng, $0);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "seed") {
+        out = emit(heap, out, "    rng[0] = $0;\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "m") {
+        out = emit(heap, out, "    dump.measurement(io, $0, noise.readout(measure.measure(st, $n, $0, rng), $0, rng));\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "depol2") {
+        out = emit(heap, out, "    noise.depol2(st, $n, $0, $1, noise.prob($2, $3), rng);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "readout") {
+        out = emit(heap, out, "    profile.set_slot(rng, 2, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "model1") {
+        out = emit(heap, out, "    profile.set_slot(rng, 4, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "model2") {
+        out = emit(heap, out, "    profile.set_slot(rng, 6, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "gate1err") {
+        out = emit(heap, out, "    profile.set_g1(rng, $0, $1, $2);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "gate2err") {
+        out = emit(heap, out, "    profile.set_g2(rng, $0, $1, $2, $3);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "readerr") {
+        out = emit(heap, out, "    profile.set_ro(rng, $0, $1, $2, $3, $4);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "coher") {
+        out = emit(heap, out, "    profile.set_coh(rng, $0, $1, $2);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "time1") {
+        out = emit(heap, out, "    profile.set_time(rng, 968, $0);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "time2") {
+        out = emit(heap, out, "    profile.set_time(rng, 969, $0);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "dur1") {
+        out = emit(heap, out, "    profile.set_dur1(rng, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "dur2") {
+        out = emit(heap, out, "    profile.set_dur2(rng, $0, $1, $2);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "wait") {
+        out = emit(heap, out, "    noise.relax(st, $n, $0, $1, rng);\n    profile.set_clock(rng, $0, profile.clock(rng, $0) + $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "sched") {
+        out = put(heap, out, "    rng[1410] = 1;\n");
+    } else if eq(w, "barrier") {
+        out = emit(heap, out, "    noise.barrier(st, $n, rng);\n", n, a0, a1, a2, a3, a4, w);
+    } else if eq(w, "trig") {
+        out = emit(heap, out, "    dump.trig(io, scratch, $0, $1);\n", n, a0, a1, a2, a3, a4, w);
+    } else {
+        fails[0] = 2;
+    }
+    if gate_noise && (one_q(w) || one_q_angle(w)) {
+        out = emit(heap, out, "    noise.after1(st, $n, $0, rng);\n", n, a0, a1, a2, a3, a4, w);
+    }
+    if gate_noise && two_q(w) {
+        out = emit(heap, out, "    noise.after2(st, $n, $0, $1, rng);\n", n, a0, a1, a2, a3, a4, w);
+    }
+    return out;
+}
+
+// The text of an angle num*pi/den in QASM: `0`, `pi`, `3*pi`, `pi/4`, `-3*pi/8`.
+fn frac[&h](heap: &!h Heap, buf: buffer.Buffer, num: int, den: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    var mag = num;
+    if num < 0 {
+        mag = 0 - num;
+    }
+    if mag == 0 {
+        return put(heap, out, "0");
+    }
+    if num < 0 {
+        out = put(heap, out, "-");
+    }
+    if mag == 1 {
+        out = put(heap, out, "pi");
+    } else {
+        out = put_int(heap, out, mag);
+        out = put(heap, out, "*pi");
+    }
+    if den != 1 {
+        out = put(heap, out, "/");
+        out = put_int(heap, out, den);
+    }
+    return out;
+}
+
+// One operation of a QASM circuit: 0 written, 1 the circuit has no QASM form, 2 unknown operation.
+fn qasm_op[&h, &s](heap: &!h Heap, buf: buffer.Buffer, w: &s [byte], a0: int, a1: int, a2: int, a3: int) -> [heap] (buffer.Buffer, int) {
+    var out = buf;
+    if eq(w, "seed") || eq(w, "sample") || eq(w, "trig") || eq(w, "quiet") || eq(w, "bitflip") || eq(w, "phaseflip") || eq(w, "depol") || eq(w, "ampdamp") || eq(w, "depol2") || eq(w, "readout") || eq(w, "model1") || eq(w, "model2") || eq(w, "gate1err") || eq(w, "gate2err") || eq(w, "readerr") || eq(w, "coher") || eq(w, "time1") || eq(w, "time2") || eq(w, "dur1") || eq(w, "dur2") || eq(w, "wait") {
+        return (out, 1);
+    }
+    if one_q(w) {
+        out = emit(heap, out, "$w q[$0];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if eq(w, "cx") || eq(w, "cz") {
+        out = emit(heap, out, "$w q[$0],q[$1];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if eq(w, "swap") {
+        out = emit(heap, out, "cx q[$0],q[$1];\ncx q[$1],q[$0];\ncx q[$0],q[$1];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if eq(w, "ccx") {
+        out = emit(heap, out, "ccx q[$0],q[$1],q[$2];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if one_q_angle(w) {
+        if eq(w, "p") {
+            out = put(heap, out, "u1(");
+        } else {
+            out = buffer.append(heap, out, w);
+            out = put(heap, out, "(");
+        }
+        out = frac(heap, out, a1, a2);
+        out = emit(heap, out, ") q[$0];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if eq(w, "cp") {
+        out = put(heap, out, "cu1(");
+        out = frac(heap, out, a2, a3);
+        out = emit(heap, out, ") q[$0],q[$1];\n", 0, a0, a1, a2, a3, 0, w);
+    } else if eq(w, "m") {
+        out = emit(heap, out, "measure q[$0] -> c[$0];\n", 0, a0, a1, a2, a3, 0, w);
+    } else {
+        return (out, 2);
+    }
+    return (out, 0);
+}
+
+fn convert[&h, &i, &s](heap: &!h Heap, io: &!i Io, text: &s [byte]) -> [heap, err_write] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, 4096);
+    // the mode line
+    var p = 0;
+    while p < len(text) && (int_of(text[p]) == 10 || is_space(int_of(text[p]))) {
+        p = p + 1;
+    }
+    let e0 = line_end(text, p);
+    let (m0, m1) = token(text, p, e0, 0);
+    let (nm0, nm1) = token(text, p, e0, 1);
+    let cho = eq(text[m0..m1], "cho");
+    let qasm = eq(text[m0..m1], "qasm");
+    if !cho && !qasm {
+        refuse(io, "the first line must be `cho NAME` or `qasm`");
+        return (out, 2);
+    }
+    // the circuit's header: `n N`, or a `dm N` circuit that has no such form
+    var q = e0 + 1;
+    while q < len(text) && (int_of(text[q]) == 10 || is_space(int_of(text[q]))) {
+        q = q + 1;
+    }
+    let h1 = line_end(text, q);
+    let (w0, w1) = token(text, q, h1, 0);
+    if !eq(text[w0..w1], "n") {
+        if eq(text[w0..w1], "dm") {
+            return (out, 3);
+        }
+        refuse(io, "the circuit must start with `n <qubits>` or `dm <qubits>`");
+        return (out, 2);
+    }
+    let (c0, c1) = token(text, q, h1, 1);
+    let (n, nok) = parse_int(text, c0, c1);
+    if nok == 0 || n < 1 || n > 20 {
+        refuse(io, "the qubit count must be an integer from 1 to 20");
+        return (out, 2);
+    }
+    let body = h1 + 1;
+    // pass one: does a gate-noise operation appear, and does the circuit print
+    var gate_noise = false;
+    var prints = false;
+    var ls = body;
+    while ls < len(text) {
+        let le = line_end(text, ls);
+        let (a, b) = token(text, ls, le, 0);
+        if b > a {
+            if gate_noise_op(text[a..b]) {
+                gate_noise = true;
+            }
+            if prints_op(text[a..b]) {
+                prints = true;
+            }
+        }
+        ls = le + 1;
+    }
+    if cho {
+        out = put(heap, out, "// Generated by tools/qcconv.cho from tests/diff/");
+        out = buffer.append(heap, out, text[nm0..nm1]);
+        out = put(heap, out, ".qc. Do not edit.\n\nimport qc.dump;\nimport qc.gates;\nimport qc.measure;\nimport qc.noise;\nimport qc.profile;\nimport qc.state;\nimport std.io;\n\n// The circuit. `cancho ids` gives this function's body its identity.\nfn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch: &!b [byte]) -> ");
+        if prints {
+            out = put(heap, out, "[io_write]");
+        } else {
+            out = put(heap, out, "[]");
+        }
+        out = put(heap, out, " int {\n");
+    } else {
+        out = put(heap, out, "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[");
+        out = put_int(heap, out, n);
+        out = put(heap, out, "];\ncreg c[");
+        out = put_int(heap, out, n);
+        out = put(heap, out, "];\n");
+    }
+    // pass two
+    var status = 0;
+    region fr {
+    let fails = alloc_slice[fr](1, 0);
+    ls = body;
+    while ls < len(text) && status == 0 {
+        let le = line_end(text, ls);
+        let (a, b) = token(text, ls, le, 0);
+        if b > a {
+            let (x0, x0e) = token(text, ls, le, 1);
+            let (x1, x1e) = token(text, ls, le, 2);
+            let (x2, x2e) = token(text, ls, le, 3);
+            let (x3, x3e) = token(text, ls, le, 4);
+            let (x4, x4e) = token(text, ls, le, 5);
+            let (v0, k0) = parse_int(text, x0, x0e);
+            let (v1, k1) = parse_int(text, x1, x1e);
+            let (v2, k2) = parse_int(text, x2, x2e);
+            let (v3, k3) = parse_int(text, x3, x3e);
+            let (v4, k4) = parse_int(text, x4, x4e);
+            if k0 == 0 && x0e > x0 || k1 == 0 && x1e > x1 || k2 == 0 && x2e > x2 || k3 == 0 && x3e > x3 || k4 == 0 && x4e > x4 {
+                refuse(io, "an argument is not an integer");
+                status = 2;
+            } else if cho {
+                fails[0] = 0;
+                out = cho_op(heap, out, text[a..b], n, v0, v1, v2, v3, v4, gate_noise, fails);
+                if fails[0] != 0 {
+                    refuse(io, "an operation this tool does not know");
+                    status = 2;
+                }
+            } else {
+                let (o2, st) = qasm_op(heap, out, text[a..b], v0, v1, v2, v3);
+                out = o2;
+                if st == 2 {
+                    refuse(io, "an operation this tool does not know");
+                }
+                if st == 1 {
+                    status = 3;
+                } else {
+                    status = st;
+                }
+            }
+        }
+        ls = le + 1;
+    }
+    }
+    if status != 0 {
+        return (out, status);
+    }
+    if cho {
+        if gate_noise {
+            out = emit(heap, out, "    noise.barrier(st, $n, rng);\n", n, 0, 0, 0, 0, 0, text[0..0]);
+        }
+        out = put(heap, out, "    return 0;\n}\n");
+        out = driver(heap, out, n);
+    }
+    return (out, 0);
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write, err_write] int {
+    var input = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    borrow input as &ir in {
+        let (out, st) = convert(heap, io, buffer.bytes(ir));
+        status = st;
+        if st == 0 {
+            borrow out as &ob in {
+                buffer.write(io, ob);
+            }
+        }
+        buffer.drop(heap, out);
+    }
+    buffer.drop(heap, input);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

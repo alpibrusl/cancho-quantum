@@ -35,7 +35,7 @@
   `ghz5_sample`) agree count for count. A tie-break at a probability
   boundary could in principle differ by one ulp; none did.
 - **OpenQASM.** All 20 circuits QASM can express (those without `seed`,
-  `sample` or `trig`) are written by `scripts/qc_to_qasm.py`; Qiskit's own
+  `sample` or `trig`) are written by `tools/qcconv.cho` (cancho; `scripts/qc_to_qasm.py` is its Python reference); Qiskit's own
   reader and `qsim` agree on each. In the other direction Qiskit wrote the same
   circuits with `qasm2.dumps`: **18 run, 2 were refused** because Qiskit wrote a
   decimal angle (for example `-399.8243433872783` for -12345 pi / 97).

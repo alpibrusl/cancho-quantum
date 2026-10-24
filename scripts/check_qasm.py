@@ -3,7 +3,7 @@
 
     CANCHO=path/to/cancho python3 scripts/check_qasm.py [--exe qsim]
 
-For every circuit in tests/qasm/ (written by scripts/qc_to_qasm.py):
+For every circuit in tests/qasm/ (written by tools/qcconv.cho):
 
   1. Qiskit's own parser accepts the file, and for circuits with no
      measurement its statevector equals the checked-in reference to 1e-12:
