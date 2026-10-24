@@ -606,7 +606,12 @@ pub fn bench_chart[&h, &g, &s, &v, &l](heap: &!h Heap, buf: buffer.Buffer, group
     var si = 0;
     while si < ns {
         let name = text.line_at(series, si);
-        out = text.tr(heap, out, "<rect x=\"%r0\" y=\"%i0\" width=\"8\" height=\"8\" class=\"bar b%i1\"/><text x=\"%r1\" y=\"%i2\" class=\"tick\">", height - 10, si, height - 2, 0, lx, lx + 11.0, 0.0, 0.0);
+        if si == 0 {
+            // the first item sits at the integer `left`, which Python prints without a decimal point
+            out = text.tf(heap, out, "<rect x=\"%i3\" y=\"%i0\" width=\"8\" height=\"8\" class=\"bar b%i1\"/><text x=\"%i4\" y=\"%i2\" class=\"tick\">", height - 10, si, height - 2, left, left + 11, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "", "");
+        } else {
+            out = text.tr(heap, out, "<rect x=\"%r0\" y=\"%i0\" width=\"8\" height=\"8\" class=\"bar b%i1\"/><text x=\"%r1\" y=\"%i2\" class=\"tick\">", height - 10, si, height - 2, 0, lx, lx + 11.0, 0.0, 0.0);
+        }
         out = text.put_esc(heap, out, name);
         out = text.put(heap, out, "</text>");
         lx = lx + 11.0 + 6.2 * float_of(len(name)) + 12.0;

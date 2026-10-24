@@ -1,0 +1,261 @@
+module site.page8;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part eight: the refused, pinned-gap and planned galleries, the capability cards, and the grouping of
+// the supported tiles. The words of the cards and the static lists (what is refused and why, what is planned) are in
+// docs/page/spec.json.
+
+fn static_node[&u, &v](sp_src: &u [byte], sp_tape: &v [int], name: &static [byte]) -> [] int {
+    return json.get(sp_src, sp_tape, json.get(sp_src, sp_tape, 0, "static"), name);
+}
+
+fn text_of[&h, &u, &v](heap: &!h Heap, sp_src: &u [byte], sp_tape: &v [int], node: int) -> [heap] buffer.Buffer {
+    return page1.decode(heap, sp_src, sp_tape, node);
+}
+
+// `links(*pairs)`: <p class="glinks"> of <a href> items, or nothing for no pairs.
+fn links_html[&h, &u, &v](heap: &!h Heap, sp_src: &u [byte], sp_tape: &v [int], pairs: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 128);
+    if json.count(sp_tape, pairs) == 0 {
+        return out;
+    }
+    out = text.put(heap, out, "      <p class=\"glinks\">");
+    var k = 0;
+    while k < json.count(sp_tape, pairs) {
+        let pair = json.at(sp_tape, pairs, k);
+        if k > 0 {
+            out = text.put(heap, out, " ");
+        }
+        let label = text_of(heap, sp_src, sp_tape, json.at(sp_tape, pair, 0));
+        let url = text_of(heap, sp_src, sp_tape, json.at(sp_tape, pair, 1));
+        out = text.put(heap, out, "<a href=\"");
+        borrow url as &ur in {
+            out = text.put_esc(heap, out, buffer.bytes(ur));
+        }
+        out = text.put(heap, out, "\">");
+        borrow label as &lr in {
+            out = text.put_esc(heap, out, buffer.bytes(lr));
+        }
+        out = text.put(heap, out, "</a>");
+        buffer.drop(heap, url);
+        buffer.drop(heap, label);
+        k = k + 1;
+    }
+    return text.put(heap, out, "</p>\n");
+}
+
+// The text of a `<ul class="gallery">` around the given item texts.
+fn ul_open[&h](heap: &!h Heap, buf: buffer.Buffer) -> [heap] buffer.Buffer {
+    return text.put(heap, buf, "<ul class=\"gallery\">\n  ");
+}
+
+// What each refusal looks like and the table of rule tags (REJECT_TABLE), the pinned gaps, and the planned list.
+pub fn tiles_static[&h, &i, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, err_write] int {
+    let why = static_node(sp_src, sp_tape, "why");
+    var refused = ul_open(heap, buffer.empty(heap, 4096));
+    var table = buffer.empty(heap, 1024);
+    var k = 0;
+    while k < json.count(sp_tape, why) {
+        let row = json.at(sp_tape, why, k);
+        let fixture = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 0));
+        let title = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 1));
+        let body = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 2));
+        // the refusal, as the Python Tools.refusal
+        var path = buffer.append(heap, buffer.empty(heap, 64), "tests/reject/");
+        borrow fixture as &fr in {
+            path = buffer.append(heap, path, buffer.bytes(fr));
+        }
+        path = text.put(heap, path, ".cho");
+        var msg = buffer.empty(heap, 128);
+        var rule = buffer.empty(heap, 32);
+        borrow path as &pr in {
+            let plain = page1.check_key(heap, buffer.bytes(pr), false);
+            let json_key = page1.check_key(heap, buffer.bytes(pr), true);
+            var e1 = 0 - 1;
+            borrow plain as &kr in {
+                e1 = util.entry(io, tr_src, tr_tape, buffer.bytes(kr));
+            }
+            var e2 = 0 - 1;
+            borrow json_key as &jr in {
+                e2 = util.entry(io, tr_src, tr_tape, buffer.bytes(jr));
+            }
+            buffer.drop(heap, plain);
+            buffer.drop(heap, json_key);
+            let err = replay.text(heap, tr_src, tr_tape, e1, "err");
+            let out1 = replay.text(heap, tr_src, tr_tape, e1, "out");
+            var joined = err;
+            borrow out1 as &o1 in {
+                joined = buffer.append(heap, joined, buffer.bytes(o1));
+            }
+            buffer.drop(heap, out1);
+            borrow joined as &jn in {
+                let all = buffer.bytes(jn);
+                let lines = text.line_count(all);
+                var li = 0;
+                var found = false;
+                while li < lines && !found {
+                    let line = text.line_at(all, li);
+                    if page1.find_at(line, "error:", 0) >= 0 {
+                        let at = page1.find_at(line, "error: ", 0);
+                        msg = buffer.append(heap, msg, line[at + 7..len(line)]);
+                        found = true;
+                    }
+                    li = li + 1;
+                }
+            }
+            buffer.drop(heap, joined);
+            let out2 = replay.text(heap, tr_src, tr_tape, e2, "out");
+            borrow out2 as &o2 in {
+                let all = buffer.bytes(o2);
+                let at = page1.find_at(all, "\"rule\": \"", 0);
+                if at >= 0 {
+                    var qe = at + 9;
+                    while qe < len(all) && int_of(all[qe]) != '"' {
+                        qe = qe + 1;
+                    }
+                    rule = buffer.append(heap, rule, all[at + 9..qe]);
+                }
+            }
+            buffer.drop(heap, out2);
+        }
+        buffer.drop(heap, path);
+        // facts of the tile t339
+        borrow title as &tr in {
+            facts.set_text(names, ints, texts, "t339.x1", buffer.bytes(tr));
+        }
+        borrow body as &br in {
+            facts.set_text(names, ints, texts, "t339.x2", buffer.bytes(br));
+        }
+        borrow rule as &rr in {
+            page1.set_buf(heap, names, ints, texts, "t339.x3", text.put_esc(heap, buffer.empty(heap, 32), buffer.bytes(rr)));
+            // the table row: <tr><td><code>rule</code></td><td><code>fixture</code></td></tr>
+            table = text.put(heap, table, "      <tr><td><code>");
+            table = text.put_esc(heap, table, buffer.bytes(rr));
+            table = text.put(heap, table, "</code></td><td><code>");
+        }
+        borrow fixture as &fr2 in {
+            table = text.put_esc(heap, table, buffer.bytes(fr2));
+        }
+        table = text.put(heap, table, "</code></td></tr>");
+        if k + 1 < json.count(sp_tape, why) {
+            table = text.put(heap, table, "\n");
+        }
+        borrow msg as &mr in {
+            page1.set_buf(heap, names, ints, texts, "t339.x4", text.put_esc(heap, buffer.empty(heap, 128), buffer.bytes(mr)));
+        }
+        // links(("Fixture", blob(...)))
+        var link = text.put(heap, buffer.empty(heap, 160), "      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/reject/");
+        borrow fixture as &fr3 in {
+            link = text.put_esc(heap, link, buffer.bytes(fr3));
+        }
+        link = text.put(heap, link, ".cho\">Fixture</a></p>\n");
+        page1.set_buf(heap, names, ints, texts, "t339.x5", link);
+        page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t339", false, false, "");
+        // take the tile back out of the facts into the list, in order
+        borrow title as &tr3 in {
+            var tn = text.put(heap, buffer.empty(heap, 64), "tile:");
+            tn = buffer.append(heap, tn, buffer.bytes(tr3));
+            borrow tn as &tnr in {
+                let ti = facts.find(names, ints, buffer.bytes(tnr));
+                if k > 0 {
+                    refused = text.put(heap, refused, "\n  ");
+                }
+                refused = buffer.append(heap, refused, texts[ints[8 + 4 * ti + 2]..ints[8 + 4 * ti + 3]]);
+            }
+            buffer.drop(heap, tn);
+        }
+        buffer.drop(heap, fixture);
+        buffer.drop(heap, title);
+        buffer.drop(heap, body);
+        buffer.drop(heap, msg);
+        buffer.drop(heap, rule);
+        k = k + 1;
+    }
+    refused = text.put(heap, refused, "\n</ul>");
+    page1.set_buf(heap, names, ints, texts, "GAL_REFUSED", refused);
+    page1.set_buf(heap, names, ints, texts, "REJECT_TABLE", table);
+
+    // the accepted-but-wrong gaps
+    var path = text.put(heap, buffer.empty(heap, 64), "tests/accept/same_handle_cx.cho");
+    var compiles = false;
+    borrow path as &pr in {
+        let plain = page1.check_key(heap, buffer.bytes(pr), false);
+        borrow plain as &kr in {
+            let e = util.entry(io, tr_src, tr_tape, buffer.bytes(kr));
+            compiles = replay.rc(tr_src, tr_tape, e) == 0;
+        }
+        buffer.drop(heap, plain);
+    }
+    buffer.drop(heap, path);
+    if compiles {
+        facts.set_text(names, ints, texts, "t345.x1", "yes");
+    } else {
+        facts.set_text(names, ints, texts, "t345.x1", "no");
+    }
+    let (gap_code, gap_out) = util.accept(heap, io, tr_src, tr_tape, "same_handle_cx");
+    buffer.drop(heap, gap_out);
+    facts.set_int(names, ints, "t345.x2", 0 - gap_code);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t345", false, false, "");
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t348", false, false, "");
+    var gaps = ul_open(heap, buffer.empty(heap, 2048));
+    var gi = facts.find(names, ints, "tile:CNOT with one qubit as both operands");
+    gaps = buffer.append(heap, gaps, texts[ints[8 + 4 * gi + 2]..ints[8 + 4 * gi + 3]]);
+    gaps = text.put(heap, gaps, "\n  ");
+    gi = facts.find(names, ints, "tile:Forging a qubit");
+    gaps = buffer.append(heap, gaps, texts[ints[8 + 4 * gi + 2]..ints[8 + 4 * gi + 3]]);
+    gaps = text.put(heap, gaps, "\n</ul>");
+    page1.set_buf(heap, names, ints, texts, "GAL_GAPS", gaps);
+
+    // the planned list
+    let plan = static_node(sp_src, sp_tape, "plan");
+    var soon = ul_open(heap, buffer.empty(heap, 4096));
+    var p = 0;
+    while p < json.count(sp_tape, plan) {
+        let row = json.at(sp_tape, plan, p);
+        let ptitle = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 0));
+        let pbody = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 1));
+        let pbadge = text_of(heap, sp_src, sp_tape, json.at(sp_tape, row, 2));
+        borrow ptitle as &ptr in {
+            facts.set_text(names, ints, texts, "t367.x1", buffer.bytes(ptr));
+        }
+        borrow pbody as &pbr in {
+            facts.set_text(names, ints, texts, "t367.x2", buffer.bytes(pbr));
+        }
+        page1.set_buf(heap, names, ints, texts, "t367.x3", links_html(heap, sp_src, sp_tape, json.at(sp_tape, row, 3)));
+        borrow pbadge as &pgr in {
+            page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t367", false, true, buffer.bytes(pgr));
+        }
+        borrow ptitle as &ptr2 in {
+            var tn = text.put(heap, buffer.empty(heap, 64), "tile:");
+            tn = buffer.append(heap, tn, buffer.bytes(ptr2));
+            borrow tn as &tnr in {
+                let ti = facts.find(names, ints, buffer.bytes(tnr));
+                if p > 0 {
+                    soon = text.put(heap, soon, "\n  ");
+                }
+                soon = buffer.append(heap, soon, texts[ints[8 + 4 * ti + 2]..ints[8 + 4 * ti + 3]]);
+            }
+            buffer.drop(heap, tn);
+        }
+        buffer.drop(heap, ptitle);
+        buffer.drop(heap, pbody);
+        buffer.drop(heap, pbadge);
+        p = p + 1;
+    }
+    soon = text.put(heap, soon, "\n</ul>");
+    page1.set_buf(heap, names, ints, texts, "GAL_PLANNED", soon);
+    return 0;
+}

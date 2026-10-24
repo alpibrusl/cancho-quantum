@@ -11,6 +11,11 @@ import site.files;
 import site.page1;
 import site.page2;
 import site.page3;
+import site.page4;
+import site.page5;
+import site.page6;
+import site.page7;
+import site.page8;
 import site.text;
 import site.util;
 import std.buffer;
@@ -41,7 +46,7 @@ fn has_flag[&g](args: &g Args, flag: &static [byte]) -> [args] bool {
     return false;
 }
 
-fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), args] int {
+fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, err_write, fs_read(""), fs_write(""), args] int {
     let tr_path = flag_value(args, "--transcript");
     let dump_path = flag_value(args, "--dump");
     let (tr_buf, got) = files.read_all(heap, fs, tr_path, 33554432);
@@ -81,6 +86,13 @@ fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Arg
                                 page1.checks(heap, io, fs, n, it, x);
                                 page2.tiles_states(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
                                 page3.tiles_circuits(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page4.tiles_algorithms(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page5.tiles_noise(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page6.tile_speed(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                page6.tiles_devices(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page7.tiles_curves(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                page7.tile_calibration(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                page8.tiles_static(heap, io, tr_src, tt, sp_src, spt, n, it, x, fl);
                                 if len(dump_path) > 0 {
                                     status = dump(heap, io, fs, dump_path, n, it, x);
                                 }

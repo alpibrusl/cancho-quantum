@@ -1,0 +1,172 @@
+module site.page5;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.page4;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part five: the noise, density-matrix, speed, profile, idle-noise, scheduling, calibration and
+// OpenQASM tiles.
+
+fn jf[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] float {
+    return json.to_float(src, tape, node);
+}
+
+fn ji[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] int {
+    return json.to_int(src, tape, node);
+}
+
+fn display_name[&s](key: &s [byte]) -> [] &static [byte] {
+    if bytes.equal(key, "h_layer") {
+        return "H layer";
+    } else if bytes.equal(key, "cx_chain") {
+        return "CX chain";
+    } else if bytes.equal(key, "rz_layer") {
+        return "Rz layer";
+    } else if bytes.equal(key, "random") {
+        return "random, depth 20";
+    }
+    return "QFT";
+}
+
+pub fn tiles_noise[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // Noise, checked against the exact answer
+    let (ncs, nct) = files.load(heap, io, fs, "docs/data/noise_curve.json");
+    let (nks, nkt) = files.load(heap, io, fs, "docs/data/noise_check.json");
+    borrow ncs as &ncr in {
+        borrow mut nct as &!nctw in {
+            borrow nks as &nkr in {
+                borrow mut nkt as &!nktw in {
+                    let a = buffer.bytes(ncr);
+                    let at = contents(nctw);
+                    let b = buffer.bytes(nkr);
+                    let bt = contents(nktw);
+                    let rows = json.get(a, at, 0, "rows");
+                    var dev = 0.0;
+                    var k = 0;
+                    while k < json.count(at, rows) {
+                        let r = json.at(at, rows, k);
+                        let se = jf(a, at, json.get(a, at, r, "stderr"));
+                        if se > 1.0e-9 {
+                            var diff = jf(a, at, json.get(a, at, r, "estimate")) - jf(a, at, json.get(a, at, r, "exact"));
+                            if diff < 0.0 {
+                                diff = 0.0 - diff;
+                            }
+                            let z = diff / se;
+                            if z > dev {
+                                dev = z;
+                            }
+                        }
+                        k = k + 1;
+                    }
+                    facts.set_int(names, ints, "t250.x1", ji(a, at, json.get(a, at, 0, "shots")));
+                    facts.set_float(names, ints, floats, "t250.x2", dev);
+                    let circuits = json.get(b, bt, 0, "circuits");
+                    facts.set_int(names, ints, "t250.x3", json.count(bt, circuits));
+                    facts.set_int(names, ints, "t250.x4", ji(b, bt, json.get(b, bt, 0, "shots")));
+                    var zs = buffer.empty(heap, 64);
+                    k = 0;
+                    while k < json.count(bt, circuits) {
+                        if k > 0 {
+                            zs = text.put(heap, zs, ", ");
+                        }
+                        zs = numfmt.put_fixed(heap, zs, jf(b, bt, json.get(b, bt, json.at(bt, circuits, k), "max_z")), 1);
+                        k = k + 1;
+                    }
+                    page1.set_buf(heap, names, ints, texts, "t250.x5", zs);
+                    let ro = json.get(b, bt, 0, "readout");
+                    facts.set_float(names, ints, floats, "t250.x6", jf(b, bt, json.get(b, bt, ro, "measured_z")));
+                    facts.set_float(names, ints, floats, "t250.x7", jf(b, bt, json.get(b, bt, ro, "sample_z")));
+                    facts.set_float(names, ints, floats, "t250.x8", jf(b, bt, json.get(b, bt, ro, "asymmetric_z")));
+                    page4.set_number(names, ints, floats, "t250.x9", b, bt, json.get(b, bt, 0, "wrong_probability_z"));
+                    let box = page4.curve_rows(heap, a, at, rows);
+                    borrow box as &bx in {
+                        page4.curve_fact(heap, names, ints, texts, "t250.x10", contents(bx), json.count(at, rows), "Fidelity of a Bell pair against the depolarizing probability: runs follow the exact straight line 1 minus p", "depolarizing probability p", "fidelity", 0.4, 1.05, "runs, with two standard errors", "exact", true, 0.5, "p");
+                    }
+                    unbox_slice(heap, box);
+                }
+            }
+        }
+    }
+    files.unload(heap, ncs, nct);
+    files.unload(heap, nks, nkt);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t250", false, false, "");
+
+    // Exact noise: the density matrix
+    let dm_out = util.qsim(heap, io, tr_src, tr_tape, "dm 2\nh 0\ncx 0 1\ndepol 1 1 4\npurity\ntrace\nquiet\n");
+    borrow dm_out as &dmr in {
+        let all = buffer.bytes(dmr);
+        // split(): the whitespace-separated tokens of the whole output
+        var toks = 0;
+        var purity = 0.0;
+        var trace = 0.0;
+        let lines = text.line_count(all);
+        var k = 0;
+        while k < lines {
+            let line = text.line_at(all, k);
+            let w = util.tok(line, 0);
+            if bytes.equal(w, "purity") {
+                purity = util.parse_float(util.tok(line, 1));
+            } else if bytes.equal(w, "trace") {
+                trace = util.parse_float(util.tok(line, 1));
+            }
+            k = k + 1;
+        }
+        facts.set_float(names, ints, floats, "t258.x1", purity);
+        facts.set_float(names, ints, floats, "t258.x2", trace);
+    }
+    buffer.drop(heap, dm_out);
+    facts.set_float(names, ints, floats, "t258.x3", 0.5625 + 0.0625 / 3.0);
+    let (pcs, pct) = files.load(heap, io, fs, "docs/data/purity_curve.json");
+    borrow pcs as &pcr in {
+        borrow mut pct as &!pctw in {
+            let a = buffer.bytes(pcr);
+            let at = contents(pctw);
+            facts.set_float(names, ints, floats, "t258.x4", jf(a, at, json.get(a, at, 0, "worst_difference")));
+            let rows = json.get(a, at, 0, "rows");
+            let box = page4.curve_rows(heap, a, at, rows);
+            borrow box as &bx in {
+                page4.curve_fact(heap, names, ints, texts, "t258.x6", contents(bx), json.count(at, rows), "Purity of a Bell pair against the depolarizing probability: cancho, Qiskit and the formula coincide", "depolarizing probability p", "purity", 0.3, 1.0, "cancho (exact)", "formula", false, 0.5, "p");
+            }
+            unbox_slice(heap, box);
+        }
+    }
+    files.unload(heap, pcs, pct);
+    // the number of density-matrix circuits: the dm_ rows of the differential check
+    let (cds, cdt) = files.load(heap, io, fs, "docs/data/check_diff.json");
+    borrow cds as &cdr in {
+        borrow mut cdt as &!cdw in {
+            let a = buffer.bytes(cdr);
+            let at = contents(cdw);
+            let rows = json.get(a, at, 0, "rows");
+            var dms = 0;
+            var idles = 0;
+            var k = 0;
+            while k < json.count(at, rows) {
+                let nm = json.string_view(a, at, json.at(at, json.at(at, rows, k), 0));
+                if util.starts_with(nm, "dm_") {
+                    dms = dms + 1;
+                }
+                if page1.find_at(nm, "idle", 0) >= 0 {
+                    idles = idles + 1;
+                }
+                k = k + 1;
+            }
+            facts.set_int(names, ints, "t258.x5", dms);
+            facts.set_int(names, ints, "t290.x4", idles);
+        }
+    }
+    files.unload(heap, cds, cdt);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t258", false, false, "");
+    return 0;
+}

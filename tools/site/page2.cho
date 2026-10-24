@@ -22,7 +22,7 @@ pub fn put_buf[&h, &n, &i, &t](heap: &!h Heap, names: &!n [byte], ints: &!i [int
 }
 
 // One tile of the gallery, from the spec `id`: stored as the fact `tile:TITLE`. `soon`/`badge` as the Python `tile()`.
-pub fn emit_tile[&h, &i, &s, &t, &n, &q, &x, &f](heap: &!h Heap, io: &!i Io, sp_src: &s [byte], sp_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &f [float], id: &static [byte], wide: bool, soon: bool, badge: &static [byte]) -> [heap, err_write] int {
+pub fn emit_tile[&h, &i, &s, &t, &n, &q, &x, &f, &b](heap: &!h Heap, io: &!i Io, sp_src: &s [byte], sp_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &f [float], id: &static [byte], wide: bool, soon: bool, badge: &b [byte]) -> [heap, err_write] int {
     let tiles = json.get(sp_src, sp_tape, json.get(sp_src, sp_tape, 0, "tiles"), id);
     if tiles < 0 {
         io.error_all(io, "site: no tile spec ");
@@ -31,7 +31,12 @@ pub fn emit_tile[&h, &i, &s, &t, &n, &q, &x, &f](heap: &!h Heap, io: &!i Io, sp_
         let missing = trap();
     }
     let args = json.get(sp_src, sp_tape, tiles, "args");
-    let title = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 0));
+    let title_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 0));
+    var title = buffer.empty(heap, 64);
+    borrow title_t as &ttr in {
+        title = facts.render(heap, title, buffer.bytes(ttr), names, ints, texts, floats, false);
+    }
+    buffer.drop(heap, title_t);
     let body_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 1));
     let extra_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 2));
     var html = text.put(heap, buffer.empty(heap, 1024), "<li class=\"gtile");

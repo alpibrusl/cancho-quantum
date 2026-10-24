@@ -254,3 +254,15 @@ pub fn probabilities[&h, &a, &b](heap: &!h Heap, re: &a [float], im: &b [float])
     }
     return p;
 }
+
+// What `qprofile` printed for `input`, from the transcript.
+pub fn qprofile[&h, &i, &s, &t, &p](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], input: &p [byte]) -> [heap, err_write] buffer.Buffer {
+    var k = replay.key_start(heap, "$TMP/qprofile");
+    k = replay.key_input(heap, k, input);
+    var e = 0 - 1;
+    borrow k as &kr in {
+        e = entry(io, tr_src, tr_tape, buffer.bytes(kr));
+    }
+    buffer.drop(heap, k);
+    return replay.text(heap, tr_src, tr_tape, e, "out");
+}
