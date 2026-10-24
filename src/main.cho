@@ -18,7 +18,8 @@
 //     readout num den  each measured or sampled bit is reported flipped with probability num/den
 //     model1 num den   depolarizing noise after every one-qubit gate; model2 for two-qubit gates (num 0: off)
 //     coher q T1 T2    idle noise: this qubit relaxes (nanoseconds, T2 <= 2 T1); time1 ns, time2 ns set a gate's
-//                    duration, and each gate qubit relaxes for it (dur1 q ns, dur2 a b ns: one qubit's or pair's own); wait q ns idles a qubit (docs/idle-noise.md)
+//                    duration, and each gate qubit relaxes for it (dur1 q ns, dur2 a b ns: one qubit's or pair's own);
+//                    `sched` starts every gate as soon as its qubits are free, so a qubit that waits for another decays too; `barrier` waits for all wait q ns idles a qubit (docs/idle-noise.md)
 //     sample 1000    draw 1000 outcomes from the state (no collapse), print counts
 //     quiet          print no `amp` lines (for timing the gates, not the printer)
 //
@@ -79,12 +80,14 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
         } else if w == 25464 {
             let c = reader.read_int(io);
             let t = reader.read_int(io);
+            noise.before2(st, n, c, t, rng);
             gates.cx(st, n, c, t);
             post2a = c;
             post2b = t;
         } else if w == 25466 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
+            noise.before2(st, n, a, b, rng);
             gates.cz(st, n, a, b);
             post2a = a;
             post2b = b;
@@ -115,6 +118,7 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
         } else if w == 1937203568 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
+            noise.before2(st, n, a, b, rng);
             gates.swap(st, n, a, b);
             post2a = a;
             post2b = b;
@@ -140,6 +144,7 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
             let b = reader.read_int(io);
             let num = reader.read_int(io);
             let den = reader.read_int(io);
+            noise.before2(st, n, a, b, rng);
             gates.cp(st, n, a, b, gates.angle(num, den));
             post2a = a;
             post2b = b;
@@ -158,6 +163,7 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 noise.ampdamp(st, n, q, p, rng);
             }
         } else if w == 126862285106277 {
+            noise.barrier(st, n, rng);
             if dump.samples(io, st, n, rng, reader.read_int(io)) != 0 {
                 return 0 - 1;
             }
@@ -246,6 +252,10 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 }
                 profile.set_dur2(rng, a, b, ns);
             }
+        } else if w == 495589025124 {
+            rng[1410] = 1;
+        } else if w == 27691691891320178 {
+            noise.barrier(st, n, rng);
         } else if w == 2002872692 {
             let q = reader.read_int(io);
             let ns = reader.read_int(io);
@@ -253,6 +263,7 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 return 0 - 1;
             }
             noise.relax(st, n, q, ns, rng);
+            profile.set_clock(rng, q, profile.clock(rng, q) + ns);
         } else if w == 487301145972 {
             rng[1] = 1;
         } else if w == 1953655143 {
@@ -293,6 +304,8 @@ fn run_qc[&h, &i](heap: &!h Heap, io: &!i Io, n: int) -> [heap, io_read, io_writ
             state.start(st);
             if interpret(io, st, n, rng, scratch) < 0 {
                 status = 2;
+            } else {
+                noise.barrier(st, n, rng);
             }
             if rng[1] == 0 && status == 0 {
                 dump.amplitudes(io, st, n, scratch);

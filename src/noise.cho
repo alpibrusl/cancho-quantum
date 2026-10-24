@@ -153,6 +153,44 @@ pub fn relax[&s, &r](st: &!s [float], n: int, q: int, ns: int, rng: &!r [int]) -
     return 0;
 }
 
+// Scheduling (`sched`): every gate starts as soon as its qubits are free. `before2` runs
+// before a two-qubit gate: the qubit that is free earlier idles until the other is (draws
+// as `relax` does), and both are busy from then. The gate's own time is added after it
+// (`after1`, `after2`). A one-qubit gate starts when its qubit is free and needs no wait.
+pub fn before2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -> [] int {
+    if profile.scheduled(rng) {
+        gates.distinct(n, a, b);
+        let start = max_int(profile.clock(rng, a), profile.clock(rng, b));
+        relax(st, n, a, start - profile.clock(rng, a), rng);
+        relax(st, n, b, start - profile.clock(rng, b), rng);
+        profile.set_clock(rng, a, start);
+        profile.set_clock(rng, b, start);
+    }
+    return 0;
+}
+
+pub fn max_int(a: int, b: int) -> [] int {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+// `barrier`: every one of the `n` qubits idles until the last one is free. The end of a circuit
+// (a `sample`, the amplitudes printed) is one.
+pub fn barrier[&s, &r](st: &!s [float], n: int, rng: &!r [int]) -> [] int {
+    if profile.scheduled(rng) {
+        let end = profile.makespan(rng, n);
+        var q = 0;
+        while q < n {
+            relax(st, n, q, end - profile.clock(rng, q), rng);
+            profile.set_clock(rng, q, end);
+            q = q + 1;
+        }
+    }
+    return 0;
+}
+
 // The gate-noise model: after a one-qubit gate, `depol`; after a two-qubit gate,
 // `depol2`; with the probability `profile` gives for that qubit or pair (its own, if set,
 // else the `model1` / `model2` default). Then each gate qubit relaxes for the gate's duration (`time1`, `time2`, or the `dur1` / `dur2` of that qubit or pair) if it has a `coher`.
@@ -163,6 +201,7 @@ pub fn after1[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int
         depol(st, n, q, p, rng);
     }
     relax(st, n, q, profile.dur1(rng, q), rng);
+    profile.set_clock(rng, q, profile.clock(rng, q) + profile.dur1(rng, q));
     return 0;
 }
 
@@ -173,5 +212,7 @@ pub fn after2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -
     }
     relax(st, n, a, profile.dur2(rng, a, b), rng);
     relax(st, n, b, profile.dur2(rng, a, b), rng);
+    profile.set_clock(rng, a, profile.clock(rng, a) + profile.dur2(rng, a, b));
+    profile.set_clock(rng, b, profile.clock(rng, b) + profile.dur2(rng, a, b));
     return 0;
 }

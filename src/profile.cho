@@ -20,12 +20,14 @@ import std.math;
 //   rng[968], rng[969] how long a one-qubit and a two-qubit gate take, in nanoseconds (`time1`, `time2`)
 //   rng[970 + 20a + b] the pair (a, b)'s own two-qubit gate time (`dur2`), stored for both orders; 0: use rng[969]
 //   rng[1370 + q]     qubit q's own one-qubit gate time (`dur1`); 0: use rng[968]
+//   rng[1390 + q]     the time qubit q is busy until, in nanoseconds (only under `sched`)
+//   rng[1410]         1 after `sched`
 //
 // A denominator of 0 in an override slot means "not set": the default above applies. An
 // override with numerator 0 and a real denominator is set, and means probability 0.
 
 pub fn size() -> [] int {
-    return 1390;
+    return 1412;
 }
 
 pub fn prob(num: int, den: int) -> [] float {
@@ -167,4 +169,30 @@ pub fn dur2[&r](rng: &r [int], a: int, b: int) -> [] int {
         return rng[970 + 20 * a + b];
     }
     return rng[969];
+}
+
+pub fn scheduled[&r](rng: &r [int]) -> [] bool {
+    return rng[1410] == 1;
+}
+
+// The time qubit `q` is busy until, and the latest of the first `n` qubits.
+pub fn clock[&r](rng: &r [int], q: int) -> [] int {
+    return rng[1390 + q];
+}
+
+pub fn set_clock[&r](rng: &!r [int], q: int, ns: int) -> [] int {
+    rng[1390 + q] = ns;
+    return 0;
+}
+
+pub fn makespan[&r](rng: &r [int], n: int) -> [] int {
+    var m = 0;
+    var q = 0;
+    while q < n {
+        if rng[1390 + q] > m {
+            m = rng[1390 + q];
+        }
+        q = q + 1;
+    }
+    return m;
 }
