@@ -1,0 +1,170 @@
+module site.assemble;
+
+import site.facts;
+import site.files;
+import site.page1;
+import site.text;
+import std.buffer;
+import std.bytes;
+import std.io;
+
+// The last step: the page is the template with every `{{NAME}}` filled from the facts, and the four figures are also
+// written as stand-alone SVG files (the variables defined inside, light and dark) for the README.
+
+// `standalone(svg)`: the svg's opening tag gets the namespace, then the style and a background rectangle.
+fn standalone[&h, &s, &c, &l, &d](heap: &!h Heap, svg_text: &s [byte], css: &c [byte], light: &l [byte], dark: &d [byte]) -> [heap] buffer.Buffer {
+    var close = 0;
+    while close < len(svg_text) && int_of(svg_text[close]) != '>' {
+        close = close + 1;
+    }
+    var out = buffer.append(heap, buffer.empty(heap, 4096), svg_text[0..close]);
+    out = text.put(heap, out, " xmlns=\"http://www.w3.org/2000/svg\"><style>svg{");
+    out = buffer.append(heap, out, light);
+    out = text.put(heap, out, "}@media (prefers-color-scheme: dark){svg{");
+    out = buffer.append(heap, out, dark);
+    out = text.put(heap, out, "}}");
+    out = buffer.append(heap, out, css);
+    out = text.put(heap, out, "</style><rect width=\"100%\" height=\"100%\" fill=\"var(--bg)\"/>");
+    return buffer.append(heap, out, svg_text[close + 1..len(svg_text)]);
+}
+
+// `src` with every `{{NAME}}` replaced by `value`.
+fn replace_all[&h, &s, &m, &v](heap: &!h Heap, src: &s [byte], marker: &m [byte], value: &v [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(src) + len(value) + 64);
+    var k = 0;
+    while k < len(src) {
+        if k + len(marker) <= len(src) && int_of(src[k]) == '{' && bytes.equal(src[k..k + len(marker)], marker) {
+            out = buffer.append(heap, out, value);
+            k = k + len(marker);
+        } else {
+            out = buffer.push(heap, out, src[k]);
+            k = k + 1;
+        }
+    }
+    return out;
+}
+
+// Write `content` to `path`, or (in `check`) say whether the file already holds it: 1 when it differs.
+fn put_file[&h, &i, &f, &c](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &static [byte], content: &c [byte], check: bool) -> [heap, fs_read(""), fs_write(""), err_write] int {
+    let (old, got) = files.read_all(heap, fs, path, 8388608);
+    var differs = true;
+    borrow old as &or in {
+        if got >= 0 && bytes.equal(buffer.bytes(or), content) {
+            differs = false;
+        }
+    }
+    buffer.drop(heap, old);
+    if check {
+        if differs {
+            io.error_all(io, "site: out of date: ");
+            io.error_all(io, path);
+            io.error_all(io, "\n");
+            return 1;
+        }
+        return 0;
+    }
+    if files.write_all(fs, path, content) < 0 {
+        io.error_all(io, "site: cannot write ");
+        io.error_all(io, path);
+        io.error_all(io, "\n");
+        return 1;
+    }
+    return 0;
+}
+
+fn fact_text[&n, &q, &x](names: &n [byte], ints: &q [int], texts: &x [byte], name: &static [byte]) -> [] &x [byte] {
+    let k = facts.find(names, ints, name);
+    if k < 0 {
+        let missing = trap();
+    }
+    return texts[ints[8 + 4 * k + 2]..ints[8 + 4 * k + 3]];
+}
+
+// Fill the template, then write (or check) docs/index.html and the four images. Answers 0, or 1 when `check` finds a
+// file out of date.
+pub fn finish[&h, &i, &f, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), names: &n [byte], ints: &q [int], texts: &x [byte], floats: &d [float], check: bool) -> [heap, fs_read(""), fs_write(""), err_write, io_write] int {
+    let (tpl, tg) = files.read_all(heap, fs, "docs/index.template.html", 8388608);
+    // Python replaces each placeholder in the order the page's facts were made, so a placeholder inside a value that comes
+    // earlier (the diagrams inside the gallery) is filled by a later one.
+    var page = buffer.empty(heap, 16);
+    borrow tpl as &tr in {
+        buffer.drop(heap, page);
+        page = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(tr)) + 16), buffer.bytes(tr));
+    }
+    var fk = 0;
+    while fk < ints[0] {
+        let start = ints[8 + 4 * fk + 1];
+        var e = start;
+        while int_of(names[e]) != 10 {
+            e = e + 1;
+        }
+        let first = int_of(names[start]);
+        if first >= 'A' && first <= 'Z' && ints[8 + 4 * fk] == 3 {
+            var marker = text.put(heap, buffer.empty(heap, 32), "{{");
+            marker = buffer.append(heap, marker, names[start..e]);
+            marker = text.put(heap, marker, "}}");
+            var next = buffer.empty(heap, 16);
+            borrow marker as &mr in {
+                borrow page as &pr0 in {
+                    buffer.drop(heap, next);
+                    next = replace_all(heap, buffer.bytes(pr0), buffer.bytes(mr), texts[ints[8 + 4 * fk + 2]..ints[8 + 4 * fk + 3]]);
+                }
+            }
+            buffer.drop(heap, marker);
+            buffer.drop(heap, page);
+            page = next;
+        }
+        fk = fk + 1;
+    }
+    buffer.drop(heap, tpl);
+    let (css, cg) = files.read_all(heap, fs, "docs/page/svg.css", 65536);
+    let (light, lg) = files.read_all(heap, fs, "docs/page/svg-light.txt", 65536);
+    let (dark, dg) = files.read_all(heap, fs, "docs/page/svg-dark.txt", 65536);
+    var bad = 0;
+    borrow page as &pr in {
+        bad = bad + put_file(heap, io, fs, "docs/index.html", buffer.bytes(pr), check);
+    }
+    borrow css as &cr in {
+        borrow light as &lr in {
+            borrow dark as &dr in {
+                var k = 0;
+                while k < 4 {
+                    var fact = "DIAGRAM_BELL";
+                    if k == 1 {
+                        fact = "DIAGRAM_TELEPORT";
+                    } else if k == 2 {
+                        fact = "CHART_ERROR";
+                    } else if k == 3 {
+                        fact = "CHART_TIMING";
+                    }
+                    let img = standalone(heap, fact_text(names, ints, texts, fact), buffer.bytes(cr), buffer.bytes(lr), buffer.bytes(dr));
+                    borrow img as &ir in {
+                        if k == 0 {
+                            bad = bad + put_file(heap, io, fs, "docs/img/bell-circuit.svg", buffer.bytes(ir), check);
+                        } else if k == 1 {
+                            bad = bad + put_file(heap, io, fs, "docs/img/teleport-circuit.svg", buffer.bytes(ir), check);
+                        } else if k == 2 {
+                            bad = bad + put_file(heap, io, fs, "docs/img/error-per-circuit.svg", buffer.bytes(ir), check);
+                        } else {
+                            bad = bad + put_file(heap, io, fs, "docs/img/timings.svg", buffer.bytes(ir), check);
+                        }
+                    }
+                    buffer.drop(heap, img);
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, page);
+    buffer.drop(heap, css);
+    buffer.drop(heap, light);
+    buffer.drop(heap, dark);
+    if bad == 0 {
+        if check {
+            io.write_all(io, "docs/index.html and 4 images are up to date\n");
+        } else {
+            io.write_all(io, "wrote 5 files\n");
+        }
+    }
+    return bad;
+}

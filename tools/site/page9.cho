@@ -1,0 +1,234 @@
+module site.page9;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part nine: the capability cards, the check that every gate and channel the page names runs, and
+// the grouping of the supported tiles (GAL_SUPPORTED).
+
+fn static_node[&u, &v](sp_src: &u [byte], sp_tape: &v [int], name: &static [byte]) -> [] int {
+    return json.get(sp_src, sp_tape, json.get(sp_src, sp_tape, 0, "static"), name);
+}
+
+// ", ".join(esc(name)) over the second entry of each row of a static list.
+fn names_of[&h, &u, &v](heap: &!h Heap, sp_src: &u [byte], sp_tape: &v [int], list: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var k = 0;
+    while k < json.count(sp_tape, list) {
+        let name = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, json.at(sp_tape, list, k), 1));
+        if k > 0 {
+            out = text.put(heap, out, ", ");
+        }
+        borrow name as &nr in {
+            out = text.put_esc(heap, out, buffer.bytes(nr));
+        }
+        buffer.drop(heap, name);
+        k = k + 1;
+    }
+    return out;
+}
+
+// qsim runs `header`, then `op`, then `quiet`: the transcript must say it exited 0.
+fn runs_ok[&h, &i, &s, &t, &p, &o](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], header: &static [byte], op: &o [byte]) -> [heap, err_write] bool {
+    var input = text.put(heap, buffer.empty(heap, 64), header);
+    input = text.put(heap, input, "\n");
+    input = buffer.append(heap, input, op);
+    input = text.put(heap, input, "\nquiet\n");
+    var k = replay.key_start(heap, "$TMP/qsim");
+    borrow input as &ir in {
+        k = replay.key_input(heap, k, buffer.bytes(ir));
+    }
+    buffer.drop(heap, input);
+    var ok = false;
+    borrow k as &kr in {
+        let e = util.entry(io, tr_src, tr_tape, buffer.bytes(kr));
+        ok = replay.rc(tr_src, tr_tape, e) == 0;
+    }
+    buffer.drop(heap, k);
+    return ok;
+}
+
+pub fn capabilities[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    let one_q = static_node(sp_src, sp_tape, "one_q");
+    let two_q = static_node(sp_src, sp_tape, "two_q");
+    let three_q = static_node(sp_src, sp_tape, "three_q");
+    let chans = static_node(sp_src, sp_tape, "chans");
+    let extras = static_node(sp_src, sp_tape, "extras_ops");
+    // every gate and channel named on the page is run first, on the state vector and on the density matrix
+    var lists = 0;
+    while lists < 5 {
+        var list = one_q;
+        if lists == 1 {
+            list = two_q;
+        } else if lists == 2 {
+            list = three_q;
+        } else if lists == 3 {
+            list = chans;
+        } else if lists == 4 {
+            list = extras;
+        }
+        var k = 0;
+        while k < json.count(sp_tape, list) {
+            let row = json.at(sp_tape, list, k);
+            // gates and channels: (code, name, op); extras: (name, op)
+            var op_node = json.at(sp_tape, row, 2);
+            if lists == 4 {
+                op_node = json.at(sp_tape, row, 1);
+            }
+            let op = page1.decode(heap, sp_src, sp_tape, op_node);
+            var ok = true;
+            borrow op as &opr in {
+                ok = runs_ok(heap, io, tr_src, tr_tape, "n 3", buffer.bytes(opr)) && runs_ok(heap, io, tr_src, tr_tape, "dm 3", buffer.bytes(opr));
+            }
+            buffer.drop(heap, op);
+            if !ok {
+                io.error_all(io, "site: the page names a gate or channel that qsim does not run\n");
+                let broken = trap();
+            }
+            k = k + 1;
+        }
+        lists = lists + 1;
+    }
+    let n_gates = json.count(sp_tape, one_q) + json.count(sp_tape, two_q) + json.count(sp_tape, three_q);
+    page1.set_buf(heap, names, ints, texts, "N_GATES", page1.put_nat_buf(heap, n_gates));
+    facts.set_int(names, ints, "c396.x1", n_gates);
+    page1.set_buf(heap, names, ints, texts, "c396.x2", names_of(heap, sp_src, sp_tape, one_q));
+    page1.set_buf(heap, names, ints, texts, "c396.x3", names_of(heap, sp_src, sp_tape, two_q));
+    page1.set_buf(heap, names, ints, texts, "c396.x4", names_of(heap, sp_src, sp_tape, three_q));
+    facts.set_int(names, ints, "c398.x1", json.count(sp_tape, chans));
+    page1.set_buf(heap, names, ints, texts, "c398.x2", names_of(heap, sp_src, sp_tape, chans));
+    let (qrs, qrt) = files.load(heap, io, fs, "tests/qasm/results.json");
+    borrow qrs as &qrr in {
+        borrow mut qrt as &!qrtw in {
+            let a = buffer.bytes(qrr);
+            let at = contents(qrtw);
+            facts.set_int(names, ints, "c399.x1", json.to_int(a, at, json.get(a, at, 0, "files")));
+        }
+    }
+    files.unload(heap, qrs, qrt);
+    let (cts, ctt) = files.load(heap, io, fs, "docs/data/check_types.json");
+    borrow cts as &ctr in {
+        borrow mut ctt as &!cttw in {
+            let a = buffer.bytes(ctr);
+            let at = contents(cttw);
+            facts.set_int(names, ints, "c401.x1", json.to_int(a, at, json.get(a, at, 0, "reject")));
+            facts.set_int(names, ints, "c401.x2", json.to_int(a, at, json.get(a, at, 0, "traps")) + 1);
+        }
+    }
+    files.unload(heap, cts, ctt);
+    // N_DM: the density-matrix circuits (the t258 fact holds the count)
+    let di = facts.find(names, ints, "t258.x5");
+    facts.set_int(names, ints, "N_DM_COUNT", ints[8 + 4 * di + 2]);
+    page1.set_buf(heap, names, ints, texts, "N_DM", page1.put_nat_buf(heap, ints[8 + 4 * di + 2]));
+
+    // the cards
+    var cards = buffer.empty(heap, 2048);
+    var ci = 0;
+    while ci < 6 {
+        var id = "c396";
+        if ci == 1 {
+            id = "c397";
+        } else if ci == 2 {
+            id = "c398";
+        } else if ci == 3 {
+            id = "c399";
+        } else if ci == 4 {
+            id = "c400";
+        } else if ci == 5 {
+            id = "c401";
+        }
+        let spec = json.get(sp_src, sp_tape, json.get(sp_src, sp_tape, 0, "tiles"), id);
+        let args = json.get(sp_src, sp_tape, spec, "args");
+        let ct = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 0));
+        let cb = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 1));
+        if ci > 0 {
+            cards = text.put(heap, cards, "\n");
+        }
+        cards = text.put(heap, cards, "    <div class=\"card\"><h3>");
+        borrow ct as &ctr2 in {
+            cards = facts.render(heap, cards, buffer.bytes(ctr2), names, ints, texts, floats, false);
+        }
+        cards = text.put(heap, cards, "</h3><p>");
+        borrow cb as &cbr in {
+            cards = facts.render(heap, cards, buffer.bytes(cbr), names, ints, texts, floats, false);
+        }
+        cards = text.put(heap, cards, "</p></div>");
+        buffer.drop(heap, ct);
+        buffer.drop(heap, cb);
+        ci = ci + 1;
+    }
+    page1.set_buf(heap, names, ints, texts, "CAPABILITIES", cards);
+    return 0;
+}
+
+// GAL_SUPPORTED: the groups, each `<h4 class="gsub">` and a `<ul>` of its tiles by title.
+pub fn groups[&h, &i, &u, &v, &n, &q, &x](heap: &!h Heap, io: &!i Io, sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, err_write] int {
+    let gl = static_node(sp_src, sp_tape, "groups");
+    var out = buffer.empty(heap, 8192);
+    var used = 0;
+    var g = 0;
+    while g < json.count(sp_tape, gl) {
+        let grp = json.at(sp_tape, gl, g);
+        let gname = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, grp, 0));
+        let gnote = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, grp, 1));
+        let titles = json.at(sp_tape, grp, 2);
+        if g > 0 {
+            out = text.put(heap, out, "\n");
+        }
+        out = text.put(heap, out, "  <h4 class=\"gsub\">");
+        borrow gname as &gnr in {
+            out = text.put_esc(heap, out, buffer.bytes(gnr));
+        }
+        out = text.put(heap, out, " <span>");
+        borrow gnote as &gor in {
+            out = buffer.append(heap, out, buffer.bytes(gor));
+        }
+        out = text.put(heap, out, "</span></h4>\n<ul class=\"gallery\">\n  ");
+        var k = 0;
+        while k < json.count(sp_tape, titles) {
+            let title = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, titles, k));
+            var tn = text.put(heap, buffer.empty(heap, 64), "tile:");
+            borrow title as &tr in {
+                tn = buffer.append(heap, tn, buffer.bytes(tr));
+            }
+            var ti = 0 - 1;
+            borrow tn as &tnr in {
+                ti = facts.find(names, ints, buffer.bytes(tnr));
+            }
+            if ti < 0 {
+                io.error_all(io, "site: a gallery group names a tile that does not exist: ");
+                borrow title as &tr2 in {
+                    io.error_all(io, buffer.bytes(tr2));
+                }
+                io.error_all(io, "\n");
+                let missing = trap();
+            }
+            if k > 0 {
+                out = text.put(heap, out, "\n  ");
+            }
+            out = buffer.append(heap, out, texts[ints[8 + 4 * ti + 2]..ints[8 + 4 * ti + 3]]);
+            used = used + 1;
+            buffer.drop(heap, tn);
+            buffer.drop(heap, title);
+            k = k + 1;
+        }
+        out = text.put(heap, out, "\n</ul>");
+        buffer.drop(heap, gname);
+        buffer.drop(heap, gnote);
+        g = g + 1;
+    }
+    // every supported tile must be in a group: the tiles made so far are the supported ones, the refused, the gaps and the planned
+    page1.set_buf(heap, names, ints, texts, "GAL_SUPPORTED", out);
+    return 0;
+}

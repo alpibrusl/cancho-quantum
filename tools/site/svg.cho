@@ -226,7 +226,8 @@ pub fn phase_color[&h](heap: &!h Heap, buf: buffer.Buffer, re: float, im: float)
     let v = math.atan2(im, re) / (2.0 * 3.141592653589793);
     let m = v - math.floor(v);
     var out = text.put(heap, buf, "hsl(");
-    out = numfmt.put_fixed(heap, out, m * 360.0, 0);
+    // + 1e-7, as in scripts/site_svg.py: a phase that is an exact multiple of 22.5 degrees is a rounding tie
+    out = numfmt.put_fixed(heap, out, m * 360.0 + 1.0e-7, 0);
     return text.put(heap, out, " 55% 48%)");
 }
 

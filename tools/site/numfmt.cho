@@ -195,7 +195,8 @@ pub fn round_nd(x: float, nd: int) -> [] float {
         r = float_of(scaled) / pow10(nd);
     }
     if is_neg(x) {
-        return 0.0 - r;
+        // negation by multiplication, so that a negative number that rounds to zero is -0.0, as in Python
+        return (0.0 - 1.0) * r;
     }
     return r;
 }

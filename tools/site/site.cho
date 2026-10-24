@@ -16,6 +16,9 @@ import site.page5;
 import site.page6;
 import site.page7;
 import site.page8;
+import site.page9;
+import site.page10;
+import site.assemble;
 import site.text;
 import site.util;
 import std.buffer;
@@ -46,7 +49,7 @@ fn has_flag[&g](args: &g Args, flag: &static [byte]) -> [args] bool {
     return false;
 }
 
-fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, err_write, fs_read(""), fs_write(""), args] int {
+fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), args] int {
     let tr_path = flag_value(args, "--transcript");
     let dump_path = flag_value(args, "--dump");
     let (tr_buf, got) = files.read_all(heap, fs, tr_path, 33554432);
@@ -93,6 +96,17 @@ fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Arg
                                 page7.tiles_curves(heap, io, fs, sp_src, spt, n, it, x, fl);
                                 page7.tile_calibration(heap, io, fs, sp_src, spt, n, it, x, fl);
                                 page8.tiles_static(heap, io, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page9.capabilities(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page9.groups(heap, io, sp_src, spt, n, it, x);
+                                page10.simple_figures(heap, io, fs, tr_src, tt, n, it, x);
+                                page10.diagrams(heap, io, fs, n, it, x);
+                                page10.sampled_figures(heap, io, tr_src, tt, n, it, x);
+                                page10.numeric_figures(heap, io, fs, tr_src, tt, n, it, x);
+                                page10.timing_figure(heap, io, fs, n, it, x);
+                                page10.stepper(heap, io, fs, tr_src, tt, n, it, x);
+                                if len(flag_value(args, "--out")) > 0 || has_flag(args, "--check") || len(dump_path) == 0 {
+                                    status = assemble.finish(heap, io, fs, n, it, x, fl, has_flag(args, "--check"));
+                                }
                                 if len(dump_path) > 0 {
                                     status = dump(heap, io, fs, dump_path, n, it, x);
                                 }
