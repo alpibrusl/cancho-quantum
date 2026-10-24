@@ -93,6 +93,32 @@ density-matrix method on one thread:
 6. **Capacity**: `qsim` stops at 20 qubits (a fixed layout, 16 MiB); Aer goes well past 30 on memory it
    is given. That is a design limit here, not something the benchmark changes.
 
+## Is it the language? The same kernels in C
+
+The comparison above is of whole implementations. To ask what the *language* costs, `bench/kernels.c` writes the
+H, CX and diagonal-gate loops of `src/gates.cho` in C, in two forms: **same loop** (visit every index, test the
+qubit's bit, as `gates.cho` does) and **pairs only** (visit just the amplitude pairs, no test). They are built at
+-O3 for the baseline x86-64 target (no `-march=native`, as cancho builds) with clang 18, which is LLVM like the
+backend cancho's `--backend llvm` uses, and with gcc 13. Their amplitudes were first checked against `qsim`'s
+(identical, to the bit, on all three workloads at 10 qubits). Whole process at 20 qubits, minimum of 5
+(`scripts/bench_kernels.py`, `docs/data/benchmark_kernels.json`):
+
+<!-- table:kernels -->
+| workload | qsim (LLVM) | C, clang, same loop | C, gcc, same loop | C, clang, pairs only | C, gcc, pairs only | qsim / C, same loop | qsim / best tuned C |
+|---|---|---|---|---|---|---|---|
+| H on every qubit | 36 ms | 36 ms | 42 ms | 33 ms | 32 ms | 0.99x | 1.11x |
+| H, then a CX chain | 39 ms | 35 ms | 36 ms | 26 ms | 33 ms | 1.09x | 1.49x |
+| H layer, then Rz on every qubit | 80 ms | 61 ms | 58 ms | 53 ms | 59 ms | 1.31x | 1.49x |
+<!-- /table -->
+
+Reading it: where the algorithm is the same, cancho and C are within about 0 to 30 percent, and the
+largest gap is on the diagonal gate (31 percent; why was not investigated: the complex arithmetic goes through
+small functions in `complex.cho`, which the optimizer may not fully flatten). Writing the loop better in C (pairs only) is worth 10 to 35 percent on the
+H layer and CX chain, because at 20 qubits all of these are limited by streaming a 16 MiB state through memory,
+not by arithmetic. So the 3 to 6 times between the two cancho backends is the compiler's optimizer, not the
+language, and the factor between `qsim` and Aer on four threads is parallelism, not a slow language. This is three
+kernels at one size on one machine: it does not cover the noise code, the density matrix or the sampler.
+
 ## Not measured
 
 Noisy sampling at scale (`qsim` runs one trajectory per run, so 1000 noisy shots are 1000 runs; one run of the
