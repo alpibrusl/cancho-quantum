@@ -1,0 +1,460 @@
+module site.numfmt;
+
+import std.bignum;
+import std.buffer;
+import std.fmt;
+
+// Number formatting exactly as Python does it, so that the page built by cancho is byte for byte the page the
+// Python builder wrote. Every function here is correctly rounded from the exact value of the double (half to
+// even), never from a shortest-decimal string: `{0.5:.0f}` is `0`, `{2.5e-05:.0e}` is `3e-05` (the double is a
+// hair above 2.5e-05), and a shortest-digits rounding would get the second one wrong.
+//
+//   put_fixed   `{x:.Nf}`          put_sci      `{x:.Ne}`          put_general   `{x:g}`
+//   put_repr    `str(x)`           round_nd     `round(x, N)`      put_pad       a width, right-aligned
+//
+// Magnitudes below 2^62 (4.6e18) and N at most 17; anything else traps. `round_nd` takes magnitudes below 1e9.
+
+fn limbs() -> [] int {
+    return 40;
+}
+
+fn abs_float(x: float) -> [] float {
+    if bits_of(x) < 0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+fn is_neg(x: float) -> [] bool {
+    return bits_of(x) < 0;
+}
+
+// Decimal digits of a non-negative int into out[at..], answering how many.
+fn int_digits[&o](n: int, out: &!o [int], at: int) -> [] int {
+    var width = 1;
+    var p = 10;
+    while width < 19 && n >= p {
+        width = width + 1;
+        p = p * 10;
+    }
+    var m = n;
+    var k = width;
+    while k > 0 {
+        out[at + k - 1] = m % 10;
+        m = m / 10;
+        k = k - 1;
+    }
+    return width;
+}
+
+// f, with 0 <= f < 1, as num / den, den a power of two, both bignums of `limbs()` limbs.
+fn frac_init[&n, &d](f: float, num: &!n [int], den: &!d [int]) -> [] int {
+    bignum.zero(num);
+    bignum.zero(den);
+    if f == 0.0 {
+        bignum.set(den, 1);
+        return 0;
+    }
+    let bits = bits_of(f);
+    let raw = bits & 0xfffffffffffff;
+    let ex = bits >> 52 & 0x7ff;
+    var m = raw | 1 << 52;
+    var e = ex - 1075;
+    if ex == 0 {
+        m = raw;
+        e = 0 - 1074;
+    }
+    bignum.set(num, m);
+    bignum.set(den, 1);
+    bignum.shift_left(den, 0 - e);
+    return 0;
+}
+
+// The next decimal digit of num / den; the fraction moves on.
+fn frac_next[&n, &d](num: &!n [int], den: &d [int]) -> [] int {
+    bignum.mul_small(num, 10);
+    var digit = 0;
+    while bignum.compare(num, den) >= 0 {
+        bignum.subtract(num, den);
+        digit = digit + 1;
+    }
+    return digit;
+}
+
+// 2 * num against den: 1 above half, 0 exactly half, -1 below.
+fn half_compare[&n, &d, &t](num: &n [int], den: &d [int], scratch: &!t [int]) -> [] int {
+    bignum.copy(scratch, num);
+    bignum.mul_small(scratch, 2);
+    return bignum.compare(scratch, den);
+}
+
+fn put_char[&h](heap: &!h Heap, buf: buffer.Buffer, c: int) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buf, byte_of(c));
+}
+
+fn put_digits[&h, &o](heap: &!h Heap, buf: buffer.Buffer, d: &o [int], from: int, to: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    var k = from;
+    while k < to {
+        out = buffer.push(heap, out, byte_of('0' + d[k]));
+        k = k + 1;
+    }
+    return out;
+}
+
+fn pow10(n: int) -> [] float {
+    var p = 1.0;
+    var k = 0;
+    while k < n {
+        p = p * 10.0;
+        k = k + 1;
+    }
+    return p;
+}
+
+// The nd fractional digits of mag after rounding half to even, as `whole` (possibly carried) and digits in
+// `dig[0..nd]`. `num`, `den` and `scratch` are `limbs()`-limb scratch bignums.
+fn round_fixed[&g, &a, &b, &c](mag: float, nd: int, dig: &!g [int], num: &!a [int], den: &!b [int], scratch: &!c [int]) -> [] int {
+    assert_small(mag);
+    var whole = truncate(mag);
+    frac_init(mag - float_of(whole), num, den);
+    var j = 0;
+    while j < nd {
+        dig[j] = frac_next(num, den);
+        j = j + 1;
+    }
+    let c2 = half_compare(num, den, scratch);
+    var last = whole % 2;
+    if nd > 0 {
+        last = dig[nd - 1];
+    }
+    if c2 > 0 || c2 == 0 && last % 2 == 1 {
+        j = nd - 1;
+        while j >= 0 && dig[j] == 9 {
+            dig[j] = 0;
+            j = j - 1;
+        }
+        if j >= 0 {
+            dig[j] = dig[j] + 1;
+        } else {
+            whole = whole + 1;
+        }
+    }
+    return whole;
+}
+
+fn assert_small(mag: float) -> [] int {
+    if !(mag < 4.0e18) {
+        let too_big = trap();
+    }
+    return 0;
+}
+
+// `{x:.Nf}`
+pub fn put_fixed[&h](heap: &!h Heap, buf: buffer.Buffer, x: float, nd: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    if is_neg(x) {
+        out = put_char(heap, out, '-');
+    }
+    region a {
+        let dig = alloc_slice[a](20, 0);
+        let num = alloc_slice[a](limbs(), 0);
+        let den = alloc_slice[a](limbs(), 0);
+        let scratch = alloc_slice[a](limbs(), 0);
+        let whole = round_fixed(abs_float(x), nd, dig, num, den, scratch);
+        let text = alloc_slice[a](24, 0);
+        let w = int_digits(whole, text, 0);
+        out = put_digits(heap, out, text, 0, w);
+        if nd > 0 {
+            out = put_char(heap, out, '.');
+            out = put_digits(heap, out, dig, 0, nd);
+        }
+    }
+    return out;
+}
+
+// `round(x, nd)`: the double nearest the decimal rounded to nd places. The integer R is below 2^53 for every use
+// here, and 10^nd is exact for nd <= 22, so one division rounds correctly.
+pub fn round_nd(x: float, nd: int) -> [] float {
+    if !(abs_float(x) < 1.0e9) {
+        let too_big = trap();
+    }
+    var r = 0.0;
+    region a {
+        let dig = alloc_slice[a](20, 0);
+        let num = alloc_slice[a](limbs(), 0);
+        let den = alloc_slice[a](limbs(), 0);
+        let scratch = alloc_slice[a](limbs(), 0);
+        let whole = round_fixed(abs_float(x), nd, dig, num, den, scratch);
+        var scaled = whole;
+        var k = 0;
+        while k < nd {
+            scaled = scaled * 10 + dig[k];
+            k = k + 1;
+        }
+        r = float_of(scaled) / pow10(nd);
+    }
+    if is_neg(x) {
+        return 0.0 - r;
+    }
+    return r;
+}
+
+// The first `s` significant decimal digits of mag > 0 into `out`, rounded half to even from the exact value;
+// answers the decimal exponent of the first digit (mag is about d.ddd * 10^e).
+fn sig_digits[&o, &g, &a, &b, &c](mag: float, s: int, out: &!o [int], tmp: &!g [int], num: &!a [int], den: &!b [int], scratch: &!c [int]) -> [] int {
+    assert_small(mag);
+    let whole = truncate(mag);
+    frac_init(mag - float_of(whole), num, den);
+    // collect s + 1 digits (the last one decides the rounding) and whether anything nonzero follows
+    var count = 0;
+    var e10 = 0;
+    var sticky = false;
+    if whole > 0 {
+        let l = int_digits(whole, tmp, 0);
+        e10 = l - 1;
+        var k = 0;
+        while k < l {
+            if count < s + 1 {
+                out[count] = tmp[k];
+                count = count + 1;
+            } else if tmp[k] != 0 {
+                sticky = true;
+            }
+            k = k + 1;
+        }
+    } else {
+        // skip the zeros after the point
+        var zeros = 0;
+        var d = frac_next(num, den);
+        while d == 0 {
+            zeros = zeros + 1;
+            d = frac_next(num, den);
+        }
+        e10 = 0 - (zeros + 1);
+        out[0] = d;
+        count = 1;
+    }
+    while count < s + 1 {
+        out[count] = frac_next(num, den);
+        count = count + 1;
+    }
+    if !bignum.is_zero(num) {
+        sticky = true;
+    }
+    let r = out[s];
+    var up = false;
+    if r > 5 || r == 5 && sticky {
+        up = true;
+    } else if r == 5 && out[s - 1] % 2 == 1 {
+        up = true;
+    }
+    if up {
+        var j = s - 1;
+        while j >= 0 && out[j] == 9 {
+            out[j] = 0;
+            j = j - 1;
+        }
+        if j >= 0 {
+            out[j] = out[j] + 1;
+        } else {
+            out[0] = 1;
+            e10 = e10 + 1;
+        }
+    }
+    return e10;
+}
+
+fn put_exp[&h](heap: &!h Heap, buf: buffer.Buffer, e10: int) -> [heap] buffer.Buffer {
+    var out = put_char(heap, buf, 'e');
+    var e = e10;
+    if e < 0 {
+        out = put_char(heap, out, '-');
+        e = 0 - e;
+    } else {
+        out = put_char(heap, out, '+');
+    }
+    if e < 10 {
+        out = put_char(heap, out, '0');
+    }
+    return buffer.push_nat(heap, out, e);
+}
+
+// `{x:.Ne}`
+pub fn put_sci[&h](heap: &!h Heap, buf: buffer.Buffer, x: float, nd: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    if is_neg(x) {
+        out = put_char(heap, out, '-');
+    }
+    let mag = abs_float(x);
+    region a {
+        let dig = alloc_slice[a](24, 0);
+        let tmp = alloc_slice[a](24, 0);
+        let num = alloc_slice[a](limbs(), 0);
+        let den = alloc_slice[a](limbs(), 0);
+        let scratch = alloc_slice[a](limbs(), 0);
+        var e10 = 0;
+        if mag != 0.0 {
+            e10 = sig_digits(mag, nd + 1, dig, tmp, num, den, scratch);
+        }
+        out = put_digits(heap, out, dig, 0, 1);
+        if nd > 0 {
+            out = put_char(heap, out, '.');
+            out = put_digits(heap, out, dig, 1, nd + 1);
+        }
+        out = put_exp(heap, out, e10);
+    }
+    return out;
+}
+
+// `{x:g}`: six significant digits, no trailing zeros, exponent form below 1e-4 and from 1e6.
+pub fn put_general[&h](heap: &!h Heap, buf: buffer.Buffer, x: float) -> [heap] buffer.Buffer {
+    var out = buf;
+    if is_neg(x) {
+        out = put_char(heap, out, '-');
+    }
+    let mag = abs_float(x);
+    if mag == 0.0 {
+        return put_char(heap, out, '0');
+    }
+    region a {
+        let dig = alloc_slice[a](24, 0);
+        let tmp = alloc_slice[a](24, 0);
+        let num = alloc_slice[a](limbs(), 0);
+        let den = alloc_slice[a](limbs(), 0);
+        let scratch = alloc_slice[a](limbs(), 0);
+        let e10 = sig_digits(mag, 6, dig, tmp, num, den, scratch);
+        var used = 6;
+        while used > 1 && dig[used - 1] == 0 {
+            used = used - 1;
+        }
+        if e10 < 0 - 4 || e10 >= 6 {
+            out = put_digits(heap, out, dig, 0, 1);
+            if used > 1 {
+                out = put_char(heap, out, '.');
+                out = put_digits(heap, out, dig, 1, used);
+            }
+            out = put_exp(heap, out, e10);
+        } else if e10 < 0 {
+            out = put_char(heap, out, '0');
+            out = put_char(heap, out, '.');
+            var z = 0 - e10 - 1;
+            while z > 0 {
+                out = put_char(heap, out, '0');
+                z = z - 1;
+            }
+            out = put_digits(heap, out, dig, 0, used);
+        } else {
+            // e10 + 1 digits before the point
+            var k = 0;
+            while k <= e10 {
+                var d = 0;
+                if k < 6 {
+                    d = dig[k];
+                }
+                out = put_char(heap, out, '0' + d);
+                k = k + 1;
+            }
+            if used > e10 + 1 {
+                out = put_char(heap, out, '.');
+                out = put_digits(heap, out, dig, e10 + 1, used);
+            }
+        }
+    }
+    return out;
+}
+
+// Python's `str(x)` for a float: the shortest digits that read back, positional between 1e-4 and 1e16, else
+// `d[.ddd]e+XX`, and `.0` on a whole number.
+pub fn put_repr[&h](heap: &!h Heap, buf: buffer.Buffer, x: float) -> [heap] buffer.Buffer {
+    var out = buf;
+    if is_neg(x) {
+        out = put_char(heap, out, '-');
+    }
+    let mag = abs_float(x);
+    if mag == 0.0 {
+        return buffer.append(heap, out, "0.0");
+    }
+    region a {
+        let text = alloc_slice[a](32, byte_of(0));
+        let n = fmt.float_into(text, mag);
+        // text is d[.ddd]e[-]k
+        let dig = alloc_slice[a](24, 0);
+        var count = 0;
+        var p = 0;
+        while p < n && int_of(text[p]) != 'e' {
+            if int_of(text[p]) != '.' {
+                dig[count] = int_of(text[p]) - '0';
+                count = count + 1;
+            }
+            p = p + 1;
+        }
+        p = p + 1;
+        var eneg = false;
+        if int_of(text[p]) == '-' {
+            eneg = true;
+            p = p + 1;
+        }
+        var k = 0;
+        while p < n {
+            k = k * 10 + (int_of(text[p]) - '0');
+            p = p + 1;
+        }
+        if eneg {
+            k = 0 - k;
+        }
+        let decpt = k + 1;
+        if decpt <= 0 - 4 || decpt > 16 {
+            out = put_digits(heap, out, dig, 0, 1);
+            if count > 1 {
+                out = put_char(heap, out, '.');
+                out = put_digits(heap, out, dig, 1, count);
+            }
+            out = put_exp(heap, out, k);
+        } else if decpt <= 0 {
+            out = buffer.append(heap, out, "0.");
+            var z = 0 - decpt;
+            while z > 0 {
+                out = put_char(heap, out, '0');
+                z = z - 1;
+            }
+            out = put_digits(heap, out, dig, 0, count);
+        } else if decpt >= count {
+            out = put_digits(heap, out, dig, 0, count);
+            var z = decpt - count;
+            while z > 0 {
+                out = put_char(heap, out, '0');
+                z = z - 1;
+            }
+            out = buffer.append(heap, out, ".0");
+        } else {
+            out = put_digits(heap, out, dig, 0, decpt);
+            out = put_char(heap, out, '.');
+            out = put_digits(heap, out, dig, decpt, count);
+        }
+    }
+    return out;
+}
+
+// `{n:0Wb}`: the low `width` bits of n, most significant first.
+pub fn put_bin[&h](heap: &!h Heap, buf: buffer.Buffer, n: int, width: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    var k = width;
+    while k > 0 {
+        out = put_char(heap, out, '0' + (n >> (k - 1)) % 2);
+        k = k - 1;
+    }
+    return out;
+}
+
+// A number's text from `from` to the end of `buf`, right-aligned in `width`: the spaces go in at `from`.
+// The caller formats into a fresh buffer and passes it here.
+pub fn put_padded[&h, &s](heap: &!h Heap, buf: buffer.Buffer, text: &s [byte], width: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    var k = len(text);
+    while k < width {
+        out = put_char(heap, out, ' ');
+        k = k + 1;
+    }
+    return buffer.append(heap, out, text);
+}
