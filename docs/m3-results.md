@@ -64,7 +64,7 @@ same circuit, same bytes" by comparing three hashes.
 
 ## What was built
 
-- `scripts/qc_to_cho.py`: each `.qc` becomes a compiled circuit
+- `tools/qcconv.cho` (cancho; `scripts/qc_to_cho.py` is its Python reference, `scripts/regen.sh` runs it): each `.qc` becomes a compiled circuit
   (`tests/circuits/*.cho`, generated, formatted). This also turned the
   interpreter and the compiled path into a differential test of each
   other: a bug in `qsim`'s token parser would show as a mismatch.

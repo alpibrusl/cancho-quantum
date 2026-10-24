@@ -241,7 +241,7 @@ def check_calibration(compiler):
 def check_builds(compiler):
     """The tools print the same bytes built by Cranelift, built by LLVM, and interpreted."""
     failed = 0
-    cases = {"qcalib": open(os.path.join(ROOT, "profiles", "raw", "ibm_perth_props_2024-05-27.json")).read(),
+    cases = {"qcconv": "cho bell\n" + open(os.path.join(ROOT, "tests", "diff", "noise_model_seed1.qc")).read(), "qcalib": open(os.path.join(ROOT, "profiles", "raw", "ibm_perth_props_2024-05-27.json")).read(),
              "qprofile": open(os.path.join(ROOT, "profiles", "ibm_perth_2024-05-27.json")).read() + "\n---\ndm 7\nh 0\ncx 0 1\n"}
     for name, text in cases.items():
         outs = {}
@@ -255,6 +255,39 @@ def check_builds(compiler):
         same = len(set(outs.values())) == 1 and outs["llvm"] != ""
         failed += not same
         print(f"{'ok  ' if same else 'FAIL'} {name}: {len(outs['llvm'])} bytes, identical built by Cranelift, built by LLVM, and interpreted")
+    return failed
+
+
+def check_qcconv(compiler):
+    """`qcconv` writes exactly what qc_to_cho.py and qc_to_qasm.py write, for every circuit in tests/diff, and refuses the same ways."""
+    import qc_to_cho
+    import qc_to_qasm
+    exe = os.path.join(tempfile.mkdtemp(prefix="qcconv-"), "qcconv")
+    build(compiler, "tools/qcconv.cho", exe)
+    diff = os.path.join(ROOT, "tests", "diff")
+    failed = checked = skipped = 0
+    for f in sorted(os.listdir(diff)):
+        if not f.endswith(".qc"):
+            continue
+        name, text = f[:-3], open(os.path.join(diff, f)).read()
+        for mode, ref in (("cho " + name, qc_to_cho.convert), ("qasm", qc_to_qasm.convert)):
+            want = ref(name)
+            r = run(exe, mode + "\n" + text)
+            ok = (r[0] == 3 and r[1] == "") if want is None else (r[0] == 0 and r[1] == want)
+            failed += not ok
+            skipped += want is None
+            checked += want is not None
+            if not ok and failed <= 5:
+                print(f"FAIL qcconv {mode}: exit {r[0]}, {r[2].strip()!r}")
+    for label, text in (("no mode line", "n 2\nh 0\n"), ("unknown mode", "x\nn 2\nh 0\n"), ("an unknown operation", "cho a\nn 2\nfoo 0\n"),
+                        ("a bad argument", "cho a\nn 2\nh zero\n"), ("too many qubits", "cho a\nn 21\nh 0\n"), ("quiet in a compiled circuit", "cho a\nn 2\nh 0\nquiet\n"),
+                        ("an unknown operation in QASM", "qasm\nn 2\nfoo 0\n")):
+        r = run(exe, text)
+        ok = r[0] in (2,) and r[1] == ""
+        failed += not ok
+        if not ok:
+            print(f"FAIL qcconv should refuse {label}: exit {r[0]}")
+    print(f"{'FAIL' if failed else 'ok  '} qcconv vs qc_to_cho.py and qc_to_qasm.py: {checked} files written identically, {skipped} circuits with no such form refused alike, 7 malformed inputs refused, {failed} differences")
     return failed
 
 
@@ -318,6 +351,7 @@ def main():
         print("FAIL malformed JSON was accepted")
     print(f"{'FAIL' if failed else 'ok  '} qprofile vs noise_profile.py: 2 checked-in profiles, {valid} random valid profiles, {refused} refused ones, {failed} differences")
     failed += check_calibration(compiler)
+    failed += check_qcconv(compiler)
     failed += check_builds(compiler)
     sys.exit(1 if failed else 0)
 

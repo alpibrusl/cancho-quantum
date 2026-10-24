@@ -16,6 +16,7 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
 - `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
+- `docs/benchmark.md`: where `qsim` stands against Qiskit Aer and Statevector (speed, memory, the density matrix); build with `--backend llvm` for large circuits, it is 3 to 6 times faster than the default
 - `docs/idle-noise.md`: T1/T2 decay while a qubit waits, a gate runs, or it waits for a partner (`coher`, `wait`, `time1`, `time2`, `sched`), checked against Qiskit Aer's thermal-relaxation channel
 - `docs/calibration.md`: a real device's published calibration (`ibm_perth`, 2024-05-27) read into a profile, checked against Qiskit Aer's noise model built from the same snapshot (`scripts/calibration_import.py`, `check_calibration.py`)
 - `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`tools/qprofile.cho`; `profiles/example_5q.json` has invented numbers)
@@ -26,11 +27,10 @@ noise on the density matrix (`docs/density-results.md`).
 
 ![Worst amplitude error against Qiskit, per circuit](docs/img/error-per-circuit.svg)
 
-**What is cancho and what is Python.** The simulator (`src/`) and the tools a user runs (`tools/`: `qprofile`, which
-turns a device-style JSON noise profile into `qsim` operations, and `qcalib`, which turns a published IBM calibration into
-such a profile) are cancho, with no Python and no file or network access (`cancho authority` says so). Python is only the
-test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks, the generators of the test
-circuits and the landing-page builder. `scripts/noise_profile.py` and `scripts/calibration_import.py` are reference
+**What is cancho and what is Python.** The simulator (`src/`) and the tools (`tools/`: `qprofile`, which
+turns a device-style JSON noise profile into `qsim` operations; `qcalib`, which turns a published IBM calibration into
+such a profile; and `qcconv`, which writes a `.qc` circuit as a compiled cancho circuit or as OpenQASM, run by `sh scripts/regen.sh`) are cancho, with no Python and no file or network access (`cancho authority` says so). Python is only the
+test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks and the landing-page builder. `scripts/noise_profile.py`, `calibration_import.py`, `qc_to_cho.py` and `qc_to_qasm.py` are reference
 implementations the cancho tools are differentially tested against, not what you run.
 
 ```sh

@@ -1,0 +1,215 @@
+{
+  "sizes": [
+    10,
+    14,
+    18,
+    20
+  ],
+  "workloads": {
+    "h_layer": {
+      "10": {
+        "gates": 10,
+        "qsim_cranelift": 0.0012067049999586743,
+        "qsim_llvm": 0.001425138999934461,
+        "aer_1thread": 0.0008674590000055105,
+        "aer_4threads": 0.0011335149999922578,
+        "qiskit_statevector": 0.0006103590000066106
+      },
+      "14": {
+        "gates": 14,
+        "qsim_cranelift": 0.0033536670000557933,
+        "qsim_llvm": 0.0017347409999501906,
+        "aer_1thread": 0.001684521000015593,
+        "aer_4threads": 0.0017313360000343891,
+        "qiskit_statevector": 0.002130625999939184
+      },
+      "18": {
+        "gates": 18,
+        "qsim_cranelift": 0.04527418099996794,
+        "qsim_llvm": 0.009838361999982226,
+        "aer_1thread": 0.02096480500006237,
+        "aer_4threads": 0.008465932999911274,
+        "qiskit_statevector": 0.08739823100006561
+      },
+      "20": {
+        "gates": 20,
+        "qsim_cranelift": 0.2052146730000004,
+        "qsim_llvm": 0.04158476099996733,
+        "aer_1thread": 0.11276148299998567,
+        "aer_4threads": 0.031077805999984776
+      }
+    },
+    "cx_chain": {
+      "10": {
+        "gates": 10,
+        "qsim_cranelift": 0.0014012010000215014,
+        "qsim_llvm": 0.0012753260000408773,
+        "aer_1thread": 0.0012508180000168068,
+        "aer_4threads": 0.001166725999951268,
+        "qiskit_statevector": 0.0007070249999969747
+      },
+      "14": {
+        "gates": 14,
+        "qsim_cranelift": 0.0027608000000327593,
+        "qsim_llvm": 0.0017024370000626732,
+        "aer_1thread": 0.0023766630000636724,
+        "aer_4threads": 0.0023128779999979088,
+        "qiskit_statevector": 0.002080703000046924
+      },
+      "18": {
+        "gates": 18,
+        "qsim_cranelift": 0.037129876999983935,
+        "qsim_llvm": 0.01022764799995457,
+        "aer_1thread": 0.03848932699997931,
+        "aer_4threads": 0.008848194999927728,
+        "qiskit_statevector": 0.042406682999967416
+      },
+      "20": {
+        "gates": 20,
+        "qsim_cranelift": 0.11148454800002128,
+        "qsim_llvm": 0.0379556569999977,
+        "aer_1thread": 0.11905294300004243,
+        "aer_4threads": 0.05708825099998194
+      }
+    },
+    "rz_layer": {
+      "10": {
+        "gates": 20,
+        "qsim_cranelift": 0.0014022429999158703,
+        "qsim_llvm": 0.0012387330000365182,
+        "aer_1thread": 0.001051678999942851,
+        "aer_4threads": 0.0010571279999567196,
+        "qiskit_statevector": 0.0007050430000390406
+      },
+      "14": {
+        "gates": 28,
+        "qsim_cranelift": 0.004651770000009492,
+        "qsim_llvm": 0.0019018329999198613,
+        "aer_1thread": 0.0024701300000060655,
+        "aer_4threads": 0.0020656789999975445,
+        "qiskit_statevector": 0.00252733199999966
+      },
+      "18": {
+        "gates": 36,
+        "qsim_cranelift": 0.0791659989999971,
+        "qsim_llvm": 0.017969057999948745,
+        "aer_1thread": 0.023430479000012383,
+        "aer_4threads": 0.00843738100002156,
+        "qiskit_statevector": 0.06854832000010447
+      },
+      "20": {
+        "gates": 40,
+        "qsim_cranelift": 0.43738157600000704,
+        "qsim_llvm": 0.10525232300005882,
+        "aer_1thread": 0.09694849599998179,
+        "aer_4threads": 0.03815118499994696
+      }
+    },
+    "random": {
+      "10": {
+        "gates": 300,
+        "qsim_cranelift": 0.0035308699999632154,
+        "qsim_llvm": 0.001472261999992952,
+        "aer_1thread": 0.00818374000004951,
+        "aer_4threads": 0.008095904000015253,
+        "qiskit_statevector": 0.013154059000044072
+      },
+      "14": {
+        "gates": 420,
+        "qsim_cranelift": 0.054903832000036346,
+        "qsim_llvm": 0.010632438000016009,
+        "aer_1thread": 0.026061820999984775,
+        "aer_4threads": 0.03003438799999003,
+        "qiskit_statevector": 0.05690826499994728
+      },
+      "18": {
+        "gates": 540,
+        "qsim_cranelift": 1.2337448590000122,
+        "qsim_llvm": 0.20807027000000744,
+        "aer_1thread": 0.30809848599994893,
+        "aer_4threads": 0.13222999300000993,
+        "qiskit_statevector": 0.8471815630000492
+      },
+      "20": {
+        "gates": 600,
+        "qsim_cranelift": 5.6944951110000375,
+        "qsim_llvm": 1.0134312410000348,
+        "aer_1thread": 1.6333873410000024,
+        "aer_4threads": 0.5075257890000557
+      }
+    },
+    "qft": {
+      "10": {
+        "gates": 60,
+        "qsim_cranelift": 0.0016413459999284896,
+        "qsim_llvm": 0.0013053049999598443,
+        "aer_1thread": 0.004616690000034396,
+        "aer_4threads": 0.0037141380000775825,
+        "qiskit_statevector": 0.004088023000008434
+      },
+      "14": {
+        "gates": 112,
+        "qsim_cranelift": 0.008736482000017531,
+        "qsim_llvm": 0.003783482000017102,
+        "aer_1thread": 0.012367061000077229,
+        "aer_4threads": 0.012756057000046894,
+        "qiskit_statevector": 0.013618946999940817
+      },
+      "18": {
+        "gates": 180,
+        "qsim_cranelift": 0.1665885380000418,
+        "qsim_llvm": 0.03893118499991033,
+        "aer_1thread": 0.1159496750000244,
+        "aer_4threads": 0.05246015199998055,
+        "qiskit_statevector": 0.35413336099998105
+      },
+      "20": {
+        "gates": 220,
+        "qsim_cranelift": 0.8641625840000415,
+        "qsim_llvm": 0.1854246970000304,
+        "aer_1thread": 0.4727098250000381,
+        "aer_4threads": 0.19416996000006748
+      }
+    }
+  },
+  "startup_ms": {
+    "cranelift": 1.2,
+    "llvm": 1.3
+  },
+  "memory_mib": {
+    "n": 20,
+    "qsim": 17.3,
+    "state_vector_mib": 16.0,
+    "aer_incl_python": 209.5
+  },
+  "noisy": {
+    "trajectory_10q_random_with_1000_samples": {
+      "cranelift": 0.08750511899995672,
+      "llvm": 0.03115583199996763
+    },
+    "density_matrix": {
+      "4": {
+        "qsim_cranelift": 0.011008187000015823,
+        "qsim_llvm": 0.002573467000047458,
+        "aer_density_matrix_1thread": 0.003959817000009025
+      },
+      "6": {
+        "qsim_cranelift": 0.19284519799998634,
+        "qsim_llvm": 0.03273932199999763,
+        "aer_density_matrix_1thread": 0.017498332000059236
+      },
+      "8": {
+        "qsim_cranelift": 4.473777197000004,
+        "qsim_llvm": 0.8790309419999858,
+        "aer_density_matrix_1thread": 0.11805705300002955
+      }
+    }
+  },
+  "machine": "x86_64, 4 cores, Linux 6.18.44-fc-v153",
+  "measured": "2026-10-24",
+  "versions": {
+    "qiskit": "2.6.1",
+    "qiskit_aer": "0.18.0",
+    "numpy": "2.5.3"
+  }
+}
