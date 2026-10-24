@@ -24,118 +24,76 @@
 //     trig <cos> <sin>
 //     amp <index> <re> <im>  for each amplitude, in index order
 //
+// A circuit that starts `dm <n>` instead of `n <count>` is run on the density matrix
+// (exact noise, at most 10 qubits): `purity`, `trace`, `probs` print its properties.
 // A file that starts with `OPENQASM` is read as OpenQASM 2.0 instead (`qasm.cho`).
 //
 // Floats are the shortest decimal that reads back to the same bits
 // (`std.fmt.float_into`), so the reader recovers the exact double.
 
+import qc.density;
 import qc.dump;
 import qc.gates;
 import qc.noise;
 import qc.qasm;
+import qc.reader;
 import qc.measure;
 import qc.state;
 import std.io;
 
-fn is_space(c: int) -> [] bool {
-    return c == 32 || c == 10 || c == 13 || c == 9;
-}
-
-// Skip white space, then answer the next token's characters packed
-// big-endian into an int ("cx" is 'c' * 256 + 'x'), or -1 at the end.
-fn read_word[&i](io: &!i Io) -> [io_read] int {
-    var c = getchar(io);
-    while c >= 0 && is_space(c) {
-        c = getchar(io);
-    }
-    if c < 0 {
-        return 0 - 1;
-    }
-    var w = 0;
-    var count = 0;
-    while c >= 0 && !is_space(c) {
-        // Only the first seven characters are kept, so a longer word (such as
-        // `OPENQASM`) cannot overflow the packed int.
-        if count < 7 {
-            w = w * 256 + c;
-        }
-        count = count + 1;
-        c = getchar(io);
-    }
-    return w;
-}
-
-fn read_int[&i](io: &!i Io) -> [io_read] int {
-    var c = getchar(io);
-    while c >= 0 && is_space(c) {
-        c = getchar(io);
-    }
-    var sign = 1;
-    if c == '-' {
-        sign = 0 - 1;
-        c = getchar(io);
-    }
-    var v = 0;
-    while c >= '0' && c <= '9' {
-        v = v * 10 + (c - '0');
-        c = getchar(io);
-    }
-    return sign * v;
-}
-
 // Run every operation on the state and answer the number executed.
 fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int], scratch: &!b [byte]) -> [io_read, io_write] int {
     var ops = 0;
-    var w = read_word(io);
+    var w = reader.read_word(io);
     while w >= 0 {
         if w == 104 {
-            gates.h(st, n, read_int(io));
+            gates.h(st, n, reader.read_int(io));
         } else if w == 120 {
-            gates.x(st, n, read_int(io));
+            gates.x(st, n, reader.read_int(io));
         } else if w == 122 {
-            gates.z(st, n, read_int(io));
+            gates.z(st, n, reader.read_int(io));
         } else if w == 115 {
-            gates.s(st, n, read_int(io));
+            gates.s(st, n, reader.read_int(io));
         } else if w == 116 {
-            gates.t(st, n, read_int(io));
+            gates.t(st, n, reader.read_int(io));
         } else if w == 25464 {
-            let c = read_int(io);
-            let t = read_int(io);
+            let c = reader.read_int(io);
+            let t = reader.read_int(io);
             gates.cx(st, n, c, t);
         } else if w == 25466 {
-            let a = read_int(io);
-            let b = read_int(io);
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
             gates.cz(st, n, a, b);
         } else if w == 29306 {
-            let q = read_int(io);
-            let num = read_int(io);
-            let den = read_int(io);
+            let q = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
             gates.rz(st, n, q, gates.angle(num, den));
         } else if w == 1936024932 {
-            rng[0] = read_int(io);
+            rng[0] = reader.read_int(io);
         } else if w == 109 {
-            let q = read_int(io);
+            let q = reader.read_int(io);
             let bit = measure.measure(st, n, q, rng);
             dump.measurement(io, q, bit);
         } else if w == 121 {
-            gates.y(st, n, read_int(io));
+            gates.y(st, n, reader.read_int(io));
         } else if w == 7562343 {
-            gates.sdg(st, n, read_int(io));
+            gates.sdg(st, n, reader.read_int(io));
         } else if w == 7627879 {
-            gates.tdg(st, n, read_int(io));
+            gates.tdg(st, n, reader.read_int(io));
         } else if w == 1937203568 {
-            let a = read_int(io);
-            let b = read_int(io);
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
             gates.swap(st, n, a, b);
         } else if w == 6513528 {
-            let c1 = read_int(io);
-            let c2 = read_int(io);
-            let t = read_int(io);
+            let c1 = reader.read_int(io);
+            let c2 = reader.read_int(io);
+            let t = reader.read_int(io);
             gates.ccx(st, n, c1, c2, t);
         } else if w == 29304 || w == 29305 || w == 112 {
-            let q = read_int(io);
-            let num = read_int(io);
-            let den = read_int(io);
+            let q = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
             if w == 29304 {
                 gates.rx(st, n, q, gates.angle(num, den));
             } else if w == 29305 {
@@ -144,15 +102,15 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 gates.p(st, n, q, gates.angle(num, den));
             }
         } else if w == 25456 {
-            let a = read_int(io);
-            let b = read_int(io);
-            let num = read_int(io);
-            let den = read_int(io);
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
             gates.cp(st, n, a, b, gates.angle(num, den));
         } else if w == 27700496373148016 || w == 31639965148735084 || w == 431198596972 || w == 27423402228804976 {
-            let q = read_int(io);
-            let num = read_int(io);
-            let den = read_int(io);
+            let q = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
             let p = noise.prob(num, den);
             if w == 27700496373148016 {
                 noise.bitflip(st, n, q, p, rng);
@@ -164,20 +122,20 @@ fn interpret[&i, &s, &r, &b](io: &!i Io, st: &!s [float], n: int, rng: &!r [int]
                 noise.ampdamp(st, n, q, p, rng);
             }
         } else if w == 126862285106277 {
-            if dump.samples(io, st, n, rng, read_int(io)) != 0 {
+            if dump.samples(io, st, n, rng, reader.read_int(io)) != 0 {
                 return 0 - 1;
             }
         } else if w == 487301145972 {
             rng[1] = 1;
         } else if w == 1953655143 {
-            let num = read_int(io);
-            let den = read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
             dump.trig(io, scratch, num, den);
         } else {
             return 0 - 1;
         }
         ops = ops + 1;
-        w = read_word(io);
+        w = reader.read_word(io);
     }
     return ops;
 }
@@ -233,10 +191,46 @@ fn run_qasm[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int
     return status;
 }
 
+// A density-matrix circuit, after its `dm <n>` header (`density.cho`). The matrix of
+// n qubits is a vector of 2n, so n is at most 10; two scratch matrices of the same
+// size hold the channel arithmetic.
+fn run_dm[&h, &i](heap: &!h Heap, io: &!i Io, n: int) -> [heap, io_read, io_write] int {
+    if n < 1 || n > 10 {
+        return 2;
+    }
+    let size = state.floats_for(2 * n);
+    let amp = box_slice(heap, size, 0.0);
+    let tmp = box_slice(heap, size, 0.0);
+    let acc = box_slice(heap, size, 0.0);
+    var status = 0;
+    region r {
+        let rng = alloc_slice[r](1, 88172645463325252);
+        let scratch = alloc_slice[r](24, byte_of(0));
+        let quiet = alloc_slice[r](1, 0);
+        quiet[0] = 0;
+        borrow mut amp as &!w in {
+            borrow mut tmp as &!x in {
+                borrow mut acc as &!y in {
+                    let st = contents(w);
+                    st[0] = 1.0;
+                    status = density.run(io, st, contents(x), contents(y), n, rng, scratch, quiet);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, acc);
+    return status;
+}
+
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
-    let head = read_word(io);
+    let head = reader.read_word(io);
     if head == 110 {
-        return run_qc(heap, io, read_int(io));
+        return run_qc(heap, io, reader.read_int(io));
+    }
+    if head == 25709 {
+        return run_dm(heap, io, reader.read_int(io));
     }
     if head == 22324781757055315 {
         return run_qasm(heap, io);

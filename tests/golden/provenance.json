@@ -17,6 +17,66 @@
     "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
     "output_sha256": "e7d35189eef9be97c0d2f7d01e3472dbd82e1ff865d22a2393190da3c53dbb11"
   },
+  "dm_ampdamp": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "78a9266be2ce758ec2816dd1c9636d5a56c1824f94083c552f951027cfdd808c",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "32eb416cafb7c46964506c2a07ba828432eac4242ae9b321f4f824e9e8330187"
+  },
+  "dm_bell_depol": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "f8c93c78920a3cc4fe8f5e10d1232cb7748c874b01ce12bef0a73748e7f0ebb5",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "78542ec3f65f61acee4a4e02e1d0c24fc2d931a93b56d01dc3d9d9db8a28b036"
+  },
+  "dm_channels3": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "cf2ddfdb7c0df07108472ca2453307130e8c1b9de63b052eca27a6b680908c01",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "d95e73f943a0b48c195415afc66eccbd918b4429c96830227098541f814e56f2"
+  },
+  "dm_every_gate": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "e49269adfb0473bf7e2acd6e8e6b1210bb5c3a78051e88f741cb791a68d93d84",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "762c039e0285a07c90d8969a8b0ca9c9476529ad127e8921cd93ec2ac284fa77"
+  },
+  "dm_ghz4_noise": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "0b79daeb18225cb90cc41adf1c1af3de01abbf5d862edd0458af6234ad885503",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "e194119ee7c25b064aa2eb5784a17eade441bac601ff34bf905cad4c25dc991e"
+  },
+  "dm_measure": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "27d025f7d1cedcd07541db9f64592e685e72bf60ebf2c7005dab4ffebca5a8c6",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "b7e4c2d4d54afce4b176c810240a1800dfd1b1833f05c79e4251afb572d65edf"
+  },
+  "dm_p0": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "f9aa44055b3c037ced3f68ca25e3d57c77f875d1dce90e7a94283a3b4b130dec",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "4c280bf51658b6246d70b1fa0bb26a85f23f21c897efffb9daf4b616d5d96819"
+  },
+  "dm_p1": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "18116c0902d4d4aeafec67c1c63c1c7c0aad7b3ff0ede16f1ef8353f80b9b97c",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "a26890be6c12633e039b70b4d359f95431681db023620d6b6ddd19e6986d87fc"
+  },
+  "dm_qft3_noisy": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "571fcdd04fa47c708e5994d5a51d671c4cdaed42b142fe5c2611eadc7a43921c",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "255b8ac9ca25003c30d258095f6729edd377c0a40ad3bdd5376238f62bb5dbcf"
+  },
+  "dm_random4": {
+    "circuit_body_id": "none (density-matrix circuits are interpreted, not compiled)",
+    "input_sha256": "2b1a7036a4e19b547bab3d1dea6e64abbb650a4368069eda552c2497aac61395",
+    "library_digest": "eeea31a4bfac90a18aec4195bc17eefbfb69ac709b83f6d45196e811593c8432",
+    "output_sha256": "0d101e4bbae17fa781cbf340a7ccdbec2ce7c75c6d9c302d74e9e6f1d7ac950b"
+  },
   "every_gate": {
     "circuit_body_id": "842061393fd163c93552d54c61f42203a9f314f3814ea060bfd4177f98f8664a",
     "input_sha256": "cee50933f1f2f0af45b7db4e1f450f3ee4e7b85b50df00d99b15187293e8b06b",

@@ -56,7 +56,8 @@ fn main(world: World) -> [] int {
 
 def convert(name):
     lines = [l.split() for l in open(os.path.join(DIFF, name + ".qc")) if l.strip()]
-    assert lines[0][0] == "n"
+    if lines[0][0] != "n":
+        return None          # a `dm <n>` circuit: the density-matrix mode has no compiled form
     n = int(lines[0][1])
     body, prints = [], False
     for op in lines[1:]:
@@ -113,9 +114,13 @@ def convert(name):
 def main():
     os.makedirs(OUT, exist_ok=True)
     names = sorted(f[:-3] for f in os.listdir(DIFF) if f.endswith(".qc"))
+    wrote = 0
     for name in names:
-        open(os.path.join(OUT, name + ".cho"), "w").write(convert(name))
-    print(f"wrote {len(names)} circuits to {OUT}")
+        text = convert(name)
+        if text is not None:
+            open(os.path.join(OUT, name + ".cho"), "w").write(text)
+            wrote += 1
+    print(f"wrote {wrote} circuits to {OUT}")
 
 
 if __name__ == "__main__":

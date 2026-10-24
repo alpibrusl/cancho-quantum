@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cancho-quantum: can a compiler refuse to clone a qubit?</title>
-<meta name="description" content="A small quantum state-vector simulator written in cancho, built to find out what a linear-types-and-capabilities language catches in quantum code, and what it does not.">
-<meta property="og:title" content="cancho-quantum: can a compiler refuse to clone a qubit?">
-<meta property="og:description" content="No-cloning as a type error, byte-identical runs, and an honest list of what the checker misses.">
+<title>cancho-quantum: a quantum simulator with a type checker for qubits</title>
+<meta name="description" content="A quantum state-vector simulator written in cancho: 17 gates, noise (sampled and exact), OpenQASM input, and a type checker that refuses to clone, drop or reuse a qubit. Every claim is measured against Qiskit.">
+<meta property="og:title" content="cancho-quantum: a quantum simulator with a type checker for qubits">
+<meta property="og:description" content="17 gates, noise, OpenQASM, and a checker that refuses to clone a qubit. Measured against Qiskit, and honest about what it misses.">
 <meta name="color-scheme" content="light dark">
 <link rel="canonical" href="https://alpibrusl.github.io/cancho-quantum/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235b3fb0'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='white' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3' fill='white'/%3E%3C/svg%3E">
@@ -59,6 +59,7 @@ h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 .6rem; letter-spacing: -
 .caption { text-align: center; color: var(--muted); font-size: .88rem; max-width: 46rem; margin: .8rem auto 0; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; }
+.cards.caps { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
 .card h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 .card ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .95rem; }
@@ -80,6 +81,8 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 .pbar { display: flex; justify-content: space-between; align-items: center; padding: .45rem .8rem; border-bottom: 1px solid var(--line); background: var(--soft); font: .8rem var(--mono); color: var(--muted); }
 .pbar button { font: 600 .8rem var(--font); padding: .25rem .7rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; margin-right: .6rem; }
 .promptbox pre { margin: 0; padding: 1rem; max-height: 26rem; overflow: auto; font: .8rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.gsub { text-align: center; margin: 2rem 0 .2rem; font-size: 1.02rem; }
+.gsub span { display: block; font-weight: 400; color: var(--muted); font-size: .88rem; }
 .gh { text-align: center; margin: 1.6rem 0 .5rem; font-size: 1.15rem; }
 .gallery { list-style: none; margin: 1rem auto 2rem; padding: 0; max-width: 64rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
 .gtile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
@@ -126,14 +129,14 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 <header class="top"><div class="wrap">
   <a class="brand" href=".">cancho-quantum</a>
   <nav>
-    <a href="#why">Why</a><a class="opt" href="#watch">Watch it run</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
+    <a href="#capabilities">Capabilities</a><a class="opt" href="#watch">Watch it run</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
     <a href="https://github.com/alpibrusl/cancho-quantum">GitHub</a>
   </nav>
 </div></header>
 
 <div class="wrap hero">
   <h1>Can a compiler refuse to clone a qubit?</h1>
-  <p class="sub">A small quantum simulator written in <a href="https://github.com/alpibrusl/cancho">cancho</a>, built to find out what a language with linear types and capabilities catches in quantum code, and to say plainly what it does not.</p>
+  <p class="sub">A quantum simulator written in <a href="https://github.com/alpibrusl/cancho">cancho</a>: {{N_GATES}} gates, noise (sampled and exact), OpenQASM input, and a type checker that refuses to clone, drop or reuse a qubit. Built to find out what a language with linear types catches in quantum code, and to say plainly what it misses.</p>
   <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#humans">For humans</a><a class="btn" href="#agents">For agents</a><a class="btn" href="#gallery">Gallery</a></div>
 </div>
 
@@ -145,17 +148,25 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
   <p class="caption">Real output of the compiler on the fixtures in <code>tests/reject/</code>, replayed. Each refusal has a stable rule tag; an agent reads the tag from <code>--output json</code>, not the sentence. Not a live session.</p>
 </div>
 
-<section class="alt" id="why"><div class="wrap">
-  <h2>What was tried, and what came out</h2>
-  <p class="lead">The idea: qubits are linear resources. The test: write the simulator, then try to write the mistakes, and see which ones the checker stops.</p>
-  <div class="cards">
-    <div class="card"><h3>No-cloning is a type error</h3><p>A <code>Qubit</code> is a <code>res</code>: it cannot be copied, cannot be dropped, and only <code>measure</code> ends it. Cloning, dropping, measuring twice and escaping a borrow are all refused by rules cancho already had. No compiler change was made.</p></div>
-    <div class="card"><h3>Reproducible to the byte</h3><p>{{N_GOLDEN}} circuits, each run six ways (interpreted and compiled; Cranelift and LLVM; aarch64 under emulation). The outputs are identical, and their hashes are checked in.</p></div>
-    <div class="card"><h3>A gap, stated up front</h3><p>CNOT with one qubit as both control and target is <em>not</em> refused at check time: it is accepted, and stops at run time. The page lists this, and what would close it, in the gallery.</p></div>
+<section class="alt" id="capabilities"><div class="wrap">
+  <h2>What it can do</h2>
+  <p class="lead">Everything named here is run by the page&rsquo;s build script before it is written down, and the numbers under <a href="#measured">Measured</a> come from the same runs.</p>
+  <div class="cards caps">
+{{CAPABILITIES}}
   </div>
 </div></section>
 
-<section id="watch"><div class="wrap">
+<section id="why"><div class="wrap">
+  <h2>What the type checker found</h2>
+  <p class="lead">The idea: qubits are linear resources. The test: write the simulator, then try to write the mistakes, and see which ones the checker stops. No compiler change was made.</p>
+  <div class="cards">
+    <div class="card"><h3>No-cloning is a type error</h3><p>A <code>Qubit</code> is a <code>res</code>: it cannot be copied, cannot be dropped, and only <code>measure</code> ends it. Cloning, dropping, measuring twice and escaping a borrow are all refused by rules cancho already had.</p></div>
+    <div class="card"><h3>Reproducible to the byte</h3><p>{{N_GOLDEN}} circuits. Each runs six ways (interpreted and compiled; Cranelift and LLVM; aarch64 under emulation), three for the {{N_DM}} density-matrix circuits, which are interpreted only. The outputs are identical, and their hashes are checked in. Adding noise, QASM and the density matrix did not change one earlier hash.</p></div>
+    <div class="card"><h3>Gaps, stated up front</h3><p>A repeated qubit in a multi-qubit gate (CNOT, SWAP, Toffoli with one qubit twice) is <em>not</em> refused at check time: it is accepted and stops at run time. A <code>Qubit</code> can also be written by hand from any module. The gallery lists both, and what would close them.</p></div>
+  </div>
+</div></section>
+
+<section class="alt" id="watch"><div class="wrap">
   <h2>Watch a circuit run</h2>
   <p class="lead">Each frame is the simulator's real output after the gates so far (the circuit is run once per prefix). Bar height is probability; bar colour is the phase of the amplitude.</p>
   <div class="stepper">
@@ -176,38 +187,51 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
   <p class="caption">Plays when scrolled into view unless your system asks for reduced motion. The frames are the simulator's own output, embedded in the page; the same simulator is what the numbers further down measure.</p>
 </div></section>
 
-<section class="alt" id="humans"><div class="wrap">
+<section id="humans"><div class="wrap">
   <h2>For humans</h2>
   <p class="lead">What this is, what you can do with it today, and how far to trust it.</p>
   <div class="two">
     <div class="card"><h3>What you can do</h3>
       <ul>
-        <li>Run a circuit: write a few lines (<code>h 0</code>, <code>cx 0 1</code>, <code>rz 2 1 4</code>, <code>m 1</code>) and read the amplitudes.</li>
+        <li>Run a circuit: a few lines (<code>h 0</code>, <code>cx 0 1</code>, <code>rz 2 1 4</code>) and read the amplitudes, or draw outcomes with <code>sample 1000</code>.</li>
+        <li>Add noise (<code>depol 1 1 4</code>) and either sample it or ask for the exact density matrix (<code>dm 2</code>).</li>
+        <li>Feed it OpenQASM 2.0 from Qiskit, or the algorithms in <code>tests/diff/</code>.</li>
         <li>Write a typed program with <code>Qubit</code> values and see the checker say no when you clone one.</li>
         <li>Check the numbers yourself against Qiskit, and the bytes against the checked-in hashes.</li>
       </ul></div>
     <div class="card"><h3>How far to trust it</h3>
       <ul>
-        <li>Amplitudes match Qiskit 2.6.1 to {{WORST}} on {{N_CIRCUITS}} circuits (the gate is 1e-12). Up to 20 qubits.</li>
+        <li>Amplitudes and density matrices match Qiskit 2.6.1 to {{WORST}} on {{N_CIRCUITS}} circuits (the gate is 1e-12). Up to 20 qubits (10 for the density matrix).</li>
+        <li>Sampled noise is checked as an average: thousands of runs against the exact density matrix, not run by run.</li>
         <li>It is a research prototype: one reference implementation, one compiler revision, one machine plus emulation.</li>
         <li>It is not fast and not a rival to Qiskit Aer or qsim, and does not try to be.</li>
       </ul></div>
   </div>
-  <p class="fine">The input is plain text, one operation per line, so a circuit can be hashed and kept beside its reference output:</p>
-<pre class="code">n 2        # two qubits
-h 0        # Hadamard on qubit 0
-cx 0 1     # CNOT, control 0, target 1
-m 0        # measure qubit 0 (seeded, deterministic)</pre>
+  <p class="fine">The input is plain text, one operation per line, so a circuit can be hashed and kept beside its reference output. Sampled noise and sampling:</p>
+<pre class="code">n 3        # three qubits
+h 0
+cx 0 1     # a Bell pair
+depol 1 1 4  # depolarizing noise on qubit 1, probability 1/4
+ry 2 1 3   # rotate qubit 2 by pi/3
+seed 7     # the sampler is seeded: same seed, same bits
+sample 1000  # 1000 outcomes, counted per bit string
+m 0        # or measure qubit 0 and collapse the state</pre>
+  <p class="fine">The same noise, exactly (<code>dm</code> in place of <code>n</code>, up to 10 qubits): one run prints the density matrix, and <code>purity</code>, <code>trace</code> and <code>probs</code> ask for its properties.</p>
+<pre class="code">dm 2
+h 0
+cx 0 1
+depol 1 1 4
+purity     # prints purity 0.5833...</pre>
   <div class="vid">
     <video controls preload="none" playsinline poster="demo/tour.poster.jpg" aria-label="A recording of this page: the refusals replaying, then a circuit stepping through its gates">
       <source src="demo/tour.mp4" type="video/mp4">
       Your browser cannot play this video: <a href="demo/tour.mp4">download the recording</a>.
     </video>
-    <p class="caption">A short recording of this page (scripts/record_demo.py): the refusals replaying, then the stepper running Bell, GHZ and teleportation. It is a recording, not a live session.</p>
+    <p class="caption">A short recording of this page (scripts/record_demo.py): the refusals replaying, then the stepper running Bell, GHZ, teleportation, the Fourier transform and Grover. It is a recording, not a live session.</p>
   </div>
 </div></section>
 
-<section id="agents"><div class="wrap">
+<section class="alt" id="agents"><div class="wrap">
   <h2>For agents</h2>
   <p class="lead">Everything an agent needs is checked, tagged or hashed. No key, no model, no network after the clone.</p>
   <div class="two">
@@ -258,10 +282,12 @@ m 0        # measure qubit 0 (seeded, deterministic)</pre>
     <div class="num"><b>{{WORST}}</b><span>worst amplitude error against Qiskit over {{N_CIRCUITS}} circuits (gate: 1e-12)</span></div>
     <div class="num"><b>{{ULP}} ulp</b><span>worst distance of <code>sin</code>/<code>cos</code> from the C library on the angles tested</span></div>
     <div class="num"><b>{{FIX_OK}} / {{FIX_ALL}}</b><span>accept and reject fixtures behave as stated</span></div>
-    <div class="num"><b>{{N_GOLDEN}} &times; 6</b><span>circuits &times; builds, all byte-identical</span></div>
+    <div class="num"><b>{{DM_WORST}}</b><span>worst error of the {{N_DM}} density-matrix circuits against Qiskit&rsquo;s DensityMatrix</span></div>
+    <div class="num"><b>z &le; {{NOISE_Z}}</b><span>worst z-score of sampled noise, averaged over thousands of runs, against the exact density matrix</span></div>
+    <div class="num"><b>{{N_GOLDEN}}</b><span>circuits whose output is byte-identical on every build (six builds each; three for density matrices)</span></div>
   </div>
   <div class="figs" style="margin-top:2rem">
-    <div class="fig"><h3>Error against Qiskit, per circuit</h3>{{CHART_ERROR}}<p>Worst amplitude error for each of the {{N_ERR_ROWS}} circuits that end in a state ({{N_ERR_EXACT}} are exactly zero; the 26th, <code>trig</code>, prints no state). The dashed line is the 1e-12 gate.</p></div>
+    <div class="fig"><h3>Error against Qiskit, per circuit</h3>{{CHART_ERROR}}<p>Worst error for each of the {{N_ERR_ROWS}} circuits that print amplitudes or a density matrix ({{N_ERR_EXACT}} are exactly zero; <code>trig</code> prints neither, so it has no bar). The dashed line is the 1e-12 gate.</p></div>
     <div class="fig"><h3>Speed against qubits</h3>{{CHART_TIMING}}<p>{{TIMING_TEXT}}</p></div>
     <div class="fig"><h3>The sampler is fair</h3>{{CHART_UNIFORM}}<p>{{UNIFORM_TEXT}}. Dashed: the expected count; shaded: two standard deviations.</p></div>
     <div class="fig"><h3>A Bell pair never disagrees</h3>{{CHART_BELL}}<p>{{BELL_TEXT}}. Dashed: half the runs.</p></div>
@@ -278,7 +304,9 @@ m 0        # measure qubit 0 (seeded, deterministic)</pre>
 git clone https://github.com/alpibrusl/cancho-quantum.git &amp;&amp; cd cancho-quantum
 export CANCHO=../cancho/target/debug/cancho
 $CANCHO build src/*.cho --std -o qsim
-printf 'n 2\nh 0\ncx 0 1\n' | ./qsim
+printf 'n 2\nh 0\ncx 0 1\n' | ./qsim                       # a Bell state
+printf 'dm 2\nh 0\ncx 0 1\ndepol 1 1 4\npurity\nquiet\n' | ./qsim   # exact noise: purity 0.5833...
+./qsim &lt; tests/qasm/qft4.qasm | head -3                   # OpenQASM in
 python3 scripts/check_types.py</code></pre>
 </div></section>
 
@@ -287,6 +315,9 @@ python3 scripts/check_types.py</code></pre>
   <div class="cards">
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Design</a></h3><p>The mapping from quantum facts to checks, and what the checker cannot say.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md">The must-reject list</a></h3><p>Five entries, four refused, one not, and why.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/features-results.md">Gates, sampling, OpenQASM</a></h3><p>What was added after the type checker, and what each check found.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/noise-results.md">Noise by sampling</a></h3><p>Four channels, checked as an average against the exact answer.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/density-results.md">Exact noise</a></h3><p>The density matrix as a state of twice as many qubits.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Determinism</a></h3><p>Six builds, one set of bytes, and what the emulation does not show.</p></div>
   </div>
 </div></section>

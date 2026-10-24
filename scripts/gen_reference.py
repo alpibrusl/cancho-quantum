@@ -34,6 +34,7 @@ from qiskit.circuit.library import (CCXGate, CPhaseGate, CXGate, CZGate, HGate, 
                                     SdgGate, SGate, SwapGate, TdgGate, TGate, XGate, YGate, ZGate)
 from qiskit.quantum_info import Operator, Statevector
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "diff")
 MASK = (1 << 64) - 1
 DEFAULT_SEED = 88172645463325252
@@ -143,8 +144,64 @@ def reference(n, ops):
     return lines
 
 
-def render(n, ops):
-    out = [f"n {n}"]
+def reference_dm(n, ops):
+    """The lines `qsim` must print for a `dm <n>` circuit: Qiskit's DensityMatrix, exact."""
+    from noise_lib import kraus
+    from qiskit.quantum_info import DensityMatrix, Kraus
+    rho = DensityMatrix.from_int(0, 2**n)
+    rng = Rng()
+    lines, quiet = [], False
+    for name, *a in ops:
+        if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
+            gate = {"h": HGate, "x": XGate, "y": YGate, "z": ZGate, "s": SGate, "t": TGate, "sdg": SdgGate, "tdg": TdgGate}[name]()
+            rho = rho.evolve(Operator(gate), qargs=[a[0]])
+        elif name in ("rx", "ry", "rz", "p"):
+            gate = {"rx": RXGate, "ry": RYGate, "rz": RZGate, "p": PhaseGate}[name](angle(a[1], a[2]))
+            rho = rho.evolve(Operator(gate), qargs=[a[0]])
+        elif name in ("cx", "cz", "swap"):
+            rho = rho.evolve(Operator({"cx": CXGate, "cz": CZGate, "swap": SwapGate}[name]()), qargs=[a[0], a[1]])
+        elif name == "ccx":
+            rho = rho.evolve(Operator(CCXGate()), qargs=[a[0], a[1], a[2]])
+        elif name == "cp":
+            rho = rho.evolve(Operator(CPhaseGate(angle(a[2], a[3]))), qargs=[a[0], a[1]])
+        elif name in ("bitflip", "phaseflip", "depol", "ampdamp"):
+            rho = rho.evolve(Kraus(kraus(name, a[1] / a[2])), qargs=[a[0]])
+        elif name == "seed":
+            rng = Rng(a[0])
+        elif name == "m":
+            q = a[0]
+            m = rho.data
+            diag = np.real(np.diag(m))
+            p1 = float(sum(diag[i] for i in range(2**n) if (i >> q) & 1))
+            u = rng.next()
+            bit, pr = (1, p1) if u < p1 else (0, 1.0 - p1)
+            keep = np.array([((i >> q) & 1) == bit for i in range(2**n)])
+            m = m * np.outer(keep, keep) / pr
+            rho = DensityMatrix(m)
+            lines.append(f"m {q} {bit}")
+        elif name == "purity":
+            lines.append(f"purity {float(np.real(np.trace(rho.data @ rho.data)))!r}")
+        elif name == "trace":
+            lines.append(f"trace {float(np.real(np.trace(rho.data)))!r}")
+        elif name == "probs":
+            for i, pv in enumerate(np.real(np.diag(rho.data))):
+                if pv > 0:
+                    lines.append(f"prob {i:0{n}b} {float(pv)!r}")
+        elif name == "quiet":
+            quiet = True
+        else:
+            raise ValueError(name)
+    if not quiet:
+        for i in range(2**n):
+            for j in range(2**n):
+                v = rho.data[i, j]
+                if v != 0:
+                    lines.append(f"rho {i} {j} {float(v.real)!r} {float(v.imag)!r}")
+    return lines
+
+
+def render(n, ops, dm=False):
+    out = [f"dm {n}" if dm else f"n {n}"]
     for op in ops:
         out.append(" ".join(str(a) for a in op))
     return "\n".join(out) + "\n"
@@ -209,6 +266,44 @@ def feature_circuits():
     return c
 
 
+def density_circuits():
+    """Circuits for the density-matrix mode (`dm <n>`): exact noise, compared with Qiskit's DensityMatrix."""
+    c = {}
+    c["dm_bell_depol"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 1, 1, 4), ("purity",), ("trace",), ("probs",)])
+    c["dm_every_gate"] = (3, [("h", 0), ("y", 1), ("rx", 0, 1, 3), ("ry", 2, 2, 5), ("p", 1, 1, 7), ("sdg", 0), ("tdg", 1), ("s", 2), ("t", 0),
+                              ("swap", 0, 2), ("cp", 1, 2, 3, 8), ("ccx", 0, 1, 2), ("cz", 0, 1), ("cx", 2, 0), ("rz", 1, -5, 6), ("z", 2), ("x", 1),
+                              ("purity",), ("trace",)])
+    c["dm_channels3"] = (3, [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("depol", 0, 1, 6), ("ampdamp", 1, 1, 4), ("phaseflip", 2, 1, 5),
+                             ("bitflip", 1, 1, 7), ("ry", 2, 1, 4), ("depol", 2, 1, 3), ("purity",), ("trace",)])
+    c["dm_ampdamp"] = (2, [("h", 0), ("ampdamp", 0, 1, 3), ("cx", 0, 1), ("ampdamp", 1, 1, 2), ("probs",)])
+    c["dm_measure"] = (2, [("seed", 3), ("h", 0), ("cx", 0, 1), ("depol", 0, 1, 5), ("m", 0), ("purity",), ("trace",)])
+    qft = [("x", 0), ("x", 2)]
+    for j in range(2, -1, -1):
+        qft.append(("h", j))
+        for k in range(j - 1, -1, -1):
+            qft.append(("cp", k, j, 1, 2 ** (j - k)))
+        qft.append(("depol", j, 1, 20))
+    c["dm_qft3_noisy"] = (3, qft + [("swap", 0, 2), ("purity",)])
+    c["dm_ghz4_noise"] = (4, [("h", 0)] + [op for i in range(3) for op in (("cx", i, i + 1), ("depol", i + 1, 1, 8))] + [("purity",), ("probs",)])
+    rng = random.Random(77)
+    ops = []
+    for _ in range(40):
+        kind = rng.choice(["h", "x", "y", "s", "t", "cx", "rz", "ry", "depol", "bitflip", "phaseflip", "ampdamp"])
+        if kind == "cx":
+            a, b = rng.sample(range(4), 2)
+            ops.append((kind, a, b))
+        elif kind in ("rz", "ry"):
+            ops.append((kind, rng.randrange(4), rng.randrange(-9, 10), rng.choice([3, 5, 7])))
+        elif kind in ("depol", "bitflip", "phaseflip", "ampdamp"):
+            ops.append((kind, rng.randrange(4), rng.randrange(0, 6), 10))
+        else:
+            ops.append((kind, rng.randrange(4)))
+    c["dm_random4"] = (4, ops + [("purity",), ("trace",)])
+    c["dm_p0"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 0, 1), ("bitflip", 1, 0, 1), ("phaseflip", 0, 0, 1), ("ampdamp", 1, 0, 1), ("purity",)])
+    c["dm_p1"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 1, 1), ("bitflip", 1, 1, 1), ("phaseflip", 0, 1, 1), ("ampdamp", 1, 1, 1), ("purity",), ("probs",)])
+    return c
+
+
 def circuits():
     c = {}
     c["bell"] = (2, [("h", 0), ("cx", 0, 1)])
@@ -234,6 +329,7 @@ def circuits():
             for den in (1, 2, 3, 5, 8, 16, 97)]
     c["trig"] = (1, trig)
     c.update(feature_circuits())
+    c.update(density_circuits())
     # The unitary half of teleportation (the landing page steps through it):
     # prepare a state on qubit 0, entangle 1 and 2, then rotate 0 and 1 into the Bell basis.
     c["teleport_unitary"] = (3, [("h", 0), ("rz", 0, 1, 3), ("h", 1), ("cx", 1, 2), ("cx", 0, 1), ("h", 0)])
@@ -252,10 +348,10 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     for name, (n, ops) in circuits().items():
         with open(os.path.join(OUT, name + ".qc"), "w") as f:
-            f.write(render(n, ops))
+            f.write(render(n, ops, dm=name.startswith("dm_")))
         with open(os.path.join(OUT, name + ".ref"), "w") as f:
             f.write(f"# qiskit {qiskit.__version__}, numpy {np.__version__}\n")
-            f.write("\n".join(reference(n, ops)) + "\n")
+            f.write("\n".join((reference_dm if name.startswith("dm_") else reference)(n, ops)) + "\n")
     print(f"wrote {len(circuits())} circuits to {OUT}", file=sys.stderr)
 
 

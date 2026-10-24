@@ -36,7 +36,7 @@ def ulps(a, b):
 
 
 def parse(text, n_amp=None):
-    ms, trig, amp, smp = [], [], {}, []
+    ms, trig, amp, smp, rho, scal = [], [], {}, [], {}, []
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
@@ -47,9 +47,15 @@ def parse(text, n_amp=None):
             trig.append((float(f[1]), float(f[2])))
         elif f[0] == "sample":
             smp.append((f[1], int(f[2])))
+        elif f[0] == "rho":
+            rho[(int(f[1]), int(f[2]))] = (float(f[3]), float(f[4]))
+        elif f[0] in ("purity", "trace"):
+            scal.append((f[0], float(f[1])))
+        elif f[0] == "prob":
+            scal.append(("prob", f[1], float(f[2])))
         elif f[0] == "amp":
             amp[int(f[1])] = (float(f[2]), float(f[3]))
-    return ms, trig, amp, smp
+    return ms, trig, amp, smp, rho, scal
 
 
 def build(compiler, backend, exe):
@@ -94,6 +100,15 @@ def main():
             print(f"FAIL {name}: sample counts {got[3]} != {want[3]}")
             ok = False
         worst = 0.0
+        if len(got[5]) != len(want[5]) or any(g[:-1] != w[:-1] for g, w in zip(got[5], want[5])):
+            print(f"FAIL {name}: scalar lines {got[5]} != {want[5]}")
+            ok = False
+        else:
+            for g, w in zip(got[5], want[5]):
+                worst = max(worst, abs(g[-1] - w[-1]))
+        for key in set(got[4]) | set(want[4]):
+            g, w = got[4].get(key, (0.0, 0.0)), want[4].get(key, (0.0, 0.0))
+            worst = max(worst, abs(g[0] - w[0]), abs(g[1] - w[1]))
         for i in set(got[2]) | set(want[2]):
             g = got[2].get(i, (0.0, 0.0))
             w = want[2].get(i, (0.0, 0.0))

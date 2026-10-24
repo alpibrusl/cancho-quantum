@@ -1,0 +1,52 @@
+module qc.reader;
+
+import std.io;
+
+// The token reader shared by the state-vector interpreter (`main.cho`) and the
+// density-matrix interpreter (`density.cho`).
+
+pub fn is_space(c: int) -> [] bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+// Skip white space, then answer the next token's characters packed
+// big-endian into an int ("cx" is 'c' * 256 + 'x'), or -1 at the end.
+pub fn read_word[&i](io: &!i Io) -> [io_read] int {
+    var c = getchar(io);
+    while c >= 0 && is_space(c) {
+        c = getchar(io);
+    }
+    if c < 0 {
+        return 0 - 1;
+    }
+    var w = 0;
+    var count = 0;
+    while c >= 0 && !is_space(c) {
+        // Only the first seven characters are kept, so a longer word (such as
+        // `OPENQASM`) cannot overflow the packed int.
+        if count < 7 {
+            w = w * 256 + c;
+        }
+        count = count + 1;
+        c = getchar(io);
+    }
+    return w;
+}
+
+pub fn read_int[&i](io: &!i Io) -> [io_read] int {
+    var c = getchar(io);
+    while c >= 0 && is_space(c) {
+        c = getchar(io);
+    }
+    var sign = 1;
+    if c == '-' {
+        sign = 0 - 1;
+        c = getchar(io);
+    }
+    var v = 0;
+    while c >= '0' && c <= '9' {
+        v = v * 10 + (c - '0');
+        c = getchar(io);
+    }
+    return sign * v;
+}

@@ -248,6 +248,14 @@ def build(cancho):
         f"Four channels (bit flip, phase flip, depolarizing, amplitude damping), each run as one random operator per run. One run is one noisy outcome; the <em>average</em> of many is the density matrix. Here a Bell pair through depolarizing noise on one qubit: {nc['shots']} seeded runs per point against the exact curve (1 &minus; p). The largest gap is {dev:.1f} standard errors. Four noisy circuits (up to 3 qubits) were compared to a density-matrix calculation over {nk['shots']} runs each: worst z-scores {zs}; doubling a probability on purpose is caught at z = {nk['wrong_probability_z']}.",
         f'      {svgs.curve_chart(nc["rows"], "Fidelity of a Bell pair against the depolarizing probability: runs follow the exact straight line 1 minus p", "depolarizing probability p", "fidelity")}\n'
         + links(("Channels", blob("src/noise.cho")), ("Check", blob("scripts/check_noise.py")), ("Results", blob("docs/noise-results.md")))))
+    pc = json.load(open(os.path.join(DOCS, "data", "purity_curve.json")))
+    dmq = "dm 2\nh 0\ncx 0 1\ndepol 1 1 4\npurity\ntrace\nquiet\n"
+    dm_out = subprocess.run([t.qsim], input=dmq, capture_output=True, text=True).stdout.split()
+    n_dm = len([f for f in os.listdir(os.path.join(ROOT, "tests", "diff")) if f.startswith("dm_") and f.endswith(".qc")])
+    sup.append(tile("Exact noise: the density matrix",
+        f"<code>dm 2</code> keeps the whole density matrix, so one run is the exact answer, not a sample. The same Bell pair through depolarizing noise (p = 1/4) has purity <b>{float(dm_out[1]):.6f}</b> and trace <b>{float(dm_out[3]):.6f}</b>; the formula (1&minus;p)&sup2; + p&sup2;/3 gives {(0.75) ** 2 + 0.25 ** 2 / 3:.6f}. The curve is the purity against p: cancho, Qiskit and the formula agree to {pc['worst_difference']:.0e}. {n_dm} density-matrix circuits (all channels, every gate, measurement) match Qiskit&rsquo;s DensityMatrix. Up to 10 qubits: the matrix is stored as a state of twice as many.",
+        f'      {svgs.curve_chart(pc["rows"], "Purity of a Bell pair against the depolarizing probability: cancho, Qiskit and the formula coincide", "depolarizing probability p", "purity", y0=0.3, y1=1.0, label_est="cancho (exact)", label_exact="formula", errbars=False)}\n'
+        + links(("Source", blob("src/density.cho")), ("Circuits", blob("tests/diff")), ("Results", blob("docs/density-results.md")))))
     qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
     sup.append(tile("OpenQASM 2.0 in",
         f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
@@ -287,8 +295,9 @@ def build(cancho):
         ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
-        ("Exact noise: density matrices", "Noise is sampled by trajectories today (many runs, averaged). A density-matrix simulator would give the exact mixed state in one run, at the cost of squaring the memory.", "Later", []),
-        ("Noise after every gate", "Noise is an explicit operation you place; a noise model that attaches channels to gates automatically is not built.", "Planned", []),
+        ("Noise after every gate", "Noise is an operation you place; a noise model that attaches channels to gates automatically is not built.", "Planned", []),
+        ("Two-qubit and readout noise", "Every channel here acts on one qubit. Correlated noise, two-qubit depolarizing and measurement (readout) error are not built.", "Planned", []),
+        ("Density matrices past 10 qubits", "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.", "Later", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
         ("A cloud quantum service", "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.", "Later", []),
@@ -297,10 +306,73 @@ def build(cancho):
     ]
     soon = [tile(tt, body, links(*lk) if lk else "", soon=True, badge=bg) for tt, body, bg, lk in plan]
 
+
+    # ---- capabilities: every gate and channel named on the page is run first ---------------
+    one_q = [("h", "H", "h 0"), ("x", "X", "x 0"), ("y", "Y", "y 0"), ("z", "Z", "z 0"), ("s", "S", "s 0"), ("sdg", "S†", "sdg 0"),
+             ("t", "T", "t 0"), ("tdg", "T†", "tdg 0"), ("rx", "Rx", "rx 0 1 3"), ("ry", "Ry", "ry 0 1 3"), ("rz", "Rz", "rz 0 1 3"), ("p", "P", "p 0 1 3")]
+    two_q = [("cx", "CNOT", "cx 0 1"), ("cz", "CZ", "cz 0 1"), ("cp", "controlled phase", "cp 0 1 1 4"), ("swap", "SWAP", "swap 0 1")]
+    three_q = [("ccx", "Toffoli", "ccx 0 1 2")]
+    chans = [("bitflip", "bit flip", "bitflip 0 1 3"), ("phaseflip", "phase flip", "phaseflip 0 1 3"), ("depol", "depolarizing", "depol 0 1 3"), ("ampdamp", "amplitude damping", "ampdamp 0 1 3")]
+    for _, nm, op in one_q + two_q + three_q + chans:
+        for header in ("n 3", "dm 3"):
+            r = subprocess.run([t.qsim], input=f"{header}\n{op}\nquiet\n", capture_output=True, text=True)
+            if r.returncode != 0:
+                sys.exit(f"the page names {nm!r} but `{header}` / `{op}` exits {r.returncode}")
+    n_gates = len(one_q) + len(two_q) + len(three_q)
+    n_reject = len([f for f in os.listdir(os.path.join(ROOT, "tests", "reject")) if f.endswith(".cho")])
+    n_traps = len([f for f in os.listdir(os.path.join(ROOT, "tests", "accept")) if "//~ TRAPS" in open(os.path.join(ROOT, "tests", "accept", f)).read()])
+    n_qasm = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))["files"]
+    n_dm_circ = len([f for f in os.listdir(os.path.join(ROOT, "tests", "diff")) if f.startswith("dm_") and f.endswith(".qc")])
+
+    def names(items):
+        return ", ".join(esc(nm) for _, nm, _ in items)
+
+    def card(title, body):
+        return f'    <div class="card"><h3>{title}</h3><p>{body}</p></div>'
+
+    P["CAPABILITIES"] = "\n".join([
+        card(f"{n_gates} gates", f"One qubit: {names(one_q)}. Two: {names(two_q)}. Three: {names(three_q)}. Angles are exact fractions of &pi;."),
+        card("Pure states, measured or sampled", "Up to 20 qubits (16 MiB at 20). Seeded measurement with collapse, and <code>sample N</code> to draw outcomes without collapsing. The same seed gives the same bits on every build."),
+        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
+        card("Two input formats", f"A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; {n_qasm} circuits cross-checked with Qiskit&rsquo;s own parser)."),
+        card("Algorithms", "Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer."),
+        card("A type checker for qubits", f"A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. {n_reject} refusal fixtures, and {n_traps + 1} pinned cases the checker still misses."),
+    ])
+    P["N_DM"] = str(n_dm_circ)
+    P["N_GATES"] = str(n_gates)
+
     def ul(items):
         return '<ul class="gallery">\n  ' + "\n  ".join(items) + "\n</ul>"
 
-    P["GAL_SUPPORTED"] = ul(sup)
+    groups = [
+        ("Circuits and algorithms", "Gates, states and the textbook algorithms, each diffed against Qiskit.",
+         ["Bell pair", "A 5-qubit state, 60 gates", "GHZ on 10 qubits", "Grover search", "Bernstein\u2013Vazirani, typed"]),
+        ("The typed qubit layer", "The same circuits written with <code>Qubit</code> values the compiler tracks.",
+         ["Bell pair, 200 shots, typed", "Teleportation", "Toffoli, typed"]),
+        ("Noise", "Two ways to simulate it: sampled runs, and the exact density matrix.",
+         ["Noise, checked against the exact answer", "Exact noise: the density matrix"]),
+        ("Input formats", "A plain-text circuit format and OpenQASM 2.0.", ["OpenQASM 2.0 in"]),
+        ("Reproducibility", "The same bytes on every build.", ["The same bytes, six ways"]),
+    ]
+    by_title = {}
+    for item in sup:
+        by_title[re.search(r"<h4>(.*?)</h4>", item).group(1)] = item
+    parts = []
+    used = set()
+    for gname, gnote, titles in groups:
+        items = []
+        for ttl in titles:
+            key = esc(ttl)
+            found = [k for k in by_title if k == key or k == ttl]
+            if not found:
+                sys.exit(f"gallery group {gname!r}: no tile titled {ttl!r}; have {sorted(by_title)}")
+            items.append(by_title[found[0]])
+            used.add(found[0])
+        parts.append(f'  <h4 class="gsub">{esc(gname)} <span>{gnote}</span></h4>\n' + ul(items))
+    leftover = set(by_title) - used
+    if leftover:
+        sys.exit(f"supported tiles with no group: {sorted(leftover)}")
+    P["GAL_SUPPORTED"] = "\n".join(parts)
     P["GAL_REFUSED"] = ul(ref)
     P["GAL_GAPS"] = ul(gaps)
     P["GAL_PLANNED"] = ul(soon)
@@ -426,6 +498,9 @@ def extras(t, P, diff_stdout):
             rows.append((m.group(1), float(m.group(2))))
     rows.sort()
     P["CHART_ERROR"] = svgs.hbar_chart(rows, "Worst amplitude error against Qiskit for each circuit, on a log axis, all far below the 1e-12 gate", gate=1e-12)
+    dm_rows = [v for nm, v in rows if nm.startswith("dm_")]
+    P["DM_WORST"] = f"{max(dm_rows):.1e}"
+    P["NOISE_Z"] = f"{max(c['max_z'] for c in json.load(open(os.path.join(DOCS, 'data', 'noise_check.json')))['circuits']):.1f}"
     P["N_ERR_ROWS"] = str(len(rows))
     P["N_ERR_ALL"] = str(len(rows) + 1)
     P["N_ERR_EXACT"] = str(sum(1 for _, v in rows if v == 0.0))
