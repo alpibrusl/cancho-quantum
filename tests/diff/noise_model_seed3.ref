@@ -1,0 +1,12 @@
+# qiskit 2.6.1, numpy 2.5.3
+m 0 1
+sample 000 22
+sample 001 71
+sample 010 7
+sample 011 20
+sample 100 12
+sample 101 52
+sample 110 2
+sample 111 14
+amp 1 0.0 -0.8660254037844386
+amp 5 0.0 -0.4999999999999999

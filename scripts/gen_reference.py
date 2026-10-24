@@ -60,11 +60,25 @@ def angle(num, den):
     return math.pi * num / den
 
 
+ONE_Q = ("h", "x", "y", "z", "s", "t", "sdg", "tdg", "rx", "ry", "rz", "p")
+TWO_Q = ("cx", "cz", "cp", "swap")
+PAULI = {1: XGate, 2: YGate, 3: ZGate}
+
+
+def pauli_pair(sv, a, b, m):
+    """Apply Pauli P (m // 4) on qubit a and Q (m % 4) on qubit b; 0 is the identity."""
+    for q, k in ((a, m // 4), (b, m % 4)):
+        if k:
+            sv = sv.evolve(PAULI[k](), qargs=[q])
+    return sv
+
+
 def reference(n, ops):
     """Return the lines `qsim` must print for the circuit `ops`."""
     sv = Statevector.from_int(0, 2**n)
     rng = Rng()
     lines = []
+    ro = m1 = m2 = 0.0           # readout, one-qubit-gate and two-qubit-gate noise probabilities
     for op in ops:
         name, args = op[0], op[1:]
         if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
@@ -101,6 +115,19 @@ def reference(n, ops):
                     keep = 1.0 / math.sqrt(1.0 - p1)
                     k0 = np.array([[keep, 0], [0, math.sqrt(1.0 - p) * keep]], dtype=complex)
                     sv = sv.evolve(Operator(k0), qargs=[q])
+        elif name == "depol2":
+            a, b, p = args[0], args[1], args[2] / args[3]
+            u = rng.next()
+            if u < p:
+                sv = pauli_pair(sv, a, b, min(int(u / p * 15.0), 14) + 1)
+        elif name in ("readout", "model1", "model2"):
+            val = args[0] / args[1] if args[0] else 0.0
+            if name == "readout":
+                ro = val
+            elif name == "model1":
+                m1 = val
+            else:
+                m2 = val
         elif name == "sample":
             # An independent method: a cumulative sum and a binary search, where
             # the simulator adds up probabilities one state at a time.
@@ -111,7 +138,12 @@ def reference(n, ops):
             for _ in range(args[0]):
                 u = rng.next()
                 k = int(np.searchsorted(cum, u, side="right"))
-                picks.append(k if k < len(cum) and probs[k] > 0 else last)
+                pick = k if k < len(cum) and probs[k] > 0 else last
+                if ro > 0.0:
+                    for qq in range(n):
+                        if rng.next() < ro:
+                            pick ^= 1 << qq
+                picks.append(pick)
             for k in sorted(set(picks)):
                 lines.append(f"sample {k:0{n}b} {picks.count(k)}")
         elif name == "cx":
@@ -129,15 +161,28 @@ def reference(n, ops):
             q = args[0]
             p1 = float(sv.probabilities([q])[1])
             bit = 1 if rng.next() < p1 else 0
+            reported = bit
+            if ro > 0.0 and rng.next() < ro:
+                reported = 1 - bit
             data = np.array(sv.data)
             idx = np.arange(len(data))
             keep = ((idx >> q) & 1) == bit
             data = np.where(keep, data, 0)
             data = data / np.linalg.norm(data)
             sv = Statevector(data)
-            lines.append(f"m {q} {bit}")
+            lines.append(f"m {q} {reported}")
         else:
             raise ValueError(name)
+        # The gate-noise model: after a gate, depolarizing noise, one draw each.
+        if name in ONE_Q and m1:
+            u = rng.next()
+            if u < m1:
+                k = u / m1
+                sv = sv.evolve((XGate() if k < 1.0 / 3.0 else (YGate() if k < 2.0 / 3.0 else ZGate())), qargs=[args[0]])
+        if name in TWO_Q and m2:
+            u = rng.next()
+            if u < m2:
+                sv = pauli_pair(sv, args[0], args[1], min(int(u / m2 * 15.0), 14) + 1)
     for i, a in enumerate(sv.data):
         if a != 0:
             lines.append(f"amp {i} {float(a.real)!r} {float(a.imag)!r}")
@@ -151,6 +196,16 @@ def reference_dm(n, ops):
     rho = DensityMatrix.from_int(0, 2**n)
     rng = Rng()
     lines, quiet = [], False
+    ro = m1 = m2 = 0.0
+
+    def depol2_kraus(p):
+        P = [np.eye(2, dtype=complex), np.array([[0, 1], [1, 0]], dtype=complex),
+             np.array([[0, -1j], [1j, 0]], dtype=complex), np.array([[1, 0], [0, -1]], dtype=complex)]
+        ks = [math.sqrt(1 - p) * np.eye(4, dtype=complex)]
+        for m in range(1, 16):
+            ks.append(math.sqrt(p / 15) * np.kron(P[m % 4], P[m // 4]))   # qargs [a, b]: b is the high factor
+        return ks
+
     for name, *a in ops:
         if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             gate = {"h": HGate, "x": XGate, "y": YGate, "z": ZGate, "s": SGate, "t": TGate, "sdg": SdgGate, "tdg": TdgGate}[name]()
@@ -166,6 +221,16 @@ def reference_dm(n, ops):
             rho = rho.evolve(Operator(CPhaseGate(angle(a[2], a[3]))), qargs=[a[0], a[1]])
         elif name in ("bitflip", "phaseflip", "depol", "ampdamp"):
             rho = rho.evolve(Kraus(kraus(name, a[1] / a[2])), qargs=[a[0]])
+        elif name == "depol2":
+            rho = rho.evolve(Kraus(depol2_kraus(a[2] / a[3])), qargs=[a[0], a[1]])
+        elif name in ("readout", "model1", "model2"):
+            val = a[0] / a[1] if a[0] else 0.0
+            if name == "readout":
+                ro = val
+            elif name == "model1":
+                m1 = val
+            else:
+                m2 = val
         elif name == "seed":
             rng = Rng(a[0])
         elif name == "m":
@@ -178,7 +243,10 @@ def reference_dm(n, ops):
             keep = np.array([((i >> q) & 1) == bit for i in range(2**n)])
             m = m * np.outer(keep, keep) / pr
             rho = DensityMatrix(m)
-            lines.append(f"m {q} {bit}")
+            reported = bit
+            if ro > 0.0 and rng.next() < ro:
+                reported = 1 - bit
+            lines.append(f"m {q} {reported}")
         elif name == "purity":
             lines.append(f"purity {float(np.real(np.trace(rho.data @ rho.data)))!r}")
         elif name == "trace":
@@ -191,6 +259,10 @@ def reference_dm(n, ops):
             quiet = True
         else:
             raise ValueError(name)
+        if name in ONE_Q and m1:
+            rho = rho.evolve(Kraus(kraus("depol", m1)), qargs=[a[0]])
+        if name in TWO_Q and m2:
+            rho = rho.evolve(Kraus(depol2_kraus(m2)), qargs=[a[0], a[1]])
     if not quiet:
         for i in range(2**n):
             for j in range(2**n):
@@ -262,6 +334,12 @@ def feature_circuits():
     c["noise_p1"] = (2, [op if op[0] in ("h", "cx", "ry") else (op[0], op[1], 1, 1) for op in body])
     c["noise_ghz4"] = (4, [("seed", 21), ("h", 0)] + [op for i in range(3) for op in (("cx", i, i + 1), ("depol", i + 1, 1, 5))]
                        + [("ampdamp", 3, 1, 4), ("sample", 300)])
+    for k in range(1, 5):
+        c[f"noise_model_seed{k}"] = (3, [("seed", k), ("model1", 1, 10), ("model2", 1, 8), ("h", 0), ("cx", 0, 1), ("cx", 1, 2),
+                                         ("ry", 2, 1, 3), ("readout", 1, 5), ("m", 0), ("sample", 200)])
+    for k in range(1, 4):
+        c[f"depol2_seed{k}"] = (3, [("seed", k), ("h", 0), ("cx", 0, 1), ("depol2", 0, 1, 1, 3), ("ry", 2, 1, 5),
+                                    ("depol2", 1, 2, 1, 2), ("depol2", 2, 0, 1, 4)])
     c["ghz5_sample"] = (5, [("h", 0)] + [("cx", i, i + 1) for i in range(4)] + [("seed", 5), ("sample", 500)])
     return c
 
@@ -299,6 +377,11 @@ def density_circuits():
         else:
             ops.append((kind, rng.randrange(4)))
     c["dm_random4"] = (4, ops + [("purity",), ("trace",)])
+    c["dm_depol2"] = (3, [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("depol2", 0, 1, 1, 5), ("depol2", 1, 2, 1, 4), ("depol2", 2, 0, 1, 3),
+                          ("purity",), ("trace",)])
+    c["dm_model"] = (3, [("model1", 1, 20), ("model2", 1, 10), ("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("rz", 2, 1, 4), ("swap", 0, 2),
+                         ("cp", 0, 1, 1, 3), ("purity",), ("probs",)])
+    c["dm_readout"] = (2, [("seed", 3), ("readout", 1, 4), ("h", 0), ("cx", 0, 1), ("m", 0), ("m", 1), ("purity",)])
     c["dm_p0"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 0, 1), ("bitflip", 1, 0, 1), ("phaseflip", 0, 0, 1), ("ampdamp", 1, 0, 1), ("purity",)])
     c["dm_p1"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 1, 1), ("bitflip", 1, 1, 1), ("phaseflip", 0, 1, 1), ("ampdamp", 1, 1, 1), ("purity",), ("probs",)])
     return c

@@ -15,7 +15,7 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     gates.cx(st, 5, 2, 3);
     gates.cx(st, 5, 3, 4);
     rng[0] = 5;
-    dump.samples(io, st, 5, rng, 500);
+    dump.samples_with(io, st, 5, rng, 500, 0.0);
     return 0;
 }
 

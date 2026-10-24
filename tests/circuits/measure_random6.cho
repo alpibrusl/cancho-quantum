@@ -50,11 +50,11 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     gates.s(st, 6, 3);
     gates.cx(st, 6, 4, 2);
     gates.rz(st, 6, 2, gates.angle(19, 3));
-    dump.measurement(io, 3, measure.measure(st, 6, 3, rng));
+    dump.measurement(io, 3, noise.readout(measure.measure(st, 6, 3, rng), 0.0, rng));
     gates.h(st, 6, 3);
-    dump.measurement(io, 3, measure.measure(st, 6, 3, rng));
-    dump.measurement(io, 0, measure.measure(st, 6, 0, rng));
-    dump.measurement(io, 5, measure.measure(st, 6, 5, rng));
+    dump.measurement(io, 3, noise.readout(measure.measure(st, 6, 3, rng), 0.0, rng));
+    dump.measurement(io, 0, noise.readout(measure.measure(st, 6, 0, rng), 0.0, rng));
+    dump.measurement(io, 5, noise.readout(measure.measure(st, 6, 5, rng), 0.0, rng));
     return 0;
 }
 

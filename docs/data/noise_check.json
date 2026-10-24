@@ -17,10 +17,24 @@
       "trace_distance": 0.0006
     },
     {
+      "circuit": "two-qubit depolarizing on a Bell pair and a chain",
+      "max_z": 1.22,
+      "trace_distance": 0.0117
+    },
+    {
+      "circuit": "a gate-noise model on a GHZ state",
+      "max_z": 1.35,
+      "trace_distance": 0.0085
+    },
+    {
       "circuit": "all four channels on 3 qubits",
       "max_z": 1.43,
       "trace_distance": 0.0097
     }
   ],
-  "wrong_probability_z": 28.0
+  "wrong_probability_z": 28.0,
+  "readout": {
+    "measured_z": 1.06,
+    "sample_z": 0.11
+  }
 }

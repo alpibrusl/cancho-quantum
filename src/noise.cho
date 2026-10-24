@@ -96,3 +96,70 @@ pub fn ampdamp[&s, &r](st: &!s [float], n: int, q: int, gamma: float, rng: &!r [
     }
     return 0;
 }
+
+// Two-qubit depolarizing: with probability `p`, one of the 15 non-identity Pauli
+// pairs (P on `a`, Q on `b`), each equally likely. One draw, as for `depol`:
+// `u < p` fires it and `u / p`, uniform on [0, 1) when it fires, picks the pair.
+pub fn depol2[&s, &r](st: &!s [float], n: int, a: int, b: int, p: float, rng: &!r [int]) -> [] int {
+    gates.distinct(n, a, b);
+    let u = measure.next(rng);
+    if u < p {
+        var m = truncate(u / p * 15.0);
+        if m > 14 {
+            m = 14;
+        }
+        m = m + 1;
+        pauli(st, n, a, m / 4);
+        pauli(st, n, b, m % 4);
+    }
+    return 0;
+}
+
+// 0 = identity, 1 = X, 2 = Y, 3 = Z.
+pub fn pauli[&s](st: &!s [float], n: int, q: int, k: int) -> [] int {
+    if k == 1 {
+        gates.x(st, n, q);
+    } else if k == 2 {
+        gates.y(st, n, q);
+    } else if k == 3 {
+        gates.z(st, n, q);
+    }
+    return 0;
+}
+
+// Readout error: the reported bit is the true one flipped with probability `p`.
+// It draws only when `p > 0`, so a circuit without readout error draws exactly
+// as before.
+pub fn readout[&r](bit: int, p: float, rng: &!r [int]) -> [] int {
+    if p > 0.0 {
+        let u = measure.next(rng);
+        if u < p {
+            return 1 - bit;
+        }
+    }
+    return bit;
+}
+
+// The sampler's slots 2 and 3 hold the readout probability as num/den.
+pub fn readout_p[&r](rng: &r [int]) -> [] float {
+    if rng[2] == 0 {
+        return 0.0;
+    }
+    return prob(rng[2], rng[3]);
+}
+
+// The gate-noise model (slots 4 to 7): after a one-qubit gate, `depol`; after a
+// two-qubit gate, `depol2`. Not after Toffoli, measurement or a noise operation.
+pub fn after1[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
+    if rng[4] != 0 {
+        depol(st, n, q, prob(rng[4], rng[5]), rng);
+    }
+    return 0;
+}
+
+pub fn after2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -> [] int {
+    if rng[6] != 0 {
+        depol2(st, n, a, b, prob(rng[6], rng[7]), rng);
+    }
+    return 0;
+}

@@ -16,7 +16,7 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
 - `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
-- `docs/noise-results.md`: bit flip, phase flip, depolarizing and amplitude-damping noise by trajectories, checked against exact density matrices
+- `docs/noise-results.md`: five channels, readout error and a gate-noise model, by trajectories, checked against exact density matrices
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
 ![The Bell-pair circuit](docs/img/bell-circuit.svg)

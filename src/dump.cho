@@ -2,6 +2,7 @@ module qc.dump;
 
 import qc.gates;
 import qc.measure;
+import qc.noise;
 import qc.state;
 import std.fmt;
 import std.io;
@@ -57,14 +58,14 @@ pub fn amplitudes[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [
 // Sample `shots` outcomes (no collapse) and print one line per distinct
 // outcome, in index order: `sample <bits> <count>`, the bits most significant
 // qubit first. `shots` is at most 4096. Answers 0, or 2 if it is not.
-pub fn samples[&i, &s, &r](io: &!i Io, st: &s [float], n: int, rng: &!r [int], shots: int) -> [io_write] int {
+pub fn samples_with[&i, &s, &r](io: &!i Io, st: &s [float], n: int, rng: &!r [int], shots: int, readout: float) -> [io_write] int {
     if shots < 1 || shots > 4096 {
         return 2;
     }
     region a {
         let picks = alloc_slice[a](shots, 0);
         let bits = alloc_slice[a](24, byte_of(0));
-        measure.sample(st, n, rng, picks);
+        measure.sample(st, n, rng, picks, readout);
         var k = 0;
         while k < shots {
             var j = k;
@@ -85,4 +86,9 @@ pub fn samples[&i, &s, &r](io: &!i Io, st: &s [float], n: int, rng: &!r [int], s
         }
     }
     return 0;
+}
+
+// `samples_with` and the readout probability the sampler's slots hold.
+pub fn samples[&i, &s, &r](io: &!i Io, st: &s [float], n: int, rng: &!r [int], shots: int) -> [io_write] int {
+    return samples_with(io, st, n, rng, shots, noise.readout_p(rng));
 }

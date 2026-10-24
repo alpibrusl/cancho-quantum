@@ -18,7 +18,7 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     gates.cx(st, 4, 2, 3);
     noise.depol(st, 4, 3, noise.prob(1, 5), rng);
     noise.ampdamp(st, 4, 3, noise.prob(1, 4), rng);
-    dump.samples(io, st, 4, rng, 300);
+    dump.samples_with(io, st, 4, rng, 300, 0.0);
     return 0;
 }
 

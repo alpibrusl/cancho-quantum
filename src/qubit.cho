@@ -133,6 +133,12 @@ pub fn ampdamp[&a, &s, &r](q: &!a Qubit, st: &!s [float], rng: &!r [int], num: i
     return noise.ampdamp(st, q.n, q.idx, noise.prob(num, den), rng);
 }
 
+// Two-qubit depolarizing noise acts on both qubits, so both are `&!`. As for SWAP, one
+// borrow passed twice type-checks and `noise.depol2` traps (`tests/accept/depol2_same_handle.cho`).
+pub fn depol2[&a, &b, &s, &r](q: &!a Qubit, u: &!b Qubit, st: &!s [float], rng: &!r [int], num: int, den: int) -> [] int {
+    return noise.depol2(st, q.n, q.idx, u.idx, noise.prob(num, den), rng);
+}
+
 // Consumes the qubit and answers the classical bit. The bit is `int`,
 // which is `val`: copy it, branch on it, drop it.
 pub fn measure[&s, &r](q: Qubit, st: &!s [float], rng: &!r [int]) -> [] int {
