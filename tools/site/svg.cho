@@ -1,0 +1,673 @@
+module site.svg;
+
+import site.numfmt;
+import site.text;
+import std.buffer;
+import std.bytes;
+import std.math;
+
+// The SVG figures of the landing page, a port of scripts/site_svg.py. Every function appends one `<svg>` to a
+// buffer and takes its data as slices; none runs a tool. The Python and this give the same bytes
+// (`scripts/check_site_tools.py` compares them on real and random data), which includes Python's habit of
+// printing a float such as 58.0 where an int would print 58: each coordinate below is a float or an int exactly
+// where the Python's is.
+
+fn is_word[&s](w: &s [byte], lit: &static [byte]) -> [] bool {
+    return bytes.equal(w, lit);
+}
+
+fn target[&h](heap: &!h Heap, buf: buffer.Buffer, x: float, y: int) -> [heap] buffer.Buffer {
+    var out = text.tr(heap, buf, "<circle cx=\"%r0\" cy=\"%i0\" r=\"9\" class=\"tgt\"/>", y, 0, 0, 0, x, 0.0, 0.0, 0.0);
+    out = text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r1\" y2=\"%i0\" class=\"link\"/>", y, 0, 0, 0, x - 9.0, x + 9.0, 0.0, 0.0);
+    return text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r0\" y2=\"%i1\" class=\"link\"/>", y - 9, y + 9, 0, 0, x, 0.0, 0.0, 0.0);
+}
+
+// `ops` is the text of the circuit's operations, one per line (`h 0`, `cx 0 1`, `rz 0 1 3`, `m 0`), as in a `.qc` file
+// after its header. `current`: give every operation an id, `op0`, `op1`, ... for the stepper. `natural`: a minimum width.
+pub fn circuit[&h, &o, &l](heap: &!h Heap, buf: buffer.Buffer, n: int, ops: &o [byte], label: &l [byte], current: bool, natural: bool) -> [heap] buffer.Buffer {
+    var out = buf;
+    // the drawn operations: not `seed`, `trig`, and (as the callers filter them) not `sample`
+    let total = text.line_count(ops);
+    var drawn = 0;
+    var k = 0;
+    while k < total {
+        let line = text.line_at(ops, k);
+        let w = word(line);
+        if len(w) > 0 && !is_word(w, "seed") && !is_word(w, "trig") {
+            drawn = drawn + 1;
+        }
+        k = k + 1;
+    }
+    let col = 44;
+    let left = 36;
+    let top = 18;
+    let gap = 34;
+    var cols = drawn;
+    if cols < 1 {
+        cols = 1;
+    }
+    let width = left + col * cols + 16;
+    let height = top * 2 + gap * (n - 1) + 8;
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", width, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"circ\"");
+    if natural {
+        out = text.ti(heap, out, " style=\"min-width:%i0px\"", width, 0, 0, 0);
+    }
+    out = text.put(heap, out, ">");
+    var q = 0;
+    while q < n {
+        let y = top + gap * q;
+        out = text.ti(heap, out, "<text x=\"6\" y=\"%i0\" class=\"qlab\">q%i1</text>", y + 4, q, 0, 0);
+        out = text.ti(heap, out, "<line x1=\"%i0\" y1=\"%i1\" x2=\"%i2\" y2=\"%i1\" class=\"wire\"/>", left - 6, y, width - 8, 0);
+        q = q + 1;
+    }
+    var i = 0;
+    k = 0;
+    while k < total {
+        let line = text.line_at(ops, k);
+        let w = word(line);
+        if len(w) > 0 && !is_word(w, "seed") && !is_word(w, "trig") {
+            let a0 = nth(line, 1);
+            let a1 = nth(line, 2);
+            let a2 = nth(line, 3);
+            let a3 = nth(line, 4);
+            let x = float_of(left + col * i) + float_of(col) / 2.0;
+            out = text.put(heap, out, "<g ");
+            if current {
+                out = text.ti(heap, out, "id=\"op%i0\" ", i, 0, 0, 0);
+            }
+            out = text.put(heap, out, "class=\"op\">");
+            if is_word(w, "cx") || is_word(w, "cz") || is_word(w, "cp") {
+                let yc = top + gap * a0;
+                let yt = top + gap * a1;
+                out = text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r0\" y2=\"%i1\" class=\"link\"/>", yc, yt, 0, 0, x, 0.0, 0.0, 0.0);
+                out = text.tr(heap, out, "<circle cx=\"%r0\" cy=\"%i0\" r=\"4\" class=\"dot\"/>", yc, 0, 0, 0, x, 0.0, 0.0, 0.0);
+                if is_word(w, "cx") {
+                    out = target(heap, out, x, yt);
+                } else {
+                    out = text.tr(heap, out, "<circle cx=\"%r0\" cy=\"%i0\" r=\"4\" class=\"dot\"/>", yt, 0, 0, 0, x, 0.0, 0.0, 0.0);
+                    if is_word(w, "cp") {
+                        out = text.tr(heap, out, "<text x=\"%r0\" y=\"%r1\" class=\"sub\">%i0&#960;/%i1</text>", a2, a3, 0, 0, x + 6.0, float_of(yc + yt) / 2.0 + 3.0, 0.0, 0.0);
+                    }
+                }
+            } else if is_word(w, "ccx") {
+                let y0 = top + gap * a0;
+                let y1 = top + gap * a1;
+                let y2 = top + gap * a2;
+                var lo = y0;
+                var hi = y0;
+                if y1 < lo {
+                    lo = y1;
+                }
+                if y2 < lo {
+                    lo = y2;
+                }
+                if y1 > hi {
+                    hi = y1;
+                }
+                if y2 > hi {
+                    hi = y2;
+                }
+                out = text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r0\" y2=\"%i1\" class=\"link\"/>", lo, hi, 0, 0, x, 0.0, 0.0, 0.0);
+                out = text.tr(heap, out, "<circle cx=\"%r0\" cy=\"%i0\" r=\"4\" class=\"dot\"/>", y0, 0, 0, 0, x, 0.0, 0.0, 0.0);
+                out = text.tr(heap, out, "<circle cx=\"%r0\" cy=\"%i0\" r=\"4\" class=\"dot\"/>", y1, 0, 0, 0, x, 0.0, 0.0, 0.0);
+                out = target(heap, out, x, y2);
+            } else if is_word(w, "swap") {
+                let ya = top + gap * a0;
+                let yb = top + gap * a1;
+                out = text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r0\" y2=\"%i1\" class=\"link\"/>", ya, yb, 0, 0, x, 0.0, 0.0, 0.0);
+                var s = 0;
+                while s < 2 {
+                    var yy = ya;
+                    if s == 1 {
+                        yy = yb;
+                    }
+                    out = text.tr(heap, out, "<line x1=\"%r0\" y1=\"%i0\" x2=\"%r1\" y2=\"%i1\" class=\"link\"/><line x1=\"%r0\" y1=\"%i1\" x2=\"%r1\" y2=\"%i0\" class=\"link\"/>", yy - 6, yy + 6, 0, 0, x - 6.0, x + 6.0, 0.0, 0.0);
+                    s = s + 1;
+                }
+            } else if is_word(w, "m") {
+                let y = top + gap * a0;
+                out = text.tr(heap, out, "<rect x=\"%r0\" y=\"%i0\" width=\"24\" height=\"22\" rx=\"3\" class=\"box meas\"/>", y - 11, 0, 0, 0, x - 12.0, 0.0, 0.0, 0.0);
+                out = text.tr(heap, out, "<path d=\"M %r0 %i0 A 8 8 0 0 1 %r1 %i0\" class=\"arc\"/><line x1=\"%r2\" y1=\"%i0\" x2=\"%r3\" y2=\"%i1\" class=\"link\"/>", y + 4, y - 6, 0, 0, x - 8.0, x + 8.0, x, x + 6.0);
+            } else {
+                let y = top + gap * a0;
+                out = text.tr(heap, out, "<rect x=\"%r0\" y=\"%i0\" width=\"24\" height=\"22\" rx=\"3\" class=\"box\"/>", y - 11, 0, 0, 0, x - 12.0, 0.0, 0.0, 0.0);
+                out = text.tr(heap, out, "<text x=\"%r0\" y=\"%i0\" text-anchor=\"middle\" class=\"glab\">", y + 4, 0, 0, 0, x, 0.0, 0.0, 0.0);
+                out = text.put(heap, out, gate_label(w));
+                out = text.put(heap, out, "</text>");
+                if is_word(w, "rz") || is_word(w, "rx") || is_word(w, "ry") || is_word(w, "p") {
+                    out = text.tr(heap, out, "<text x=\"%r0\" y=\"%i0\" text-anchor=\"middle\" class=\"sub\">%i1&#960;/%i2</text>", y + 22, a1, a2, 0, x, 0.0, 0.0, 0.0);
+                }
+            }
+            out = text.put(heap, out, "</g>");
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return text.put(heap, out, "</svg>");
+}
+
+fn gate_label[&s](w: &s [byte]) -> [] &static [byte] {
+    if is_word(w, "h") {
+        return "H";
+    } else if is_word(w, "x") {
+        return "X";
+    } else if is_word(w, "y") {
+        return "Y";
+    } else if is_word(w, "z") {
+        return "Z";
+    } else if is_word(w, "s") {
+        return "S";
+    } else if is_word(w, "t") {
+        return "T";
+    } else if is_word(w, "sdg") {
+        return "S†";
+    } else if is_word(w, "tdg") {
+        return "T†";
+    } else if is_word(w, "rz") {
+        return "Rz";
+    } else if is_word(w, "rx") {
+        return "Rx";
+    } else if is_word(w, "ry") {
+        return "Ry";
+    }
+    return "P";
+}
+
+// The first word of a line.
+pub fn word[&s](line: &s [byte]) -> [] &s [byte] {
+    var a = 0;
+    while a < len(line) && int_of(line[a]) == 32 {
+        a = a + 1;
+    }
+    var b = a;
+    while b < len(line) && int_of(line[b]) != 32 {
+        b = b + 1;
+    }
+    return line[a..b];
+}
+
+// The k-th integer after the first word (k from 1), or 0.
+pub fn nth[&s](line: &s [byte], k: int) -> [] int {
+    var p = 0;
+    var seen = 0;
+    while p < len(line) {
+        while p < len(line) && int_of(line[p]) == 32 {
+            p = p + 1;
+        }
+        let a = p;
+        while p < len(line) && int_of(line[p]) != 32 {
+            p = p + 1;
+        }
+        if p > a {
+            if seen == k {
+                var v = 0;
+                var sign = 1;
+                var q = a;
+                if int_of(line[q]) == '-' {
+                    sign = 0 - 1;
+                    q = q + 1;
+                }
+                while q < p {
+                    v = v * 10 + (int_of(line[q]) - '0');
+                    q = q + 1;
+                }
+                return sign * v;
+            }
+            seen = seen + 1;
+        }
+    }
+    return 0;
+}
+
+// hsl(H 55% 48%) for the phase of an amplitude: H = (atan2(im, re) / 2pi mod 1) * 360, as `{h:.0f}`.
+pub fn phase_color[&h](heap: &!h Heap, buf: buffer.Buffer, re: float, im: float) -> [heap] buffer.Buffer {
+    let v = math.atan2(im, re) / (2.0 * 3.141592653589793);
+    let m = v - math.floor(v);
+    var out = text.put(heap, buf, "hsl(");
+    // + 1e-7, as in scripts/site_svg.py: a phase that is an exact multiple of 22.5 degrees is a rounding tie
+    out = numfmt.put_fixed(heap, out, m * 360.0 + 1.0e-7, 0);
+    return text.put(heap, out, " 55% 48%)");
+}
+
+fn log10_of(x: float) -> [] float {
+    return math.log10(x);
+}
+
+fn max_float(a: float, b: float) -> [] float {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn pow10_int(e: int) -> [] float {
+    // 10.0 ** e for an integer e: exact for |e| <= 22, and a correctly rounded quotient below that
+    var p = 1.0;
+    var k = 0;
+    var m = e;
+    if e < 0 {
+        m = 0 - e;
+    }
+    while k < m {
+        p = p * 10.0;
+        k = k + 1;
+    }
+    if e < 0 {
+        return 1.0 / p;
+    }
+    return p;
+}
+
+// Horizontal bars on a log axis: one row per name (the lines of `names`) with its value; `gate` > 0 draws a line.
+pub fn hbar[&h, &n, &v, &l](heap: &!h Heap, buf: buffer.Buffer, names: &n [byte], vals: &v [float], label: &l [byte], gate: float, unit: &static [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let rows = len(vals);
+    let lw = 120;
+    let w = 520;
+    let rh = 15;
+    let height = rh * rows + 34;
+    let lo = 1.0e-17;
+    var hi = vals[0];
+    var k = 1;
+    while k < rows {
+        hi = max_float(hi, vals[k]);
+        k = k + 1;
+    }
+    if gate != 0.0 {
+        hi = max_float(hi, gate);
+    }
+    hi = hi * 3.0;
+    let span = log10_of(hi) - log10_of(lo);
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"chart\">");
+    var e = 0 - 16;
+    let top_e = truncate(log10_of(hi)) + 1;
+    while e < top_e {
+        var skip = false;
+        if gate != 0.0 {
+            if e == truncate(math.round(log10_of(gate))) {
+                skip = true;
+            }
+        }
+        if !skip {
+            let v = max_float(pow10_int(e), lo);
+            let xx = float_of(lw) + (log10_of(v) - log10_of(lo)) / span * float_of(w - lw - 10);
+            out = text.tr(heap, out, "<line x1=\"%d0\" y1=\"6\" x2=\"%d0\" y2=\"%i0\" class=\"grid\"/><text x=\"%d0\" y=\"%i1\" text-anchor=\"middle\" class=\"tick\">1e%i2</text>", height - 22, height - 8, e, 0, xx, 0.0, 0.0, 0.0);
+        }
+        e = e + 2;
+    }
+    var i = 0;
+    while i < rows {
+        let y = 8 + i * rh;
+        out = text.ti(heap, out, "<text x=\"%i0\" y=\"%i1\" text-anchor=\"end\" class=\"tick\">", lw - 6, y + 10, 0, 0);
+        out = text.put_esc(heap, out, text.line_at(names, i));
+        out = text.put(heap, out, "</text>");
+        let v = max_float(vals[i], lo);
+        let xv = float_of(lw) + (log10_of(v) - log10_of(lo)) / span * float_of(w - lw - 10);
+        var bw = xv - float_of(lw);
+        if bw < 1.5 {
+            bw = 1.5;
+        }
+        out = text.tr(heap, out, "<rect x=\"%i0\" y=\"%i1\" width=\"%d0\" height=\"%i2\" class=\"bar\"><title>", lw, y + 1, rh - 4, 0, bw, 0.0, 0.0, 0.0);
+        out = text.put_esc(heap, out, text.line_at(names, i));
+        out = text.put(heap, out, ": ");
+        out = numfmt.put_sci(heap, out, vals[i], 2);
+        out = text.put(heap, out, unit);
+        out = text.put(heap, out, "</title></rect>");
+        i = i + 1;
+    }
+    if gate != 0.0 {
+        let v = max_float(gate, lo);
+        let xg = float_of(lw) + (log10_of(v) - log10_of(lo)) / span * float_of(w - lw - 10);
+        out = text.tr(heap, out, "<line x1=\"%d0\" y1=\"4\" x2=\"%d0\" y2=\"%i0\" class=\"gateline\"/><text x=\"%d1\" y=\"14\" text-anchor=\"end\" class=\"gtext\">gate ", height - 22, 0, 0, 0, xg, xg - 4.0, 0.0, 0.0);
+        out = numfmt.put_general(heap, out, gate);
+        out = text.put(heap, out, "</text>");
+    }
+    return text.put(heap, out, "</svg>");
+}
+
+// Vertical bars of counts with an expected line and a +/- band.
+pub fn count_hist[&h, &n, &c, &l](heap: &!h Heap, buf: buffer.Buffer, labels: &n [byte], counts: &c [int], expected: float, band: float, label: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let w = 360;
+    let height = 150;
+    let pad = 22;
+    var biggest = counts[0];
+    var k = 1;
+    while k < len(counts) {
+        if counts[k] > biggest {
+            biggest = counts[k];
+        }
+        k = k + 1;
+    }
+    var top = max_float(float_of(biggest), expected + band) * 1.15;
+    if top == 0.0 {
+        top = 1.0;
+    }
+    let bw = float_of(w - 2 * pad) / float_of(len(counts));
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"chart\">");
+    if band != 0.0 {
+        let ya = float_of(height - pad) - float_of(height - 2 * pad) * (expected + band) / top;
+        let yb = float_of(height - pad) - float_of(height - 2 * pad) * (expected - band) / top;
+        out = text.tr(heap, out, "<rect x=\"%i0\" y=\"%d0\" width=\"%i1\" height=\"%d1\" class=\"band\"/>", pad, w - 2 * pad, 0, 0, ya, yb - ya, 0.0, 0.0);
+    }
+    var i = 0;
+    while i < len(counts) {
+        let c = counts[i];
+        let yc = float_of(height - pad) - float_of(height - 2 * pad) * float_of(c) / top;
+        let fi = float_of(i);
+        out = text.tr(heap, out, "<rect x=\"%d0\" y=\"%d1\" width=\"%d2\" height=\"%d3\" class=\"bar\"><title>", 0, 0, 0, 0, float_of(pad) + fi * bw + 2.0, yc, bw - 4.0, float_of(height - pad) - yc);
+        out = text.put_esc(heap, out, text.line_at(labels, i));
+        out = text.ti(heap, out, ": %i0</title></rect>", c, 0, 0, 0);
+        out = text.tr(heap, out, "<text x=\"%d0\" y=\"%i0\" text-anchor=\"middle\" class=\"tick\">", height - 8, 0, 0, 0, float_of(pad) + (fi + 0.5) * bw, 0.0, 0.0, 0.0);
+        out = text.put_esc(heap, out, text.line_at(labels, i));
+        out = text.put(heap, out, "</text>");
+        out = text.tr(heap, out, "<text x=\"%d0\" y=\"%d1\" text-anchor=\"middle\" class=\"tick\">%i0</text>", c, 0, 0, 0, float_of(pad) + (fi + 0.5) * bw, yc - 3.0, 0.0, 0.0);
+        i = i + 1;
+    }
+    if expected != 0.0 {
+        let ye = float_of(height - pad) - float_of(height - 2 * pad) * expected / top;
+        out = text.tr(heap, out, "<line x1=\"%i0\" y1=\"%d0\" x2=\"%i1\" y2=\"%d0\" class=\"gateline\"/>", pad, w - pad, 0, 0, ye, 0.0, 0.0, 0.0);
+    }
+    return text.ti(heap, out, "<line x1=\"%i0\" y1=\"%i1\" x2=\"%i2\" y2=\"%i1\" class=\"axis\"/></svg>", pad, height - pad, w - pad, 0);
+}
+
+fn y_axis_label[&h, &l](heap: &!h Heap, buf: buffer.Buffer, ylab: &l [byte], mid: float) -> [heap] buffer.Buffer {
+    var out = text.tr(heap, buf, "<text x=\"10\" y=\"%r0\" class=\"tick\" transform=\"rotate(-90 10 %r0)\" text-anchor=\"middle\">", 0, 0, 0, 0, mid, 0.0, 0.0, 0.0);
+    out = text.put_esc(heap, out, ylab);
+    return text.put(heap, out, "</text>");
+}
+
+fn x_axis_label[&h, &l](heap: &!h Heap, buf: buffer.Buffer, xlab: &l [byte], x: float, y: int) -> [heap] buffer.Buffer {
+    var out = text.tr(heap, buf, "<text x=\"%r0\" y=\"%i0\" text-anchor=\"middle\" class=\"tick\">", y, 0, 0, 0, x, 0.0, 0.0, 0.0);
+    out = text.put_esc(heap, out, xlab);
+    return text.put(heap, out, "</text>");
+}
+
+// Log-y line chart. Series k has the name `names` line k and the values `ys[k * npoints ..]`; `xs` are integers.
+pub fn line_chart[&h, &n, &x, &y, &l, &a, &b](heap: &!h Heap, buf: buffer.Buffer, names: &n [byte], xs: &x [int], ys: &y [float], label: &l [byte], xlab: &a [byte], ylab: &b [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let w = 520;
+    let height = 230;
+    let l0 = 46;
+    let r0 = 14;
+    let t0 = 12;
+    let b0 = 38;
+    var mn = ys[0];
+    var mx = ys[0];
+    var k = 1;
+    while k < len(ys) {
+        if ys[k] < mn {
+            mn = ys[k];
+        }
+        if ys[k] > mx {
+            mx = ys[k];
+        }
+        k = k + 1;
+    }
+    let lo = pow10_int(truncate(math.floor(log10_of(mn))));
+    let hi = pow10_int(truncate(math.ceil(log10_of(mx))));
+    let llo = log10_of(lo);
+    let lhi = log10_of(hi);
+    let np = len(xs);
+    let nseries = len(ys) / np;
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"chart\">");
+    var e = truncate(llo);
+    while pow10_int(e) <= hi * 1.0001 {
+        let yy = float_of(t0) + (1.0 - (log10_of(pow10_int(e)) - llo) / (lhi - llo)) * float_of(height - t0 - b0);
+        out = text.tr(heap, out, "<line x1=\"%i0\" y1=\"%d0\" x2=\"%i1\" y2=\"%d0\" class=\"grid\"/><text x=\"%i2\" y=\"%d1\" text-anchor=\"end\" class=\"tick\">", l0, w - r0, l0 - 5, 0, yy, yy + 3.0, 0.0, 0.0);
+        out = numfmt.put_general(heap, out, pow10_int(e));
+        out = text.put(heap, out, "</text>");
+        e = e + 1;
+    }
+    let x0 = float_of(xs[0]);
+    let xr = float_of(xs[np - 1]) - x0;
+    k = 0;
+    while k < np {
+        let xx = float_of(l0) + (float_of(xs[k]) - x0) / xr * float_of(w - l0 - r0);
+        out = text.tr(heap, out, "<text x=\"%d0\" y=\"%i0\" text-anchor=\"middle\" class=\"tick\">%i1</text>", height - b0 + 14, xs[k], 0, 0, xx, 0.0, 0.0, 0.0);
+        k = k + 1;
+    }
+    var si = 0;
+    while si < nseries {
+        out = text.put(heap, out, "<polyline points=\"");
+        k = 0;
+        while k < np {
+            let xx = float_of(l0) + (float_of(xs[k]) - x0) / xr * float_of(w - l0 - r0);
+            let yy = float_of(t0) + (1.0 - (log10_of(ys[si * np + k]) - llo) / (lhi - llo)) * float_of(height - t0 - b0);
+            if k > 0 {
+                out = text.put(heap, out, " ");
+            }
+            out = text.tr(heap, out, "%d0,%d1", 0, 0, 0, 0, xx, yy, 0.0, 0.0);
+            k = k + 1;
+        }
+        out = text.ti(heap, out, "\" class=\"line s%i0\"/>", si, 0, 0, 0);
+        k = 0;
+        while k < np {
+            let xx = float_of(l0) + (float_of(xs[k]) - x0) / xr * float_of(w - l0 - r0);
+            let v = ys[si * np + k];
+            let yy = float_of(t0) + (1.0 - (log10_of(v) - llo) / (lhi - llo)) * float_of(height - t0 - b0);
+            out = text.tr(heap, out, "<circle cx=\"%d0\" cy=\"%d1\" r=\"2.5\" class=\"pt s%i0\"><title>", si, 0, 0, 0, xx, yy, 0.0, 0.0);
+            out = text.put_esc(heap, out, text.line_at(names, si));
+            out = text.ti(heap, out, ", %i0 qubits: ", xs[k], 0, 0, 0);
+            out = numfmt.put_general(heap, out, v);
+            out = text.put(heap, out, " s</title></circle>");
+            k = k + 1;
+        }
+        let last = ys[si * np + np - 1];
+        let ylast = float_of(t0) + (1.0 - (log10_of(last) - llo) / (lhi - llo)) * float_of(height - t0 - b0);
+        out = text.tr(heap, out, "<text x=\"%i0\" y=\"%d0\" text-anchor=\"end\" class=\"ltext s%i1\">", w - r0 - 4, si, 0, 0, ylast - 6.0, 0.0, 0.0, 0.0);
+        out = text.put_esc(heap, out, text.line_at(names, si));
+        out = text.put(heap, out, "</text>");
+        si = si + 1;
+    }
+    out = x_axis_label(heap, out, xlab, float_of(l0 + w - r0) / 2.0, height - 4);
+    out = y_axis_label(heap, out, ylab, float_of(t0 + height - b0) / 2.0);
+    return text.put(heap, out, "</svg>");
+}
+
+// Linear axes: an exact line and estimates with error bars; row k is (p[k], exact[k], estimate[k], stderr[k]).
+pub fn curve_chart[&h, &p, &q, &r, &s, &l, &a, &b, &c, &d](heap: &!h Heap, buf: buffer.Buffer, px: &p [float], exact: &q [float], estimate: &r [float], stderr: &s [float], label: &l [byte], xlab: &a [byte], ylab: &b [byte], y0: float, y1: float, label_est: &c [byte], label_exact: &d [byte], errbars: bool, xmax: float, xname: &static [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let w = 520;
+    let height = 230;
+    let l0 = 46;
+    let r0 = 14;
+    let t0 = 12;
+    let b0 = 38;
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"chart\">");
+    var k = 1;
+    let nt = truncate((y1 - y0) / 0.1);
+    while k <= nt {
+        if y0 + 0.1 * float_of(k) <= y1 + 1.0e-9 {
+            let yv = numfmt.round_nd(y0 + 0.1 * float_of(k), 1);
+            let yy = float_of(t0) + (1.0 - (yv - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+            out = text.tr(heap, out, "<line x1=\"%i0\" y1=\"%d0\" x2=\"%i1\" y2=\"%d0\" class=\"grid\"/><text x=\"%i2\" y=\"%d1\" text-anchor=\"end\" class=\"tick\">", l0, w - r0, l0 - 5, 0, yy, yy + 3.0, 0.0, 0.0);
+            out = numfmt.put_fixed(heap, out, yv, 1);
+            out = text.put(heap, out, "</text>");
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < 6 {
+        let xv = xmax * float_of(k) / 5.0;
+        let xx = float_of(l0) + xv / xmax * float_of(w - l0 - r0);
+        out = text.tr(heap, out, "<text x=\"%d0\" y=\"%i0\" text-anchor=\"middle\" class=\"tick\">", height - b0 + 14, 0, 0, 0, xx, 0.0, 0.0, 0.0);
+        out = numfmt.put_general(heap, out, xv);
+        out = text.put(heap, out, "</text>");
+        k = k + 1;
+    }
+    let n = len(px);
+    out = text.put(heap, out, "<polyline points=\"");
+    k = 0;
+    while k < n {
+        let xx = float_of(l0) + px[k] / xmax * float_of(w - l0 - r0);
+        let yy = float_of(t0) + (1.0 - (exact[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+        if k > 0 {
+            out = text.put(heap, out, " ");
+        }
+        out = text.tr(heap, out, "%d0,%d1", 0, 0, 0, 0, xx, yy, 0.0, 0.0);
+        k = k + 1;
+    }
+    out = text.put(heap, out, "\" class=\"line s1\"/>");
+    k = 0;
+    while k < n {
+        let xx = float_of(l0) + px[k] / xmax * float_of(w - l0 - r0);
+        let yy = float_of(t0) + (1.0 - (estimate[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+        if errbars {
+            let ylo = float_of(t0) + (1.0 - (estimate[k] - 2.0 * stderr[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+            let yhi = float_of(t0) + (1.0 - (estimate[k] + 2.0 * stderr[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+            out = text.tr(heap, out, "<line x1=\"%d0\" y1=\"%d1\" x2=\"%d0\" y2=\"%d2\" class=\"err\"/>", 0, 0, 0, 0, xx, ylo, yhi, 0.0);
+        }
+        out = text.tr(heap, out, "<circle cx=\"%d0\" cy=\"%d1\" r=\"3\" class=\"pt s0\"><title>", 0, 0, 0, 0, xx, yy, 0.0, 0.0);
+        out = text.put(heap, out, xname);
+        out = text.put(heap, out, "=");
+        out = numfmt.put_general(heap, out, px[k]);
+        out = text.put(heap, out, ": runs ");
+        out = numfmt.put_fixed(heap, out, estimate[k], 4);
+        out = text.put(heap, out, " (+/- ");
+        out = numfmt.put_fixed(heap, out, 2.0 * stderr[k], 4);
+        out = text.put(heap, out, "), exact ");
+        out = numfmt.put_fixed(heap, out, exact[k], 4);
+        out = text.put(heap, out, "</title></circle>");
+        k = k + 1;
+    }
+    let ylast = float_of(t0) + (1.0 - (exact[n - 1] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+    out = text.tr(heap, out, "<text x=\"%i0\" y=\"%d0\" text-anchor=\"end\" class=\"ltext s1\">", w - r0 - 4, 0, 0, 0, ylast - 8.0, 0.0, 0.0, 0.0);
+    out = text.put_esc(heap, out, label_exact);
+    out = text.put(heap, out, "</text>");
+    out = text.ti(heap, out, "<text x=\"%i0\" y=\"%i1\" class=\"ltext s0\">", l0 + 6, t0 + 10, 0, 0);
+    out = text.put_esc(heap, out, label_est);
+    out = text.put(heap, out, "</text>");
+    out = x_axis_label(heap, out, xlab, float_of(l0 + w - r0) / 2.0, height - 4);
+    out = y_axis_label(heap, out, ylab, float_of(t0 + height - b0) / 2.0);
+    return text.put(heap, out, "</svg>");
+}
+
+// Grouped horizontal bars on a log time axis. Group g has the name `groups` line g; value [g * nseries + s] belongs to
+// series s, named by `series` line s.
+pub fn bench_chart[&h, &g, &s, &v, &l](heap: &!h Heap, buf: buffer.Buffer, groups: &g [byte], series: &s [byte], vals: &v [float], label: &l [byte], lo: float, hi: float) -> [heap] buffer.Buffer {
+    var out = buf;
+    let ng = text.line_count(groups);
+    let ns = text.line_count(series);
+    let w = 520;
+    let left = 128;
+    let right = 56;
+    let top = 22;
+    let bar = 9;
+    let gap = 12;
+    let gh = bar * ns + gap;
+    let height = top + gh * ng + 34;
+    let span = log10_of(hi) - log10_of(lo);
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"chart\">");
+    var t = lo;
+    while t <= hi * 1.0001 {
+        let xx = float_of(left) + (log10_of(max_float(t, lo)) - log10_of(lo)) / span * float_of(w - left - right);
+        out = text.tr(heap, out, "<line x1=\"%d0\" y1=\"%i0\" x2=\"%d0\" y2=\"%i1\" class=\"grid\"/><text x=\"%d0\" y=\"%i2\" text-anchor=\"middle\" class=\"tick\">", top - 6, height - 28, height - 16, 0, xx, 0.0, 0.0, 0.0);
+        out = numfmt.put_general(heap, out, t);
+        out = text.put(heap, out, " s</text>");
+        t = t * 10.0;
+    }
+    var gi = 0;
+    while gi < ng {
+        let y0 = top + gi * gh;
+        out = text.tr(heap, out, "<text x=\"%i0\" y=\"%d0\" text-anchor=\"end\" class=\"tick\">", left - 8, 0, 0, 0, float_of(y0) + float_of(bar * ns) / 2.0 + 3.0, 0.0, 0.0, 0.0);
+        out = text.put_esc(heap, out, text.line_at(groups, gi));
+        out = text.put(heap, out, "</text>");
+        var si = 0;
+        while si < ns {
+            let v = vals[gi * ns + si];
+            let y = y0 + si * bar;
+            let xv = float_of(left) + (log10_of(max_float(v, lo)) - log10_of(lo)) / span * float_of(w - left - right);
+            out = text.tr(heap, out, "<rect x=\"%i0\" y=\"%i1\" width=\"%d0\" height=\"%i2\" class=\"bar b%i3\"><title>", left, y, bar - 2, si, xv - float_of(left), 0.0, 0.0, 0.0);
+            out = text.put_esc(heap, out, text.line_at(series, si));
+            out = text.put(heap, out, ": ");
+            out = numfmt.put_fixed(heap, out, v, 3);
+            out = text.put(heap, out, " s</title></rect>");
+            out = text.tr(heap, out, "<text x=\"%d0\" y=\"%i0\" class=\"tick\">", y + bar - 2, 0, 0, 0, xv + 4.0, 0.0, 0.0, 0.0);
+            out = numfmt.put_fixed(heap, out, v, 2);
+            out = text.put(heap, out, "</text>");
+            si = si + 1;
+        }
+        gi = gi + 1;
+    }
+    var lx = float_of(left);
+    var si = 0;
+    while si < ns {
+        let name = text.line_at(series, si);
+        if si == 0 {
+            // the first item sits at the integer `left`, which Python prints without a decimal point
+            out = text.tf(heap, out, "<rect x=\"%i3\" y=\"%i0\" width=\"8\" height=\"8\" class=\"bar b%i1\"/><text x=\"%i4\" y=\"%i2\" class=\"tick\">", height - 10, si, height - 2, left, left + 11, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "", "");
+        } else {
+            out = text.tr(heap, out, "<rect x=\"%r0\" y=\"%i0\" width=\"8\" height=\"8\" class=\"bar b%i1\"/><text x=\"%r1\" y=\"%i2\" class=\"tick\">", height - 10, si, height - 2, 0, lx, lx + 11.0, 0.0, 0.0);
+        }
+        out = text.put_esc(heap, out, name);
+        out = text.put(heap, out, "</text>");
+        lx = lx + 11.0 + 6.2 * float_of(len(name)) + 12.0;
+        si = si + 1;
+    }
+    return text.put(heap, out, "</svg>");
+}
+
+// The probability bars of an n-qubit state: `probs[i]` is |amplitude i|^2; `label` is the aria-label.
+pub fn bars[&h, &p, &l](heap: &!h Heap, buf: buffer.Buffer, n: int, probs: &p [float], label: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let total = 1 << n;
+    var top = probs[0];
+    var k = 1;
+    while k < total {
+        top = max_float(top, probs[k]);
+        k = k + 1;
+    }
+    if top == 0.0 {
+        top = 1.0;
+    }
+    let w = 360;
+    let height = 130;
+    let pad = 18;
+    let bw = float_of(w - 2 * pad) / float_of(total);
+    out = text.ti(heap, out, "<svg viewBox=\"0 0 %i0 %i1\" role=\"img\" aria-label=\"", w, height, 0, 0);
+    out = text.put_esc(heap, out, label);
+    out = text.put(heap, out, "\" class=\"bars\">");
+    out = text.ti(heap, out, "<line x1=\"%i0\" y1=\"%i1\" x2=\"%i2\" y2=\"%i1\" class=\"axis\"/>", pad, height - pad, w - pad, 0);
+    var i = 0;
+    while i < total {
+        let bh = float_of(height - 2 * pad) * probs[i] / top;
+        let x = float_of(pad) + float_of(i) * bw;
+        var bwid = bw - 1.0;
+        if bwid < 1.0 {
+            bwid = 1.0;
+        }
+        out = text.tr(heap, out, "<rect x=\"%d0\" y=\"%d1\" width=\"%d2\" height=\"%d3\" class=\"bar\"><title>|", 0, 0, 0, 0, x + 0.5, float_of(height - pad) - bh, bwid, bh);
+        out = numfmt.put_bin(heap, out, i, n);
+        out = text.put(heap, out, "&gt; ");
+        out = numfmt.put_fixed(heap, out, probs[i], 4);
+        out = text.put(heap, out, "</title></rect>");
+        i = i + 1;
+    }
+    var step = total / 8;
+    if step < 1 {
+        step = 1;
+    }
+    i = 0;
+    while i < total {
+        out = text.tr(heap, out, "<text x=\"%d0\" y=\"%i0\" text-anchor=\"middle\" class=\"tick\">", height - 8, 0, 0, 0, float_of(pad) + (float_of(i) + 0.5) * bw, 0.0, 0.0, 0.0);
+        out = numfmt.put_bin(heap, out, i, n);
+        out = text.put(heap, out, "</text>");
+        i = i + step;
+    }
+    out = text.ti(heap, out, "<text x=\"%i0\" y=\"12\" class=\"tick\">probability, tallest bar = ", pad, 0, 0, 0);
+    out = numfmt.put_fixed(heap, out, top, 3);
+    return text.put(heap, out, "</text></svg>");
+}

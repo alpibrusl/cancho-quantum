@@ -1,0 +1,295 @@
+module site.util;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.replay;
+import site.text;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// Small helpers the page builder uses everywhere.
+
+// A JSON number (or any text a JSON number can spell: `7.071067811865475e-1`, `0e0`) as a float.
+pub fn parse_float[&s](t: &s [byte]) -> [] float {
+    var v = 0.0;
+    if len(t) == 0 {
+        return v;
+    }
+    region r {
+        let tape = alloc_slice[r](json.tape_len(t), 0);
+        let n = json.parse(t, tape);
+        if n > 0 {
+            v = json.to_float(t, tape, 0);
+        }
+    }
+    return v;
+}
+
+pub fn parse_int[&s](t: &s [byte]) -> [] int {
+    var v = 0;
+    var k = 0;
+    var neg = false;
+    if len(t) > 0 && int_of(t[0]) == '-' {
+        neg = true;
+        k = 1;
+    }
+    while k < len(t) {
+        v = v * 10 + (int_of(t[k]) - '0');
+        k = k + 1;
+    }
+    if neg {
+        return 0 - v;
+    }
+    return v;
+}
+
+// The k-th (from 0) token of a line, split at spaces and tabs.
+pub fn tok[&s](line: &s [byte], k: int) -> [] &s [byte] {
+    var p = 0;
+    var seen = 0;
+    while p < len(line) {
+        while p < len(line) && (int_of(line[p]) == 32 || int_of(line[p]) == 9) {
+            p = p + 1;
+        }
+        let a = p;
+        while p < len(line) && int_of(line[p]) != 32 && int_of(line[p]) != 9 {
+            p = p + 1;
+        }
+        if p > a {
+            if seen == k {
+                return line[a..p];
+            }
+            seen = seen + 1;
+        }
+    }
+    return line[0..0];
+}
+
+pub fn starts_with[&s](line: &s [byte], prefix: &static [byte]) -> [] bool {
+    return len(line) >= len(prefix) && bytes.equal(line[0..len(prefix)], prefix);
+}
+
+// How many tokens a line has.
+pub fn tok_count[&s](line: &s [byte]) -> [] int {
+    var n = 0;
+    while len(tok(line, n)) > 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+// The last token of the first line starting with `key` (Python's `field`).
+pub fn field[&s](text_: &s [byte], key: &static [byte]) -> [] &s [byte] {
+    let n = text.line_count(text_);
+    var k = 0;
+    while k < n {
+        let line = text.line_at(text_, k);
+        if starts_with(line, key) {
+            return tok(line, tok_count(line) - 1);
+        }
+        k = k + 1;
+    }
+    return text_[0..0];
+}
+
+// The amplitudes of an `amp i re im` listing, into re[], im[] (zero where nothing was listed).
+pub fn amplitudes[&s, &a, &b](out: &s [byte], re: &!a [float], im: &!b [float]) -> [] int {
+    var k = 0;
+    while k < len(re) {
+        re[k] = 0.0;
+        im[k] = 0.0;
+        k = k + 1;
+    }
+    let n = text.line_count(out);
+    k = 0;
+    while k < n {
+        let line = text.line_at(out, k);
+        if starts_with(line, "amp ") {
+            let i = parse_int(tok(line, 1));
+            re[i] = parse_float(tok(line, 2));
+            im[i] = parse_float(tok(line, 3));
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// `{re:.6f}{'+' or '-'}{abs(im):.6f}i`
+pub fn fmt_amp[&h](heap: &!h Heap, buf: buffer.Buffer, re: float, im: float) -> [heap] buffer.Buffer {
+    var out = numfmt.put_fixed(heap, buf, re, 6);
+    if im >= 0.0 {
+        out = text.put(heap, out, "+");
+    } else {
+        out = text.put(heap, out, "-");
+    }
+    var a = im;
+    if im < 0.0 {
+        a = 0.0 - im;
+    }
+    out = numfmt.put_fixed(heap, out, a, 6);
+    return text.put(heap, out, "i");
+}
+
+// Python's `str.strip()` on ASCII white space.
+pub fn strip[&s](t: &s [byte]) -> [] &s [byte] {
+    var a = 0;
+    var b = len(t);
+    while a < b && (int_of(t[a]) == 32 || int_of(t[a]) == 10 || int_of(t[a]) == 9 || int_of(t[a]) == 13) {
+        a = a + 1;
+    }
+    while b > a && (int_of(t[b - 1]) == 32 || int_of(t[b - 1]) == 10 || int_of(t[b - 1]) == 9 || int_of(t[b - 1]) == 13) {
+        b = b - 1;
+    }
+    return t[a..b];
+}
+
+// The key written for a line of standard error: a backslash, the bytes 1, 2, 3 (the separators) and the newlines written as
+// `\\`, `\1`, `\2`, `\3`, `\n`, `\r`; everything else as it is, so that one key is one line.
+fn error_key[&i, &k](io: &!i Io, key: &k [byte]) -> [err_write] int {
+    var from = 0;
+    var at = 0;
+    while at <= len(key) {
+        var c = 0 - 1;
+        if at < len(key) {
+            c = int_of(key[at]);
+        }
+        if at == len(key) || c == 92 || c == 1 || c == 2 || c == 3 || c == 10 || c == 13 {
+            if at > from {
+                io.error_all(io, key[from..at]);
+            }
+            if c == 92 {
+                io.error_all(io, "\\\\");
+            } else if c == 1 {
+                io.error_all(io, "\\1");
+            } else if c == 2 {
+                io.error_all(io, "\\2");
+            } else if c == 3 {
+                io.error_all(io, "\\3");
+            } else if c == 10 {
+                io.error_all(io, "\\n");
+            } else if c == 13 {
+                io.error_all(io, "\\r");
+            }
+            from = at + 1;
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+
+// Replay: the entry the transcript has for `key`. A missing one means the builder asked for something that was not
+// recorded. With the exploring entry in the transcript (the key `\3`, which `live.cho` puts there) it says which
+// (`site: miss: KEY` on standard error, `error_key`'s form) and goes on with that entry, which answers nothing; the
+// live driver runs the command and tries again. Without it the build is wrong: it stops.
+pub fn entry[&i, &s, &t, &k](io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], key: &k [byte]) -> [err_write] int {
+    let e = replay.lookup(tr_src, tr_tape, key);
+    if e < 0 {
+        var explore = 0 - 1;
+        region r {
+            let marker = alloc_slice[r](1, byte_of(3));
+            explore = replay.lookup(tr_src, tr_tape, marker);
+        }
+        if explore >= 0 {
+            io.error_all(io, "site: miss: ");
+            let shown = error_key(io, key);
+            io.error_all(io, "\n");
+            return explore;
+        }
+        io.error_all(io, "site: no transcript entry for: ");
+        let shown = error_key(io, key);
+        io.error_all(io, "\n");
+        let missing = trap();
+    }
+    return e;
+}
+
+// What `qsim` printed for `input`, from the transcript: the key is `$TMP/qsim`, then the input.
+pub fn qsim[&h, &i, &s, &t, &p](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], input: &p [byte]) -> [heap, err_write] buffer.Buffer {
+    var k = replay.key_start(heap, "$TMP/qsim");
+    k = replay.key_input(heap, k, input);
+    var e = 0 - 1;
+    borrow k as &kr in {
+        e = entry(io, tr_src, tr_tape, buffer.bytes(kr));
+    }
+    buffer.drop(heap, k);
+    return replay.text(heap, tr_src, tr_tape, e, "out");
+}
+
+// A program built from tests/accept (`$TMP/acc-NAME`) and run: its exit status and standard output.
+pub fn accept[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], name: &static [byte]) -> [heap, err_write] (int, buffer.Buffer) {
+    var k = replay.key_start(heap, "$TMP/acc-");
+    k = buffer.append(heap, k, name);
+    k = replay.key_input(heap, k, "");
+    var e = 0 - 1;
+    borrow k as &kr in {
+        e = entry(io, tr_src, tr_tape, buffer.bytes(kr));
+    }
+    buffer.drop(heap, k);
+    return (replay.rc(tr_src, tr_tape, e), replay.text(heap, tr_src, tr_tape, e, "out"));
+}
+
+// tests/diff/NAME.qc as text.
+pub fn qc_file[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), name: &static [byte]) -> [heap, fs_read(""), err_write] buffer.Buffer {
+    var path = buffer.append(heap, buffer.empty(heap, 64), "tests/diff/");
+    path = buffer.append(heap, path, name);
+    path = buffer.append(heap, path, ".qc");
+    var failed = false;
+    var out = buffer.empty(heap, 16);
+    borrow path as &pr in {
+        let (b, got) = files.read_all(heap, fs, buffer.bytes(pr), 1048576);
+        if got <= 0 {
+            io.error_all(io, "site: cannot read ");
+            io.error_all(io, buffer.bytes(pr));
+            io.error_all(io, "\n");
+            failed = true;
+        }
+        buffer.drop(heap, out);
+        out = b;
+    }
+    buffer.drop(heap, path);
+    if failed {
+        let missing = trap();
+    }
+    return out;
+}
+
+// The amplitudes of an n-qubit listing, as two boxes of 2^n floats (the caller unboxes them).
+pub fn read_amps[&h, &s](heap: &!h Heap, out: &s [byte], n: int) -> [heap] (Box[[float]], Box[[float]]) {
+    let re = box_slice(heap, 1 << n, 0.0);
+    let im = box_slice(heap, 1 << n, 0.0);
+    borrow mut re as &!rw in {
+        borrow mut im as &!iw in {
+            amplitudes(out, contents(rw), contents(iw));
+        }
+    }
+    return (re, im);
+}
+
+// |amplitude|^2 for each index, as a box.
+pub fn probabilities[&h, &a, &b](heap: &!h Heap, re: &a [float], im: &b [float]) -> [heap] Box[[float]] {
+    let p = box_slice(heap, len(re), 0.0);
+    borrow mut p as &!pw in {
+        let w = contents(pw);
+        var k = 0;
+        while k < len(re) {
+            w[k] = re[k] * re[k] + im[k] * im[k];
+            k = k + 1;
+        }
+    }
+    return p;
+}
+
+// What `qprofile` printed for `input`, from the transcript.
+pub fn qprofile[&h, &i, &s, &t, &p](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], input: &p [byte]) -> [heap, err_write] buffer.Buffer {
+    var k = replay.key_start(heap, "$TMP/qprofile");
+    k = replay.key_input(heap, k, input);
+    var e = 0 - 1;
+    borrow k as &kr in {
+        e = entry(io, tr_src, tr_tape, buffer.bytes(kr));
+    }
+    buffer.drop(heap, k);
+    return replay.text(heap, tr_src, tr_tape, e, "out");
+}

@@ -1,0 +1,145 @@
+module site.page3;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part three: the circuit tiles (random 5-qubit state, GHZ, the typed shots, teleportation, the six
+// ways, Grover, Bernstein-Vazirani, Toffoli).
+
+fn nth_line[&s](t: &s [byte], k: int) -> [] &s [byte] {
+    return text.line_at(t, k);
+}
+
+pub fn tiles_circuits[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // A 5-qubit state
+    let r5_qc = util.qc_file(heap, io, fs, "random5");
+    var r5_out = buffer.empty(heap, 16);
+    borrow r5_qc as &r5q in {
+        buffer.drop(heap, r5_out);
+        r5_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(r5q));
+    }
+    borrow r5_out as &r5o in {
+        let (re, im) = util.read_amps(heap, buffer.bytes(r5o), 5);
+        borrow re as &rr in {
+            borrow im as &ir in {
+                page2.bars_fact(heap, names, ints, texts, "t204.x1", 5, contents(rr), contents(ir), "Probability of each of the 32 five-qubit outcomes after the random circuit");
+            }
+        }
+        unbox_slice(heap, re);
+        unbox_slice(heap, im);
+    }
+    buffer.drop(heap, r5_out);
+    buffer.drop(heap, r5_qc);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t204", false, false, "");
+
+    // GHZ on 10 qubits
+    let g10_qc = util.qc_file(heap, io, fs, "ghz10");
+    var g10_out = buffer.empty(heap, 16);
+    borrow g10_qc as &gq in {
+        buffer.drop(heap, g10_out);
+        g10_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(gq));
+        let all = util.strip(buffer.bytes(gq));
+        facts.set_int(names, ints, "t209.x1", 1024);
+        page1.set_buf(heap, names, ints, texts, "t209.x4", text.put_esc(heap, buffer.empty(heap, 64), nth_line(all, 0)));
+        page1.set_buf(heap, names, ints, texts, "t209.x5", text.put_esc(heap, buffer.empty(heap, 64), nth_line(all, 1)));
+        facts.set_int(names, ints, "t209.x6", text.line_count(all) - 3);
+    }
+    borrow g10_out as &go in {
+        let (re, im) = util.read_amps(heap, buffer.bytes(go), 10);
+        borrow re as &rr in {
+            borrow im as &ir in {
+                let a = contents(rr);
+                let b = contents(ir);
+                var count = 0;
+                var first = 0 - 1;
+                var list = buffer.empty(heap, 64);
+                var k = 0;
+                while k < len(a) {
+                    if a[k] != 0.0 || b[k] != 0.0 {
+                        if first < 0 {
+                            first = k;
+                        } else {
+                            list = text.put(heap, list, ", ");
+                        }
+                        list = text.put_int(heap, list, k);
+                        count = count + 1;
+                    }
+                    k = k + 1;
+                }
+                facts.set_int(names, ints, "t209.x2", count);
+                page1.set_buf(heap, names, ints, texts, "t209.x7", list);
+                // fmt_amp(...).split('+')[0]
+                let amp = util.fmt_amp(heap, buffer.empty(heap, 32), a[first], b[first]);
+                borrow amp as &ar in {
+                    let s0 = buffer.bytes(ar);
+                    var cut = len(s0);
+                    var p = 0;
+                    while p < len(s0) {
+                        if int_of(s0[p]) == '+' && cut == len(s0) {
+                            cut = p;
+                        }
+                        p = p + 1;
+                    }
+                    facts.set_text(names, ints, texts, "t209.x3", s0[0..cut]);
+                }
+                buffer.drop(heap, amp);
+            }
+        }
+        unbox_slice(heap, re);
+        unbox_slice(heap, im);
+    }
+    buffer.drop(heap, g10_out);
+    buffer.drop(heap, g10_qc);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t209", false, false, "");
+
+    // the typed shots
+    let (c1, bell_shots) = util.accept(heap, io, tr_src, tr_tape, "bell");
+    borrow bell_shots as &bs in {
+        facts.set_text(names, ints, texts, "t213.x1", util.field(buffer.bytes(bs), "disagree"));
+        facts.set_text(names, ints, texts, "t213.x2", util.field(buffer.bytes(bs), "ones"));
+    }
+    buffer.drop(heap, bell_shots);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t213", false, false, "");
+
+    // teleportation
+    let (c2, tele) = util.accept(heap, io, tr_src, tr_tape, "teleport");
+    let (c3, tele_mut) = util.accept(heap, io, tr_src, tr_tape, "tele_mut");
+    borrow tele as &tl in {
+        facts.set_text(names, ints, texts, "t216.x1", util.field(buffer.bytes(tl), "failures"));
+        facts.set_text(names, ints, texts, "t216.x2", util.field(buffer.bytes(tl), "outcomes"));
+    }
+    borrow tele_mut as &tm in {
+        facts.set_text(names, ints, texts, "t216.x3", util.field(buffer.bytes(tm), "failures"));
+    }
+    buffer.drop(heap, tele);
+    buffer.drop(heap, tele_mut);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t216", false, false, "");
+
+    // the six ways: provenance of the bell circuit
+    let (ps, pt) = files.load(heap, io, fs, "tests/golden/provenance.json");
+    borrow ps as &psr in {
+        borrow mut pt as &!ptw in {
+            let src = buffer.bytes(psr);
+            let tp = contents(ptw);
+            let bell = json.get(src, tp, 0, "bell");
+            page1.set_buf(heap, names, ints, texts, "t220.x2", text.put_esc(heap, buffer.empty(heap, 32), json.string_view(src, tp, json.get(src, tp, bell, "circuit_body_id"))[0..16]));
+            page1.set_buf(heap, names, ints, texts, "t220.x3", text.put_esc(heap, buffer.empty(heap, 32), json.string_view(src, tp, json.get(src, tp, bell, "output_sha256"))[0..16]));
+            page1.set_buf(heap, names, ints, texts, "t220.x4", text.put_esc(heap, buffer.empty(heap, 32), json.string_view(src, tp, json.get(src, tp, bell, "library_digest"))[0..16]));
+        }
+    }
+    files.unload(heap, ps, pt);
+    let gi = facts.find(names, ints, "N_GOLDEN");
+    facts.set_text(names, ints, texts, "t220.x1", texts[ints[8 + 4 * gi + 2]..ints[8 + 4 * gi + 3]]);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t220", false, false, "");
+    return 0;
+}

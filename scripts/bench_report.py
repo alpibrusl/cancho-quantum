@@ -37,6 +37,10 @@ def tables(d):
     dm = d["noisy"]["density_matrix"]
     out["dm"] = "| qubits | qsim `dm` (LLVM) | qsim `dm` (Cranelift) | Aer density matrix, 1 thread | qsim (LLVM) / Aer |\n|---|---|---|---|---|\n" + "\n".join(
         f"| {k} | {sec(v['qsim_llvm'])} | {sec(v['qsim_cranelift'])} | {sec(v['aer_density_matrix_1thread'])} | {v['qsim_llvm'] / v['aer_density_matrix_1thread']:.1f}x |" for k, v in dm.items())
+    k = json.load(open(os.path.join(ROOT, "docs", "data", "benchmark_kernels.json")))
+    cols = [("qsim_llvm", "qsim (LLVM)"), ("clang_naive", "C, clang, same loop"), ("gcc_naive", "C, gcc, same loop"), ("clang_tuned", "C, clang, pairs only"), ("gcc_tuned", "C, gcc, pairs only")]
+    rows = [f"| {NAMES[w]} | " + " | ".join(sec(r[c]) for c, _ in cols) + f" | {r['qsim_llvm'] / r['clang_naive']:.2f}x | {r['qsim_llvm'] / min(r['clang_tuned'], r['gcc_tuned']):.2f}x |" for w, r in k["workloads"].items()]
+    out["kernels"] = "| workload | " + " | ".join(l for _, l in cols) + " | qsim / C, same loop | qsim / best tuned C |\n|---|" + "---|" * (len(cols) + 2) + "\n" + "\n".join(rows)
     return out
 
 

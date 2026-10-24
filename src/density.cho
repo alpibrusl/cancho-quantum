@@ -26,99 +26,92 @@ import std.io;
 // conjugate; S, T swap with S-dagger, T-dagger; Y is replaced by -Y's matrix;
 // RX, RZ, P and CP flip the sign of their angle.
 
-// A Kraus operator [[a, b], [c, d]] applied to the rows and its conjugate to the
-// columns of a copy of rho, then added into `acc`.
-fn kraus[&s, &t, &c](st: &s [float], tmp: &!t [float], acc: &!c [float], n: int, q: int, a: complex.Complex, b: complex.Complex, c: complex.Complex, d: complex.Complex) -> [] int {
+// Every channel here acts on the 2 x 2 block of rho that qubit `q` selects (rows with bit q, columns with bit q + n)
+// as a real linear map, and the same map on its real and imaginary parts, so one pass over the matrix does it:
+//
+//     x00' = a x00 + b x11        x01' = e x01 + f x10
+//     x11' = c x11 + d x00        x10' = e x10 + f x01
+//
+// (x_rc is the entry at row bit r, column bit c.) The maps, with sum_k K rho K^dagger worked out:
+//     bit flip p      a = c = e = 1 - p,  b = d = f = p
+//     phase flip p    a = c = 1, b = d = f = 0,  e = 1 - 2p
+//     depolarizing p  a = c = 1 - 2p/3,  b = d = 2p/3,  e = 1 - 4p/3,  f = 0     (rho -> (1 - 4p/3) rho + (2p/3) tr(block) I)
+//     amplitude damping g   a = 1, b = g, c = 1 - g, d = 0, e = sqrt(1 - g), f = 0
+fn mix1[&s](st: &!s [float], n: int, q: int, a: float, b: float, c: float, d: float, e: float, f: float) -> [] int {
+    gates.in_range(n, q);
+    let rbit = 1 << q;
+    let cbit = 1 << (q + n);
+    let total = state.amplitudes_for(2 * n);
     var i = 0;
-    while i < len(st) {
-        tmp[i] = st[i];
-        i = i + 1;
-    }
-    gates.unitary(tmp, 2 * n, q, a, b, c, d);
-    gates.unitary(tmp, 2 * n, q + n, conj(a), conj(b), conj(c), conj(d));
-    i = 0;
-    while i < len(st) {
-        acc[i] = acc[i] + tmp[i];
+    while i < total {
+        if i & rbit == 0 && i & cbit == 0 {
+            var part = 0;
+            while part < 2 {
+                let k00 = 2 * i + part;
+                let k10 = 2 * (i | rbit) + part;
+                let k01 = 2 * (i | cbit) + part;
+                let k11 = 2 * (i | rbit | cbit) + part;
+                let x00 = st[k00];
+                let x01 = st[k01];
+                let x10 = st[k10];
+                let x11 = st[k11];
+                st[k00] = a * x00 + b * x11;
+                st[k11] = c * x11 + d * x00;
+                st[k01] = e * x01 + f * x10;
+                st[k10] = e * x10 + f * x01;
+                part = part + 1;
+            }
+        }
         i = i + 1;
     }
     return 0;
 }
 
-fn conj(a: complex.Complex) -> [] complex.Complex {
-    return complex.make(a.re, 0.0 - a.im);
-}
-
-fn real(x: float) -> [] complex.Complex {
-    return complex.make(x, 0.0);
-}
-
 // Apply a one-qubit channel with probability (or decay) `p` to qubit `q`.
-fn channel[&s, &t, &c](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, q: int, w: int, p: float) -> [] int {
-    var i = 0;
-    while i < len(acc) {
-        acc[i] = 0.0;
-        i = i + 1;
-    }
-    let zero = complex.zero();
-    let one = real(1.0);
+fn channel[&s](st: &!s [float], n: int, q: int, w: int, p: float) -> [] int {
     if w == 27423402228804976 {
         // amplitude damping
-        kraus(st, tmp, acc, n, q, one, zero, zero, real(sqrt(1.0 - p)));
-        kraus(st, tmp, acc, n, q, zero, real(sqrt(p)), zero, zero);
+        mix1(st, n, q, 1.0, p, 1.0 - p, 0.0, sqrt(1.0 - p), 0.0);
+    } else if w == 27700496373148016 {
+        mix1(st, n, q, 1.0 - p, p, 1.0 - p, p, 1.0 - p, p);
+    } else if w == 31639965148735084 {
+        mix1(st, n, q, 1.0, 0.0, 1.0, 0.0, 1.0 - 2.0 * p, 0.0);
     } else {
-        let keep = real(sqrt(1.0 - p));
-        kraus(st, tmp, acc, n, q, keep, zero, zero, keep);
-        if w == 27700496373148016 {
-            let f = sqrt(p);
-            kraus(st, tmp, acc, n, q, zero, real(f), real(f), zero);
-        } else if w == 31639965148735084 {
-            let f = sqrt(p);
-            kraus(st, tmp, acc, n, q, real(f), zero, zero, real(0.0 - f));
-        } else {
-            let f = sqrt(p / 3.0);
-            kraus(st, tmp, acc, n, q, zero, real(f), real(f), zero);
-            kraus(st, tmp, acc, n, q, zero, complex.make(0.0, 0.0 - f), complex.make(0.0, f), zero);
-            kraus(st, tmp, acc, n, q, real(f), zero, zero, real(0.0 - f));
-        }
-    }
-    i = 0;
-    while i < len(st) {
-        st[i] = acc[i];
-        i = i + 1;
+        mix1(st, n, q, 1.0 - 2.0 * p / 3.0, 2.0 * p / 3.0, 1.0 - 2.0 * p / 3.0, 2.0 * p / 3.0, 1.0 - 4.0 * p / 3.0, 0.0);
     }
     return 0;
 }
 
 // Idle for `ns` nanoseconds on qubit `q`: amplitude damping, then dephasing, as `noise.relax`.
-fn relax[&s, &t, &c, &r](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, q: int, ns: int, rng: &r [int]) -> [] int {
+fn relax[&s, &r](st: &!s [float], n: int, q: int, ns: int, rng: &r [int]) -> [] int {
     if ns > 0 && profile.has_coh(rng, q) {
-        channel(st, tmp, acc, n, q, 27423402228804976, profile.relax_gamma(rng, q, ns));
+        channel(st, n, q, 27423402228804976, profile.relax_gamma(rng, q, ns));
         let f = profile.relax_flip(rng, q, ns);
         if f > 0.0 {
-            channel(st, tmp, acc, n, q, 31639965148735084, f);
+            channel(st, n, q, 31639965148735084, f);
         }
     }
     return 0;
 }
 
 // Scheduling, as `noise.before2` and `noise.barrier`: the qubit that is free earlier idles until the other is.
-fn before2[&s, &t, &c, &r](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, a: int, b: int, rng: &!r [int]) -> [] int {
+fn before2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -> [] int {
     if profile.scheduled(rng) {
         let start = noise.max_int(profile.clock(rng, a), profile.clock(rng, b));
-        relax(st, tmp, acc, n, a, start - profile.clock(rng, a), rng);
-        relax(st, tmp, acc, n, b, start - profile.clock(rng, b), rng);
+        relax(st, n, a, start - profile.clock(rng, a), rng);
+        relax(st, n, b, start - profile.clock(rng, b), rng);
         profile.set_clock(rng, a, start);
         profile.set_clock(rng, b, start);
     }
     return 0;
 }
 
-fn barrier[&s, &t, &c, &r](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, rng: &!r [int]) -> [] int {
+fn barrier[&s, &r](st: &!s [float], n: int, rng: &!r [int]) -> [] int {
     if profile.scheduled(rng) {
         let end = profile.makespan(rng, n);
         var q = 0;
         while q < n {
-            relax(st, tmp, acc, n, q, end - profile.clock(rng, q), rng);
+            relax(st, n, q, end - profile.clock(rng, q), rng);
             profile.set_clock(rng, q, end);
             q = q + 1;
         }
@@ -126,50 +119,50 @@ fn barrier[&s, &t, &c, &r](st: &!s [float], tmp: &!t [float], acc: &!c [float], 
     return 0;
 }
 
-// A Pauli (0 identity, 1 X, 2 Y, 3 Z) on qubit `q` of the rows and its conjugate on
-// the columns. The conjugate of Y is minus Y.
-fn pauli_both[&s](st: &!s [float], n: int, q: int, k: int) -> [] int {
-    let m = 2 * n;
-    if k == 1 {
-        gates.x(st, m, q);
-        gates.x(st, m, q + n);
-    } else if k == 2 {
-        gates.y(st, m, q);
-        gates.unitary(st, m, q + n, complex.zero(), complex.make(0.0, 1.0), complex.make(0.0, 0.0 - 1.0), complex.zero());
-    } else if k == 3 {
-        gates.z(st, m, q);
-        gates.z(st, m, q + n);
-    }
-    return 0;
-}
-
-// Two-qubit depolarizing: rho -> (1 - p) rho + (p / 15) * sum over the 15 non-identity
-// Pauli pairs of (P x Q) rho (P x Q).
-fn channel2[&s, &t, &c](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, a: int, b: int, p: float) -> [] int {
+// Two-qubit depolarizing: rho -> (1 - p) rho + (p / 15) * sum over the 15 non-identity Pauli pairs of (P x Q) rho (P x Q).
+// The 16 Pauli pairs together send a 4 x 4 block X to 4 tr(X) I, so the block becomes (1 - 16p/15) X + (4p/15) tr(X) I:
+// the entries off the diagonal are scaled, those on it also get a share of the trace. One pass.
+fn channel2[&s](st: &!s [float], n: int, a: int, b: int, p: float) -> [] int {
+    gates.in_range(n, a);
+    gates.in_range(n, b);
+    let lam = 1.0 - 16.0 * p / 15.0;
+    let share = 4.0 * p / 15.0;
+    let abit = 1 << a;
+    let bbit = 1 << b;
+    let mask = abit | bbit | (abit << n) | (bbit << n);
+    let total = state.amplitudes_for(2 * n);
     var i = 0;
-    while i < len(acc) {
-        acc[i] = (1.0 - p) * st[i];
-        i = i + 1;
-    }
-    var m = 1;
-    while m < 16 {
-        i = 0;
-        while i < len(st) {
-            tmp[i] = st[i];
-            i = i + 1;
+    while i < total {
+        if i & mask == 0 {
+            var part = 0;
+            while part < 2 {
+                // the diagonal of the block: row pair r equals column pair r
+                var tr = 0.0;
+                var r = 0;
+                while r < 4 {
+                    let row = (r & 1) * abit + (r / 2) * bbit;
+                    tr = tr + st[2 * (i + row + (row << n)) + part];
+                    r = r + 1;
+                }
+                r = 0;
+                while r < 4 {
+                    var c = 0;
+                    while c < 4 {
+                        let row = (r & 1) * abit + (r / 2) * bbit;
+                        let col = (c & 1) * abit + (c / 2) * bbit;
+                        let k = 2 * (i + row + (col << n)) + part;
+                        if r == c {
+                            st[k] = lam * st[k] + share * tr;
+                        } else {
+                            st[k] = lam * st[k];
+                        }
+                        c = c + 1;
+                    }
+                    r = r + 1;
+                }
+                part = part + 1;
+            }
         }
-        pauli_both(tmp, n, a, m / 4);
-        pauli_both(tmp, n, b, m % 4);
-        i = 0;
-        while i < len(st) {
-            acc[i] = acc[i] + p / 15.0 * tmp[i];
-            i = i + 1;
-        }
-        m = m + 1;
-    }
-    i = 0;
-    while i < len(st) {
-        st[i] = acc[i];
         i = i + 1;
     }
     return 0;
@@ -318,8 +311,7 @@ fn print_probs[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [byt
 }
 
 // Run the operations after a `dm <n>` header. Answers 0, or 2 for a bad operation.
-// `tmp` and `acc` are scratch matrices the size of `st`.
-pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, rng: &!r [int], scratch: &!b [byte], quiet: &!q [int]) -> [io_read, io_write] int {
+pub fn run[&i, &s, &r, &b, &q](io: &!i Io, st: &!s [float], n: int, rng: &!r [int], scratch: &!b [byte], quiet: &!q [int]) -> [io_read, io_write] int {
     var w = reader.read_word(io);
     while w >= 0 {
         var post1 = 0 - 1;
@@ -339,7 +331,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
-            before2(st, tmp, acc, n, a, b, rng);
+            before2(st, n, a, b, rng);
             gates.cx(st, 2 * n, a, b);
             gates.cx(st, 2 * n, a + n, b + n);
             post2a = a;
@@ -348,7 +340,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
-            before2(st, tmp, acc, n, a, b, rng);
+            before2(st, n, a, b, rng);
             gates.cz(st, 2 * n, a, b);
             gates.cz(st, 2 * n, a + n, b + n);
             post2a = a;
@@ -357,7 +349,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
-            before2(st, tmp, acc, n, a, b, rng);
+            before2(st, n, a, b, rng);
             gates.swap(st, 2 * n, a, b);
             gates.swap(st, 2 * n, a + n, b + n);
             post2a = a;
@@ -377,7 +369,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let num = reader.read_int(io);
             let den = reader.read_int(io);
             gates.distinct(n, a, b);
-            before2(st, tmp, acc, n, a, b, rng);
+            before2(st, n, a, b, rng);
             gates.cp(st, 2 * n, a, b, gates.angle(num, den));
             gates.cp(st, 2 * n, a + n, b + n, 0.0 - gates.angle(num, den));
             post2a = a;
@@ -387,14 +379,14 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let num = reader.read_int(io);
             let den = reader.read_int(io);
             gates.in_range(n, a);
-            channel(st, tmp, acc, n, a, w, noise.prob(num, den));
+            channel(st, n, a, w, noise.prob(num, den));
         } else if w == 110386840824882 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             let num = reader.read_int(io);
             let den = reader.read_int(io);
             gates.distinct(n, a, b);
-            channel2(st, tmp, acc, n, a, b, noise.prob(num, den));
+            channel2(st, n, a, b, noise.prob(num, den));
         } else if w == 32199616316274036 || w == 120325193165873 || w == 120325193165874 {
             let num = reader.read_int(io);
             let den = reader.read_int(io);
@@ -444,7 +436,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             let bit = measure_q(st, n, a, rng);
             dump.measurement(io, a, noise.readout(bit, a, rng));
         } else if w == 123649732998265 {
-            barrier(st, tmp, acc, n, rng);
+            barrier(st, n, rng);
             var total = 0.0;
             var k = 0;
             while k < len(st) {
@@ -465,7 +457,7 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             dump.put_float(io, scratch, total);
             io.newline(io);
         } else if w == 482956239475 {
-            barrier(st, tmp, acc, n, rng);
+            barrier(st, n, rng);
             print_probs(io, st, n, scratch);
         } else if w == 427070874994 {
             let q = reader.read_int(io);
@@ -508,36 +500,36 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             if q < 0 || q >= n || ns < 0 {
                 return 2;
             }
-            relax(st, tmp, acc, n, q, ns, rng);
+            relax(st, n, q, ns, rng);
             profile.set_clock(rng, q, profile.clock(rng, q) + ns);
         } else if w == 495589025124 {
             rng[1410] = 1;
         } else if w == 27691691891320178 {
-            barrier(st, tmp, acc, n, rng);
+            barrier(st, n, rng);
         } else if w == 487301145972 {
             quiet[0] = 1;
         } else {
             return 2;
         }
         if post1 >= 0 && profile.g1_p(rng, post1) > 0.0 {
-            channel(st, tmp, acc, n, post1, 431198596972, profile.g1_p(rng, post1));
+            channel(st, n, post1, 431198596972, profile.g1_p(rng, post1));
         }
         if post2a >= 0 && profile.g2_p(rng, post2a, post2b) > 0.0 {
-            channel2(st, tmp, acc, n, post2a, post2b, profile.g2_p(rng, post2a, post2b));
+            channel2(st, n, post2a, post2b, profile.g2_p(rng, post2a, post2b));
         }
         if post1 >= 0 {
-            relax(st, tmp, acc, n, post1, profile.dur1(rng, post1), rng);
+            relax(st, n, post1, profile.dur1(rng, post1), rng);
             profile.set_clock(rng, post1, profile.clock(rng, post1) + profile.dur1(rng, post1));
         }
         if post2a >= 0 {
-            relax(st, tmp, acc, n, post2a, profile.dur2(rng, post2a, post2b), rng);
-            relax(st, tmp, acc, n, post2b, profile.dur2(rng, post2a, post2b), rng);
+            relax(st, n, post2a, profile.dur2(rng, post2a, post2b), rng);
+            relax(st, n, post2b, profile.dur2(rng, post2a, post2b), rng);
             profile.set_clock(rng, post2a, profile.clock(rng, post2a) + profile.dur2(rng, post2a, post2b));
             profile.set_clock(rng, post2b, profile.clock(rng, post2b) + profile.dur2(rng, post2a, post2b));
         }
         w = reader.read_word(io);
     }
-    barrier(st, tmp, acc, n, rng);
+    barrier(st, n, rng);
     if quiet[0] == 0 {
         print_rho(io, st, n, scratch);
     }

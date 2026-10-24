@@ -58,11 +58,13 @@ def main():
     lib = library()
     failed, count = [], 0
 
+    n_reject = n_traps = 0
     rdir = os.path.join(ROOT, "tests", "reject")
     for f in sorted(os.listdir(rdir)):
         if not f.endswith(".cho") or (args.names and f not in args.names):
             continue
         count += 1
+        n_reject += 1
         path = os.path.join(rdir, f)
         exp = expectations(path)
         run = subprocess.run([args.compiler, "check", *lib, path, "--std", "--output", "json"],
@@ -85,6 +87,7 @@ def main():
         count += 1
         path = os.path.join(adir, f)
         exp = expectations(path)
+        n_traps += 1 if exp["traps"] else 0
         exe = os.path.join("/tmp", f"m2-{args.backend}-{f[:-4]}")
         build = subprocess.run([args.compiler, "build", *lib, path, "--std", "--backend", args.backend, "-o", exe],
                                capture_output=True, text=True)
@@ -107,6 +110,10 @@ def main():
             failed.append(f)
 
     print(f"\n{count - len(failed)} of {count} fixtures behave as stated")
+    if not failed:
+        with open(os.path.join(ROOT, "docs", "data", "check_types.json"), "w") as f:
+            json.dump({"ok": count - len(failed), "all": count, "reject": n_reject, "traps": n_traps}, f)
+            f.write("\n")
     sys.exit(1 if failed else 0)
 
 

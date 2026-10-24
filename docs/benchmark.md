@@ -35,17 +35,17 @@ Times at the two largest sizes (`qsim` is the whole process; Aer is `run` only):
 | workload | qsim (LLVM) | qsim (Cranelift) | Aer, 1 thread | Aer, 4 threads | Qiskit Statevector |
 |---|---|---|---|---|---|
 | **18 qubits** | | | | | |
-| H on every qubit (18 gates) | 10 ms | 45 ms | 21 ms | 8 ms | 87 ms |
-| H, then a CX chain (18 gates) | 10 ms | 37 ms | 38 ms | 9 ms | 42 ms |
-| H layer, then Rz on every qubit (36 gates) | 18 ms | 79 ms | 23 ms | 8 ms | 69 ms |
-| random, depth 20 (540 gates) | 208 ms | 1.23 s | 308 ms | 132 ms | 847 ms |
-| QFT (180 gates) | 39 ms | 167 ms | 116 ms | 52 ms | 354 ms |
+| H on every qubit (18 gates) | 9 ms | 41 ms | 18 ms | 7 ms | 97 ms |
+| H, then a CX chain (18 gates) | 9 ms | 22 ms | 26 ms | 14 ms | 64 ms |
+| H layer, then Rz on every qubit (36 gates) | 17 ms | 71 ms | 20 ms | 7 ms | 57 ms |
+| random, depth 20 (540 gates) | 194 ms | 997 ms | 273 ms | 93 ms | 784 ms |
+| QFT (180 gates) | 36 ms | 147 ms | 104 ms | 33 ms | 275 ms |
 | **20 qubits** | | | | | |
-| H on every qubit (20 gates) | 42 ms | 205 ms | 113 ms | 31 ms | not run |
-| H, then a CX chain (20 gates) | 38 ms | 111 ms | 119 ms | 57 ms | not run |
-| H layer, then Rz on every qubit (40 gates) | 105 ms | 437 ms | 97 ms | 38 ms | not run |
-| random, depth 20 (600 gates) | 1.01 s | 5.69 s | 1.63 s | 508 ms | not run |
-| QFT (220 gates) | 185 ms | 864 ms | 473 ms | 194 ms | not run |
+| H on every qubit (20 gates) | 43 ms | 228 ms | 83 ms | 25 ms | not run |
+| H, then a CX chain (20 gates) | 36 ms | 98 ms | 112 ms | 43 ms | not run |
+| H layer, then Rz on every qubit (40 gates) | 66 ms | 307 ms | 88 ms | 25 ms | not run |
+| random, depth 20 (600 gates) | 896 ms | 4.55 s | 1.20 s | 416 ms | not run |
+| QFT (220 gates) | 187 ms | 786 ms | 487 ms | 162 ms | not run |
 <!-- /table -->
 
 Aer's time divided by `qsim` (LLVM) at 20 qubits; above 1, `qsim` is faster:
@@ -53,11 +53,11 @@ Aer's time divided by `qsim` (LLVM) at 20 qubits; above 1, `qsim` is faster:
 <!-- table:ratios -->
 | workload | Aer 1 thread / qsim (LLVM) | Aer 4 threads / qsim (LLVM) | Cranelift / LLVM |
 |---|---|---|---|
-| H on every qubit | 2.71x | 0.75x | 4.9x |
-| H, then a CX chain | 3.14x | 1.50x | 2.9x |
-| H layer, then Rz on every qubit | 0.92x | 0.36x | 4.2x |
-| random, depth 20 | 1.61x | 0.50x | 5.6x |
-| QFT | 2.55x | 1.05x | 4.7x |
+| H on every qubit | 1.93x | 0.57x | 5.3x |
+| H, then a CX chain | 3.10x | 1.20x | 2.7x |
+| H layer, then Rz on every qubit | 1.32x | 0.37x | 4.6x |
+| random, depth 20 | 1.34x | 0.46x | 5.1x |
+| QFT | 2.61x | 0.87x | 4.2x |
 <!-- /table -->
 
 The exact density matrix (`dm`), a random circuit with depolarizing noise after every gate, against Aer's
@@ -66,9 +66,9 @@ density-matrix method on one thread:
 <!-- table:dm -->
 | qubits | qsim `dm` (LLVM) | qsim `dm` (Cranelift) | Aer density matrix, 1 thread | qsim (LLVM) / Aer |
 |---|---|---|---|---|
-| 4 | 3 ms | 11 ms | 4 ms | 0.6x |
-| 6 | 33 ms | 193 ms | 17 ms | 1.9x |
-| 8 | 879 ms | 4.47 s | 118 ms | 7.4x |
+| 4 | 1 ms | 2 ms | 4 ms | 0.3x |
+| 6 | 5 ms | 20 ms | 17 ms | 0.3x |
+| 8 | 107 ms | 384 ms | 90 ms | 1.2x |
 <!-- /table -->
 
 ## What it says
@@ -86,12 +86,41 @@ density-matrix method on one thread:
    compiles faster.
 4. **Memory is the state and little else**: a 20-qubit run peaks at 17.3 MiB for a 16 MiB state. (Aer's
    figure in `benchmark.json`, 209.5 MiB, includes the Python interpreter and Qiskit and is not comparable.)
-5. **The density matrix is the weak spot.** At 8 qubits `dm` takes 0.88 s against Aer's 0.12 s on one thread
-   (about 7 times), and 4.5 s with Cranelift. It stores the matrix as a state of twice as many qubits and
-   builds each channel from Kraus operators with full-size scratch copies; a direct channel kernel would be
-   much faster. The mode is capped at 10 qubits for the same reason.
+5. **The density matrix was the weak spot, and is now close.** At 8 qubits `dm` took 0.88 s against Aer's 0.12 s on
+   one thread (about 7 times). It stored the matrix as a state of twice as many qubits and built each channel from
+   Kraus operators with full-size scratch copies: about 18 passes over the matrix per channel. Each channel is now
+   a single in-place pass over the 2 x 2 (or 4 x 4) blocks it acts on (`src/density.cho`), the two scratch matrices
+   are gone (a third of the memory), and the table above has the result: 8 qubits in 0.11 s, 1.2 times Aer's time. Gates are
+   still two passes each (rows, then columns), which is where the remaining gap is. The amplitudes moved by at most
+   3e-15 (the sums are in another order); four goldens were regenerated for that. The mode is still capped at 10 qubits.
 6. **Capacity**: `qsim` stops at 20 qubits (a fixed layout, 16 MiB); Aer goes well past 30 on memory it
    is given. That is a design limit here, not something the benchmark changes.
+
+## Is it the language? The same kernels in C
+
+The comparison above is of whole implementations. To ask what the *language* costs, `bench/kernels.c` writes the
+H, CX and diagonal-gate loops of `src/gates.cho` in C, in two forms: **same loop** (visit every index, test the
+qubit's bit, as `gates.cho` does) and **pairs only** (visit just the amplitude pairs, no test). They are built at
+-O3 for the baseline x86-64 target (no `-march=native`, as cancho builds) with clang 18, which is LLVM like the
+backend cancho's `--backend llvm` uses, and with gcc 13. Their amplitudes were first checked against `qsim`'s
+(identical, to the bit, on all three workloads at 10 qubits). Whole process at 20 qubits, minimum of 5
+(`scripts/bench_kernels.py`, `docs/data/benchmark_kernels.json`):
+
+<!-- table:kernels -->
+| workload | qsim (LLVM) | C, clang, same loop | C, gcc, same loop | C, clang, pairs only | C, gcc, pairs only | qsim / C, same loop | qsim / best tuned C |
+|---|---|---|---|---|---|---|---|
+| H on every qubit | 36 ms | 36 ms | 42 ms | 33 ms | 32 ms | 0.99x | 1.11x |
+| H, then a CX chain | 39 ms | 35 ms | 36 ms | 26 ms | 33 ms | 1.09x | 1.49x |
+| H layer, then Rz on every qubit | 80 ms | 61 ms | 58 ms | 53 ms | 59 ms | 1.31x | 1.49x |
+<!-- /table -->
+
+Reading it: where the algorithm is the same, cancho and C are within about 0 to 30 percent, and the
+largest gap is on the diagonal gate (31 percent; why was not investigated: the complex arithmetic goes through
+small functions in `complex.cho`, which the optimizer may not fully flatten). Writing the loop better in C (pairs only) is worth 10 to 35 percent on the
+H layer and CX chain, because at 20 qubits all of these are limited by streaming a 16 MiB state through memory,
+not by arithmetic. So the 3 to 6 times between the two cancho backends is the compiler's optimizer, not the
+language, and the factor between `qsim` and Aer on four threads is parallelism, not a slow language. This is three
+kernels at one size on one machine: it does not cover the noise code, the density matrix or the sampler.
 
 ## Not measured
 

@@ -1,0 +1,247 @@
+module site.page1;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part one: what the Python `build()` does up to the supported-tiles gallery. Each function adds
+// facts (and tiles, which are facts named `tile:TITLE`) to the four fact slices; the page is then filled from them.
+
+pub fn decode[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
+    let need = json.string_length(src, tape, node);
+    if need < 0 {
+        return buffer.empty(heap, 16);
+    }
+    let raw = box_slice(heap, need + 1, byte_of(0));
+    var out = buffer.empty(heap, need + 16);
+    borrow mut raw as &!rw in {
+        let r = contents(rw);
+        let got = json.string_into(src, tape, node, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, raw);
+    return out;
+}
+
+// A text fact from a buffer (which is consumed).
+pub fn set_buf[&h, &n, &i, &t](heap: &!h Heap, names: &!n [byte], ints: &!i [int], texts: &!t [byte], name: &static [byte], b: buffer.Buffer) -> [heap] int {
+    borrow b as &br in {
+        facts.set_text(names, ints, texts, name, buffer.bytes(br));
+    }
+    buffer.drop(heap, b);
+    return 0;
+}
+
+// The index of `needle` in `hay` at or after `from`, or -1.
+pub fn find_at[&a, &b](hay: &a [byte], needle: &b [byte], from: int) -> [] int {
+    var k = from;
+    while k + len(needle) <= len(hay) {
+        if bytes.equal(hay[k..k + len(needle)], needle) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The transcript key of `cancho check <the library> <path> --std [--output json]`.
+pub fn check_key[&h, &p](heap: &!h Heap, path: &p [byte], as_json: bool) -> [heap] buffer.Buffer {
+    var k = replay.key_start(heap, "cancho");
+    k = replay.key_arg(heap, k, "check");
+    k = replay.key_arg(heap, k, "src/complex.cho");
+    k = replay.key_arg(heap, k, "src/state.cho");
+    k = replay.key_arg(heap, k, "src/gates.cho");
+    k = replay.key_arg(heap, k, "src/profile.cho");
+    k = replay.key_arg(heap, k, "src/measure.cho");
+    k = replay.key_arg(heap, k, "src/noise.cho");
+    k = replay.key_arg(heap, k, "src/qubit.cho");
+    k = replay.key_arg(heap, k, path);
+    k = replay.key_arg(heap, k, "--std");
+    if as_json {
+        k = replay.key_arg(heap, k, "--output");
+        k = replay.key_arg(heap, k, "json");
+    }
+    return replay.key_input(heap, k, "");
+}
+
+// `cancho check` on a must-reject fixture, as the Python `Tools.refusal`: the first error's message (what follows
+// `error: ` in the first line of stderr + stdout that has `error:`) and the rule tag of the JSON report. Both are
+// appended to the buffers given.
+pub fn refusal[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], fixture: &static [byte], msg: buffer.Buffer, rule: buffer.Buffer) -> [heap, err_write] (buffer.Buffer, buffer.Buffer) {
+    var path = buffer.append(heap, buffer.empty(heap, 64), "tests/reject/");
+    path = buffer.append(heap, path, fixture);
+    path = buffer.append(heap, path, ".cho");
+    var m = msg;
+    var r = rule;
+    borrow path as &pr in {
+        let plain = check_key(heap, buffer.bytes(pr), false);
+        let json_key = check_key(heap, buffer.bytes(pr), true);
+        borrow plain as &kr in {
+            let e = util.entry(io, tr_src, tr_tape, buffer.bytes(kr));
+            let err = replay.text(heap, tr_src, tr_tape, e, "err");
+            let out = replay.text(heap, tr_src, tr_tape, e, "out");
+            var joined = err;
+            borrow out as &or in {
+                joined = buffer.append(heap, joined, buffer.bytes(or));
+            }
+            buffer.drop(heap, out);
+            borrow joined as &jr in {
+                let all = buffer.bytes(jr);
+                let n = text.line_count(all);
+                var li = 0;
+                var found = false;
+                while li < n && !found {
+                    let line = text.line_at(all, li);
+                    if find_at(line, "error:", 0) >= 0 {
+                        let at = find_at(line, "error: ", 0);
+                        m = buffer.append(heap, m, line[at + 7..len(line)]);
+                        found = true;
+                    }
+                    li = li + 1;
+                }
+            }
+            buffer.drop(heap, joined);
+        }
+        borrow json_key as &jk in {
+            let e = util.entry(io, tr_src, tr_tape, buffer.bytes(jk));
+            let out = replay.text(heap, tr_src, tr_tape, e, "out");
+            borrow out as &or in {
+                let all = buffer.bytes(or);
+                let at = find_at(all, "\"rule\": \"", 0);
+                if at >= 0 {
+                    var q = at + 9;
+                    while q < len(all) && int_of(all[q]) != '"' {
+                        q = q + 1;
+                    }
+                    r = buffer.append(heap, r, all[at + 9..q]);
+                }
+            }
+            buffer.drop(heap, out);
+        }
+        buffer.drop(heap, plain);
+        buffer.drop(heap, json_key);
+    }
+    buffer.drop(heap, path);
+    return (m, r);
+}
+
+// P["TERMINAL"]: json.dumps of three real refusals, as Python writes it.
+pub fn terminal[&h, &i, &s, &t, &n, &q, &x](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, err_write] int {
+    var out = buffer.append(heap, buffer.empty(heap, 1024), "[");
+    var k = 0;
+    while k < 3 {
+        var fx = "clone_qubit";
+        if k == 1 {
+            fx = "drop_qubit";
+        } else if k == 2 {
+            fx = "use_after_measure";
+        }
+        let (msg, rule) = refusal(heap, io, tr_src, tr_tape, fx, buffer.empty(heap, 128), buffer.empty(heap, 32));
+        if k > 0 {
+            out = text.put(heap, out, ", ");
+        }
+        out = text.put(heap, out, "[[\"d\", ");
+        var cmd = buffer.append(heap, buffer.empty(heap, 128), "$ cancho check src/*.cho tests/reject/");
+        cmd = buffer.append(heap, cmd, fx);
+        cmd = buffer.append(heap, cmd, ".cho --std");
+        borrow cmd as &cr in {
+            out = text.put_json_string(heap, out, buffer.bytes(cr));
+        }
+        buffer.drop(heap, cmd);
+        out = text.put(heap, out, "], [\"b\", ");
+        var line = buffer.append(heap, buffer.empty(heap, 128), "error: ");
+        borrow msg as &mr in {
+            line = buffer.append(heap, line, buffer.bytes(mr));
+        }
+        borrow line as &lr in {
+            out = text.put_json_string(heap, out, buffer.bytes(lr));
+        }
+        buffer.drop(heap, line);
+        out = text.put(heap, out, "], [\"d\", ");
+        var rl = buffer.append(heap, buffer.empty(heap, 64), "  rule: ");
+        borrow rule as &rr in {
+            rl = buffer.append(heap, rl, buffer.bytes(rr));
+        }
+        borrow rl as &rlr in {
+            out = text.put_json_string(heap, out, buffer.bytes(rlr));
+        }
+        buffer.drop(heap, rl);
+        out = text.put(heap, out, "]]");
+        buffer.drop(heap, msg);
+        buffer.drop(heap, rule);
+        k = k + 1;
+    }
+    out = text.put(heap, out, "]");
+    set_buf(heap, names, ints, texts, "TERMINAL", out);
+    return 0;
+}
+
+// A non-negative number as text.
+pub fn put_nat_buf[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+    return buffer.push_nat(heap, buffer.empty(heap, 16), n);
+}
+
+// What the checks last measured (docs/data/check_*.json), the golden files, the agent prompt: the simple placeholders.
+pub fn checks[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    let (ds, dt) = files.load(heap, io, fs, "docs/data/check_diff.json");
+    borrow ds as &dsr in {
+        borrow mut dt as &!dtw in {
+            let src = buffer.bytes(dsr);
+            let t = contents(dtw);
+            set_buf(heap, names, ints, texts, "N_CIRCUITS", put_nat_buf(heap, json.to_int(src, t, json.get(src, t, 0, "circuits"))));
+            facts.set_text(names, ints, texts, "WORST", json.string_view(src, t, json.get(src, t, 0, "worst")));
+            set_buf(heap, names, ints, texts, "ULP", put_nat_buf(heap, json.to_int(src, t, json.get(src, t, 0, "trig_ulp"))));
+        }
+    }
+    files.unload(heap, ds, dt);
+    let (ts, tt) = files.load(heap, io, fs, "docs/data/check_types.json");
+    borrow ts as &tsr in {
+        borrow mut tt as &!ttw in {
+            let src = buffer.bytes(tsr);
+            let t = contents(ttw);
+            set_buf(heap, names, ints, texts, "FIX_OK", put_nat_buf(heap, json.to_int(src, t, json.get(src, t, 0, "ok"))));
+            set_buf(heap, names, ints, texts, "FIX_ALL", put_nat_buf(heap, json.to_int(src, t, json.get(src, t, 0, "all"))));
+        }
+    }
+    files.unload(heap, ts, tt);
+    // the golden files: one line per circuit
+    let (gold, gg) = files.read_all(heap, fs, "tests/golden/outputs.sha256", 1048576);
+    var count = 0;
+    borrow gold as &gr in {
+        let all = buffer.bytes(gr);
+        let lines = text.line_count(all);
+        var k = 0;
+        while k < lines {
+            if len(util.strip(text.line_at(all, k))) > 0 {
+                count = count + 1;
+            }
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, gold);
+    set_buf(heap, names, ints, texts, "N_GOLDEN", put_nat_buf(heap, count));
+    // the agent prompt, escaped, without its trailing newlines
+    let (prompt, pg) = files.read_all(heap, fs, "docs/agent-prompt.md", 1048576);
+    var esc = buffer.empty(heap, 4096);
+    borrow prompt as &pr in {
+        var all = buffer.bytes(pr);
+        var e = len(all);
+        while e > 0 && int_of(all[e - 1]) == 10 {
+            e = e - 1;
+        }
+        esc = text.put_esc(heap, esc, all[0..e]);
+    }
+    buffer.drop(heap, prompt);
+    set_buf(heap, names, ints, texts, "AGENT_PROMPT", esc);
+    return 0;
+}

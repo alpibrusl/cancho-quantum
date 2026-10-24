@@ -1,0 +1,624 @@
+{
+ "tiles": {
+  "t197": {
+   "kind": "tile",
+   "args": [
+    "Bell pair",
+    "H then CNOT. Two amplitudes of 1/&radic;2 and nothing else, matching Qiskit to the last bit.",
+    "      {{DIAGRAM_BELL}}\n      <pre class=\"code small\">{{t197.x1}}</pre>\n      {{t197.x2}}\n      <pre class=\"code small\">amp 0 = {{t197.x3}}\namp 3 = {{t197.x4}}</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/bell.qc\">Circuit</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/bell.ref\">Reference</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t204": {
+   "kind": "tile",
+   "args": [
+    "A 5-qubit state, 60 gates",
+    "A fixed pseudo-random circuit of H, X, Z, S, T, RZ, CNOT and CZ. Each of its 32 amplitudes is within 2e-16 of Qiskit's.",
+    "      {{t204.x1}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/random5.qc\">Circuit</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/random5.ref\">Reference</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t209": {
+   "kind": "tile",
+   "args": [
+    "GHZ on 10 qubits",
+    "A state of {{t209.x1}} amplitudes with exactly {{t209.x2}} non-zero: |0000000000&rang; and |1111111111&rang;, each {{t209.x3}}. The same circuit on 20 qubits (a million amplitudes, 16 MiB) runs in a fraction of a second.",
+    "      <pre class=\"code small\">{{t209.x4}}\n{{t209.x5}}\n... {{t209.x6}} more cx\nnon-zero: {{t209.x7}}</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/ghz10.qc\">Circuit</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t213": {
+   "kind": "tile",
+   "args": [
+    "Bell pair, 200 shots, typed",
+    "The linear layer: each shot makes two <code>Qubit</code>s, applies gates through borrows, and ends both with <code>measure</code>. Bits that disagreed: <b>{{t213.x1}}</b>. Ones: <b>{{t213.x2}}</b> of 200 (a fact about the seeded sampler; an independent Python copy of the generator gives the same count).",
+    "      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/bell.cho\">Source</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t216": {
+   "kind": "tile",
+   "args": [
+    "Teleportation",
+    "Qubit 0 holds an unknown state; measuring it and its Bell partner <em>consumes</em> both, and two classical bits say which of X and Z to apply to qubit 2. Over 80 different states: <b>{{t216.x1}}</b> failures, all <b>{{t216.x2}}</b> measurement outcomes seen. With the Z correction deleted the same check fails <b>{{t216.x3}}</b> of 80, so the check is not vacuous.",
+    "      {{DIAGRAM_TELEPORT}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/teleport.cho\">Source</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/teleport_unitary.qc\">Unitary half</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t220": {
+   "kind": "tile",
+   "args": [
+    "The same bytes, six ways",
+    "Every one of the {{t220.x1}} circuits runs interpreted and as a compiled cancho function, on Cranelift and LLVM (x86-64) and LLVM aarch64 under <code>qemu-user</code>. All six outputs are byte-identical and match the SHA-256 checked in. The aarch64 run is emulation, not arm64 hardware.",
+    "      <pre class=\"code small\">bell\ncircuit  {{t220.x2}}...\noutput   {{t220.x3}}...\nlibrary  {{t220.x4}}...</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/golden/provenance.json\">Provenance</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md\">Results</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t232": {
+   "kind": "tile",
+   "args": [
+    "Grover search",
+    "Three qubits, {{t232.x1}} gates, two rounds: find the one marked item (101) among 8. Sampling the final state 1000 times gives <b>{{t232.x2}}</b> hits on it, where a blind guess gives about 125. The counts match an independent sampler exactly.",
+    "      {{t232.x3}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/grover3.qc\">Circuit</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/grover3.ref\">Reference</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t239": {
+   "kind": "tile",
+   "args": [
+    "Bernstein–Vazirani, typed",
+    "A hidden 4-bit string is read in one run of the circuit. The simulator samples <code>{{t239.x1}}</code>: the low four bits are always 1011 (the ancilla bit is random). The typed version, with every qubit ended by <code>measure</code>, prints <b>{{t239.x2}}</b>.",
+    "      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff/bernstein_vazirani.qc\">Circuit</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/bernstein_vazirani_typed.cho\">Typed</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t243": {
+   "kind": "tile",
+   "args": [
+    "Toffoli, typed",
+    "Two controls borrowed shared, one target borrowed unique; the truth table (controls then result):",
+    "      <pre class=\"code small\">{{t243.x1}}</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/toffoli_typed.cho\">Source</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t250": {
+   "kind": "tile",
+   "args": [
+    "Noise, checked against the exact answer",
+    "Five channels (bit flip, phase flip, depolarizing, amplitude damping, two-qubit depolarizing), readout error and a gate-noise model, each run as one random operator per run. One run is one noisy outcome; the <em>average</em> of many is the density matrix. Here a Bell pair through depolarizing noise on one qubit: {{t250.x1}} seeded runs per point against the exact curve (1 &minus; p). The largest gap is {{t250.x2:.1f}} standard errors. {{t250.x3}} noisy circuits (up to 3 qubits) were compared to a density-matrix calculation over {{t250.x4}} runs each: worst z-scores {{t250.x5}}. Readout error, which flips the reported bit and not the state, is checked as a binomial (z = {{t250.x6:.1f}} on measured bits, {{t250.x7:.1f}} on samples, {{t250.x8:.1f}} when asymmetric). Doubling a probability on purpose is caught at z = {{t250.x9}}.",
+    "      {{t250.x10}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/src/noise.cho\">Channels</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_noise.py\">Check</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/noise-results.md\">Results</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t258": {
+   "kind": "tile",
+   "args": [
+    "Exact noise: the density matrix",
+    "<code>dm 2</code> keeps the whole density matrix, so one run is the exact answer, not a sample. The same Bell pair through depolarizing noise (p = 1/4) has purity <b>{{t258.x1:.6f}}</b> and trace <b>{{t258.x2:.6f}}</b>; the formula (1&minus;p)&sup2; + p&sup2;/3 gives {{t258.x3:.6f}}. The curve is the purity against p: cancho, Qiskit and the formula agree to {{t258.x4:.0e}}. {{t258.x5}} density-matrix circuits (all channels, every gate, measurement) match Qiskit&rsquo;s DensityMatrix. Up to 10 qubits: the matrix is stored as a state of twice as many.",
+    "      {{t258.x6}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/src/density.cho\">Source</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/diff\">Circuits</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/density-results.md\">Results</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t271": {
+   "kind": "tile",
+   "args": [
+    "Speed: against Qiskit Aer",
+    "The same circuits on {{t271.x1}} qubits, whole process for <code>qsim</code> (start, parse, run) against Aer&rsquo;s <code>run</code> alone. Built with LLVM, <code>qsim</code> runs at {{t271.x2:.1f}}&ndash;{{t271.x3:.1f}}&times; the speed of Aer on one core, and at {{t271.x4:.1f}}&ndash;{{t271.x5:.1f}}&times; the speed of Aer on all four (1 is level; Aer&rsquo;s time divided by ours). Cranelift, the default backend, is 3&ndash;6&times; slower than LLVM, so use <code>--backend llvm</code> for large circuits. A {{t271.x6}}-qubit state takes {{t271.x7:.0f}} MiB of {{t271.x8:.0f}}. The exact density matrix, once the weak spot (7&times; slower than Aer&rsquo;s at 8 qubits), now takes {{t271.x9:.1f}}&times; Aer&rsquo;s time there: its channels are single passes. Written in C with the same loops, three of the kernels run within {{t271.x10:.2f}}&ndash;{{t271.x11:.2f}}&times; of <code>qsim</code>&rsquo;s time on the same compiler backend: the language is not the limit, memory and parallelism are. Minimum of 3&ndash;5 runs on {{t271.x12}}, Qiskit {{t271.x13}}, Aer {{t271.x14}}.",
+    "      {{t271.x15}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/benchmark.md\">Method and results</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/bench_compare.py\">Script</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/data/benchmark.json\">Data</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t284": {
+   "kind": "tile",
+   "args": [
+    "A device-style noise profile",
+    "A JSON file describes a device: a depolarizing rate per qubit for one-qubit gates, per pair for two-qubit gates, and asymmetric readout error per qubit (a true 1 is misread more often than a true 0). <code>tools/qprofile.cho</code> (cancho) turns it into {{t284.x1}} operations and puts them in front of a circuit; <code>qsim</code> still reads only standard input. Below, a 5-qubit GHZ state through <b>example-5q</b> (<em>invented</em> numbers of a realistic size, not a real machine) on the density matrix: fidelity <b>{{t284.x2:.4f}}</b>, purity <b>{{t284.x3:.4f}}</b>. The bars are the exact outcome probabilities (readout error acts on top, when measuring). It matches a Qiskit calculation made from the JSON to 1e-12.",
+    "      {{t284.x4}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/profiles/example_5q.json\">Profile</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tools/qprofile.cho\">Converter</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_profile.py\">Check</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/noise-profile.md\">Format</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t290": {
+   "kind": "tile",
+   "args": [
+    "Idle noise: T1 and T2",
+    "A qubit that waits decays. <code>coher q T1 T2</code> gives it coherence times in nanoseconds; <code>wait q ns</code> idles it, and <code>time1</code> / <code>time2</code> make every gate take time, during which its qubits relax too. The channel is amplitude damping plus dephasing, sampled by trajectories or exact on the density matrix. Below, T1 = {{t290.x1}} &micro;s and T2 = {{t290.x2}} &micro;s: the chance a qubit is still 1, and the coherence of |+&rang;, against waiting time. cancho, <b>Qiskit Aer&rsquo;s own thermal-relaxation channel</b> and the formulas agree to {{t290.x3:.0e}}. {{t290.x4}} idle-noise circuits match Qiskit; a sampled GHZ circuit with gate times matches the exact density matrix within statistics.",
+    "      {{t290.x5}}\n      {{t290.x6}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/src/noise.cho\">Source</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/idle_curve.py\">Curve</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_noise.py\">Check</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/idle-noise.md\">Design</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t296": {
+   "kind": "tile",
+   "args": [
+    "Scheduling: a waiting qubit decays",
+    "<code>sched</code> starts every gate as soon as its qubits are free, and a qubit that finishes early idles (and relaxes) until its partner is ready. Below, qubit 0 starts as 1 and does nothing while a chain of <code>cx</code> gates runs on two other qubits: its chance of still being 1 follows exp(&minus;t/T1) (T1 = {{t296.x1}} &micro;s). Without <code>sched</code> it stays at exactly 1. Six random 14-gate circuits on 4 qubits, with different T1, T2 and gate times per qubit and pair, agree with <b>Qiskit&rsquo;s own ASAP scheduler</b> (for the start times) and Aer&rsquo;s relaxation channel to {{t296.x2:.0e}}; the same circuits without <code>sched</code> are at least {{t296.x3:.0e}} away, so the check can tell. Measurements and noise operations take no time; <code>barrier</code> waits for every qubit, and a <code>sample</code> or the final output implies one.",
+    "      {{t296.x4}}\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/src/noise.cho\">Source</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_schedule.py\">Check</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/idle-noise.md\">Design</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t315": {
+   "kind": "tile",
+   "args": [
+    "A real device's calibration",
+    "The calibration <b>{{t315.x1}}</b> published on {{t315.x2}} (the snapshot that ships with qiskit-ibm-runtime; no account, no live machine) is read into a profile by <code>tools/qcalib.cho</code> (cancho) (below: T1 and T2 in &micro;s, the depolarizing probability p kept for one-qubit gates, readout error 0&rarr;1 and 1&rarr;0; cx time and error). Its T1, T2, gate times, readout and gate errors are all there. One conversion matters: IBM&rsquo;s gate error already contains the decay during the gate, and the simulator adds that decay itself, so it is taken out first (for {{t315.x3}} of {{t315.x4}} pairs the T1/T2 decay alone exceeds the published error, so they get no extra depolarizing noise). {{t315.x5}} numbers were re-derived from the raw file by another route. Two circuits of native gates run through the profile on 7 qubits land within <b>{{t315.x6:.0e}}</b> (trace distance) of Qiskit Aer&rsquo;s noise model built from the same snapshot, while the noise itself moves the state by {{t315.x7:.2f}}&ndash;{{t315.x8:.2f}}; leaving the idle decay out, or using the published error as is, is {{t315.x9:.0f}}&ndash;{{t315.x10:.0f}} times worse.",
+    "      <pre class=\"code small\">{{t315.x11}}</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/profiles/ibm_perth_2024-05-27.json\">Profile</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tools/qcalib.cho\">Importer</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_calibration.py\">Check</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/calibration.md\">Notes</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t320": {
+   "kind": "tile",
+   "args": [
+    "OpenQASM 2.0 in",
+    "<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {{t320.x1}} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {{t320.x2}} of the files <em>Qiskit</em> wrote run; {{t320.x3}} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
+    "      <pre class=\"code small\">OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[2];\nh q[0];\ncx q[0],q[1];\nrz(pi/4) q[1];</pre>\n      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/src/qasm.cho\">Reader</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/qasm\">Files</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/scripts/check_qasm.py\">Check</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t339": {
+   "kind": "tile",
+   "args": [
+    "{{t339.x1}}",
+    "{{t339.x2}}<br><span class=\"rule\">{{t339.x3}}</span>",
+    "      <pre class=\"code small err\">{{t339.x4}}</pre>\n{{t339.x5}}"
+   ],
+   "kw": {}
+  },
+  "t345": {
+   "kind": "tile",
+   "args": [
+    "CNOT with one qubit as both operands",
+    "Accepted by the checker (compiles: <b>{{t345.x1}}</b>), because a unique borrow is a copyable pointer. It stops at run time instead, with a trap (signal {{t345.x2}}, SIGILL, on Linux). Two more ways to the same program are pinned the same way: a copied handle, and two qubits with the same index.",
+    "      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/same_handle_cx.cho\">Fixture</a> <a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m2-results.md\">Why</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t348": {
+   "kind": "tile",
+   "args": [
+    "Forging a qubit",
+    "A <code>pub res struct</code> can be built and taken apart from any module, so &ldquo;only <code>fresh</code> makes qubits&rdquo; is a convention. The page does not hide this: it is a request to the compiler, not a flaw of the simulator.",
+    "      <p class=\"glinks\"><a href=\"https://github.com/alpibrusl/cancho-quantum/blob/main/tests/accept/forged_qubit.cho\">Fixture</a></p>\n"
+   ],
+   "kw": {}
+  },
+  "t367": {
+   "kind": "tile",
+   "args": [
+    "{{t367.x1}}",
+    "{{t367.x2}}",
+    "{{t367.x3}}"
+   ],
+   "kw": {
+    "soon": "True",
+    "badge": "bg"
+   }
+  },
+  "c396": {
+   "kind": "card",
+   "args": [
+    "{{c396.x1}} gates",
+    "One qubit: {{c396.x2}}. Two: {{c396.x3}}. Three: {{c396.x4}}. Angles are exact fractions of &pi;."
+   ],
+   "kw": {}
+  },
+  "c397": {
+   "kind": "card",
+   "args": [
+    "Pure states, measured or sampled",
+    "Up to 20 qubits (16 MiB at 20). Seeded measurement with collapse, and <code>sample N</code> to draw outcomes without collapsing. The same seed gives the same bits on every build."
+   ],
+   "kw": {}
+  },
+  "c398": {
+   "kind": "card",
+   "args": [
+    "Noise, two ways",
+    "{{c398.x1}} channels: {{c398.x2}}; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file or a real device&rsquo;s published calibration; idle decay (T1, T2) while a qubit waits, while a gate runs, or while it waits for a partner (a scheduler). Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."
+   ],
+   "kw": {}
+  },
+  "c399": {
+   "kind": "card",
+   "args": [
+    "Two input formats",
+    "A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; {{c399.x1}} circuits cross-checked with Qiskit&rsquo;s own parser)."
+   ],
+   "kw": {}
+  },
+  "c400": {
+   "kind": "card",
+   "args": [
+    "Algorithms",
+    "Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer."
+   ],
+   "kw": {}
+  },
+  "c401": {
+   "kind": "card",
+   "args": [
+    "A type checker for qubits",
+    "A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. {{c401.x1}} refusal fixtures, and {{c401.x2}} pinned cases the checker still misses."
+   ],
+   "kw": {}
+  }
+ },
+ "static": {
+  "plan": [
+   [
+    "A Qpu capability",
+    "Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.",
+    "Needs the compiler",
+    [
+     [
+      "Tracked in cancho#612",
+      "https://github.com/alpibrusl/cancho/issues/612"
+     ],
+     [
+      "Plan",
+      "https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md"
+     ]
+    ]
+   ],
+   [
+    "Refuse CNOT(q, q) at check time",
+    "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.",
+    "Needs the compiler",
+    [
+     [
+      "Tracked in cancho#610",
+      "https://github.com/alpibrusl/cancho/issues/610"
+     ],
+     [
+      "Design PR #608",
+      "https://github.com/alpibrusl/cancho/pull/608"
+     ]
+    ]
+   ],
+   [
+    "Private constructors",
+    "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.",
+    "Needs the compiler",
+    [
+     [
+      "Tracked in cancho#611",
+      "https://github.com/alpibrusl/cancho/issues/611"
+     ],
+     [
+      "Design PR #608",
+      "https://github.com/alpibrusl/cancho/pull/608"
+     ]
+    ]
+   ],
+   [
+    "The rest of OpenQASM",
+    "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).",
+    "Planned",
+    [
+     [
+      "Reader",
+      "https://github.com/alpibrusl/cancho-quantum/blob/main/src/qasm.cho"
+     ]
+    ]
+   ],
+   [
+    "Crosstalk and richer gate noise",
+    "Noise that depends on the gate type, crosstalk between neighbouring qubits, leakage and non-Pauli two-qubit noise are not built; the model is depolarizing noise plus idle decay, at a rate per qubit or pair. A Toffoli has neither a duration nor a noise rate.",
+    "Planned",
+    [
+     [
+      "Idle noise",
+      "https://github.com/alpibrusl/cancho-quantum/blob/main/docs/idle-noise.md"
+     ]
+    ]
+   ],
+   [
+    "Density matrices past 10 qubits",
+    "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.",
+    "Later",
+    []
+   ],
+   [
+    "More devices, live calibration",
+    "One snapshot of one 7-qubit machine (2024) is used, taken from a file. Fetching a current calibration from a service, other devices, and reading the pulse-level durations are not built.",
+    "Planned",
+    [
+     [
+      "Importer",
+      "https://github.com/alpibrusl/cancho-quantum/blob/main/tools/qcalib.cho"
+     ]
+    ]
+   ],
+   [
+    "A second reference, Cirq",
+    "Qiskit is the only reference so far. A second one would catch a convention both share.",
+    "Planned",
+    []
+   ],
+   [
+    "Real arm64 hardware",
+    "The aarch64 result is emulation. A run on a real arm64 machine is still owed.",
+    "Planned",
+    [
+     [
+      "Results",
+      "https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md"
+     ]
+    ]
+   ],
+   [
+    "A cloud quantum service",
+    "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.",
+    "Later",
+    []
+   ],
+   [
+    "Adjoint and controlled gates",
+    "Not possible today: cancho has no function values, so a gate cannot be passed to a transform. Circuits stay data.",
+    "Not possible yet",
+    []
+   ],
+   [
+    "A GPU backend",
+    "Out of scope until cancho-gpu exists. A state vector of 20 qubits is fine on one CPU core.",
+    "Out of scope",
+    []
+   ]
+  ],
+  "why": [
+   [
+    "clone_qubit",
+    "No cloning",
+    "Measuring the same qubit twice. The first <code>measure</code> consumes it."
+   ],
+   [
+    "drop_qubit",
+    "No dropping",
+    "A gate borrows the qubit and hands it back, so the function still owes a consumption."
+   ],
+   [
+    "use_after_measure",
+    "Measurement collapses",
+    "After <code>measure</code> there is no qubit left to borrow."
+   ],
+   [
+    "escape_borrow",
+    "No escaping a borrow",
+    "A reference to a qubit may not outlive the block that borrowed it."
+   ],
+   [
+    "measure_in_loop",
+    "One measurement per qubit",
+    "<code>measure</code> inside a loop consumes on the first pass and has nothing on the second."
+   ],
+   [
+    "two_mutable_borrows",
+    "One gate at a time",
+    "No second unique borrow of a qubit while a gate on it is in flight."
+   ],
+   [
+    "read_qubit_index",
+    "No peeking at identity",
+    "The index of an owned qubit cannot be read out of it."
+   ],
+   [
+    "control_written",
+    "Control is read, target is written",
+    "A control borrowed shared cannot stand where the operand to change is expected."
+   ]
+  ],
+  "groups": [
+   [
+    "Circuits and algorithms",
+    "Gates, states and the textbook algorithms, each diffed against Qiskit.",
+    [
+     "Bell pair",
+     "A 5-qubit state, 60 gates",
+     "GHZ on 10 qubits",
+     "Grover search",
+     "Bernstein–Vazirani, typed"
+    ]
+   ],
+   [
+    "The typed qubit layer",
+    "The same circuits written with <code>Qubit</code> values the compiler tracks.",
+    [
+     "Bell pair, 200 shots, typed",
+     "Teleportation",
+     "Toffoli, typed"
+    ]
+   ],
+   [
+    "Noise",
+    "Two ways to simulate it: sampled runs, and the exact density matrix.",
+    [
+     "Noise, checked against the exact answer",
+     "Exact noise: the density matrix",
+     "A device-style noise profile",
+     "Idle noise: T1 and T2",
+     "Scheduling: a waiting qubit decays",
+     "A real device's calibration"
+    ]
+   ],
+   [
+    "Input formats",
+    "A plain-text circuit format and OpenQASM 2.0.",
+    [
+     "OpenQASM 2.0 in"
+    ]
+   ],
+   [
+    "Speed",
+    "Timed against Qiskit Aer on the same circuits.",
+    [
+     "Speed: against Qiskit Aer"
+    ]
+   ],
+   [
+    "Reproducibility",
+    "The same bytes on every build.",
+    [
+     "The same bytes, six ways"
+    ]
+   ]
+  ],
+  "one_q": [
+   [
+    "h",
+    "H",
+    "h 0"
+   ],
+   [
+    "x",
+    "X",
+    "x 0"
+   ],
+   [
+    "y",
+    "Y",
+    "y 0"
+   ],
+   [
+    "z",
+    "Z",
+    "z 0"
+   ],
+   [
+    "s",
+    "S",
+    "s 0"
+   ],
+   [
+    "sdg",
+    "S†",
+    "sdg 0"
+   ],
+   [
+    "t",
+    "T",
+    "t 0"
+   ],
+   [
+    "tdg",
+    "T†",
+    "tdg 0"
+   ],
+   [
+    "rx",
+    "Rx",
+    "rx 0 1 3"
+   ],
+   [
+    "ry",
+    "Ry",
+    "ry 0 1 3"
+   ],
+   [
+    "rz",
+    "Rz",
+    "rz 0 1 3"
+   ],
+   [
+    "p",
+    "P",
+    "p 0 1 3"
+   ]
+  ],
+  "two_q": [
+   [
+    "cx",
+    "CNOT",
+    "cx 0 1"
+   ],
+   [
+    "cz",
+    "CZ",
+    "cz 0 1"
+   ],
+   [
+    "cp",
+    "controlled phase",
+    "cp 0 1 1 4"
+   ],
+   [
+    "swap",
+    "SWAP",
+    "swap 0 1"
+   ]
+  ],
+  "three_q": [
+   [
+    "ccx",
+    "Toffoli",
+    "ccx 0 1 2"
+   ]
+  ],
+  "chans": [
+   [
+    "bitflip",
+    "bit flip",
+    "bitflip 0 1 3"
+   ],
+   [
+    "phaseflip",
+    "phase flip",
+    "phaseflip 0 1 3"
+   ],
+   [
+    "depol",
+    "depolarizing",
+    "depol 0 1 3"
+   ],
+   [
+    "ampdamp",
+    "amplitude damping",
+    "ampdamp 0 1 3"
+   ],
+   [
+    "depol2",
+    "two-qubit depolarizing",
+    "depol2 0 1 1 3"
+   ]
+  ],
+  "extras_ops": [
+   [
+    "readout error",
+    "readout 1 4"
+   ],
+   [
+    "a gate-noise model",
+    "model1 1 20"
+   ],
+   [
+    "a two-qubit gate-noise model",
+    "model2 1 20"
+   ],
+   [
+    "per-qubit gate error",
+    "gate1err 0 1 20"
+   ],
+   [
+    "per-pair gate error",
+    "gate2err 0 1 1 20"
+   ],
+   [
+    "asymmetric readout error",
+    "readerr 0 1 20 1 10"
+   ],
+   [
+    "idle noise (T1, T2)",
+    "coher 0 50000 70000"
+   ],
+   [
+    "gate durations",
+    "time2 300\ndur2 0 1 400\ndur1 0 36"
+   ],
+   [
+    "waiting",
+    "coher 0 50000 70000\nwait 0 1000"
+   ],
+   [
+    "scheduling",
+    "sched\nbarrier"
+   ]
+  ]
+ }
+}

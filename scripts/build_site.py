@@ -175,19 +175,21 @@ def build(cancho):
     gap_code, _ = t.accept_run("same_handle_cx")
 
     # ---- gates ------------------------------------------------------------------
-    d = sh([sys.executable, "scripts/check_diff.py", "--exe", t.qsim, "--compiler", cancho]).stdout
-    worst = re.search(r"worst amplitude error over (\d+) circuits: ([0-9.e+-]+)", d)
-    ulp = re.search(r"libm over the `trig` lines: (\d+) ulp", d)
-    ty = sh([sys.executable, "scripts/check_types.py", "--compiler", cancho]).stdout
-    fx = re.search(r"(\d+) of (\d+) fixtures behave as stated", ty)
+    # What `scripts/check_diff.py` and `check_types.py` last measured (they write these files; this does not re-run them).
+    cdiff = json.load(open(os.path.join(DOCS, "data", "check_diff.json")))
+    ctypes = json.load(open(os.path.join(DOCS, "data", "check_types.json")))
+    d = "".join(f"ok   {name:18s} worst {w}\n" for name, w in cdiff["rows"])
+    worst = (str(cdiff["circuits"]), cdiff["worst"])
+    ulp = (str(cdiff["trig_ulp"]),)
+    fx = (str(ctypes["ok"]), str(ctypes["all"]))
     golden = [l for l in open(os.path.join(ROOT, "tests", "golden", "outputs.sha256")) if l.strip()]
     prov = json.load(open(os.path.join(ROOT, "tests", "golden", "provenance.json")))
 
     P["AGENT_PROMPT"] = esc(open(os.path.join(DOCS, "agent-prompt.md")).read().rstrip("\n"))
-    P["N_CIRCUITS"] = worst.group(1)
-    P["WORST"] = worst.group(2)
-    P["ULP"] = ulp.group(1)
-    P["FIX_OK"], P["FIX_ALL"] = fx.group(1), fx.group(2)
+    P["N_CIRCUITS"] = worst[0]
+    P["WORST"] = worst[1]
+    P["ULP"] = ulp[0]
+    P["FIX_OK"], P["FIX_ALL"] = fx
     P["N_GOLDEN"] = str(len(golden))
 
     # ---- gallery: supported ----------------------------------------------------
@@ -264,19 +266,21 @@ def build(cancho):
     ratio = [v[bn]["aer_1thread"] / v[bn]["qsim_llvm"] for v in bm["workloads"].values()]
     ratio4 = [v[bn]["aer_4threads"] / v[bn]["qsim_llvm"] for v in bm["workloads"].values()]
     dm8 = bm["noisy"]["density_matrix"]["8"]
+    kb = json.load(open(os.path.join(DOCS, "data", "benchmark_kernels.json")))
+    kr = [r["qsim_llvm"] / r["clang_naive"] for r in kb["workloads"].values()]
     sup.append(tile("Speed: against Qiskit Aer",
-        f"The same circuits on {bn} qubits, whole process for <code>qsim</code> (start, parse, run) against Aer&rsquo;s <code>run</code> alone. Built with LLVM, <code>qsim</code> runs at {min(ratio):.1f}&ndash;{max(ratio):.1f}&times; the speed of Aer on one core, and at {min(ratio4):.1f}&ndash;{max(ratio4):.1f}&times; the speed of Aer on all four (1 is level; Aer&rsquo;s time divided by ours). Cranelift, the default backend, is 3&ndash;6&times; slower than LLVM, so use <code>--backend llvm</code> for large circuits. A {bn}-qubit state takes {bm['memory_mib']['qsim']:.0f} MiB of {bm['memory_mib']['state_vector_mib']:.0f}. The exact density matrix is the weak spot: at 8 qubits it is {dm8['qsim_llvm'] / dm8['aer_density_matrix_1thread']:.0f}&times; slower than Aer&rsquo;s. Minimum of 3&ndash;5 runs on {esc(bm['machine'])}, Qiskit {esc(bm['versions']['qiskit'])}, Aer {esc(bm['versions']['qiskit_aer'])}.",
+        f"The same circuits on {bn} qubits, whole process for <code>qsim</code> (start, parse, run) against Aer&rsquo;s <code>run</code> alone. Built with LLVM, <code>qsim</code> runs at {min(ratio):.1f}&ndash;{max(ratio):.1f}&times; the speed of Aer on one core, and at {min(ratio4):.1f}&ndash;{max(ratio4):.1f}&times; the speed of Aer on all four (1 is level; Aer&rsquo;s time divided by ours). Cranelift, the default backend, is 3&ndash;6&times; slower than LLVM, so use <code>--backend llvm</code> for large circuits. A {bn}-qubit state takes {bm['memory_mib']['qsim']:.0f} MiB of {bm['memory_mib']['state_vector_mib']:.0f}. The exact density matrix, once the weak spot (7&times; slower than Aer&rsquo;s at 8 qubits), now takes {dm8['qsim_llvm'] / dm8['aer_density_matrix_1thread']:.1f}&times; Aer&rsquo;s time there: its channels are single passes. Written in C with the same loops, three of the kernels run within {min(kr):.2f}&ndash;{max(kr):.2f}&times; of <code>qsim</code>&rsquo;s time on the same compiler backend: the language is not the limit, memory and parallelism are. Minimum of 3&ndash;5 runs on {esc(bm['machine'])}, Qiskit {esc(bm['versions']['qiskit'])}, Aer {esc(bm['versions']['qiskit_aer'])}.",
         f'      {svgs.bench_chart(groups, [("q_l", "qsim LLVM"), ("q_c", "qsim Cranelift"), ("a1", "Aer 1 thread"), ("a4", "Aer 4 threads")], f"Time to run five circuits on {bn} qubits, qsim built with LLVM and Cranelift against Qiskit Aer on one and four threads, on a log axis")}\n'
         + links(("Method and results", blob("docs/benchmark.md")), ("Script", blob("scripts/bench_compare.py")), ("Data", blob("docs/data/benchmark.json")))))
-    prof_json = json.load(open(os.path.join(ROOT, "profiles", "example_5q.json")))
-    prof_circuit = tools_lib.apply(prof_json, open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read())
+    prof_text = open(os.path.join(ROOT, "profiles", "example_5q.json")).read()
+    prof_circuit = tools_lib.run("qprofile", prof_text + "\n---\n" + open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read())
     pr_out = subprocess.run([t.qsim], input=prof_circuit, capture_output=True, text=True).stdout.splitlines()
     pr_prob = {int(l.split()[1], 2): float(l.split()[2]) for l in pr_out if l.startswith("prob ")}
     pr_rho = {(int(l.split()[1]), int(l.split()[2])): float(l.split()[3]) for l in pr_out if l.startswith("rho ")}
     pr_purity = float(next(l.split()[1] for l in pr_out if l.startswith("purity ")))
     pr_fid = (pr_rho[(0, 0)] + pr_rho[(31, 31)] + 2 * pr_rho[(0, 31)]) / 2
     pr_amps = {i: (math.sqrt(v), 0.0) for i, v in pr_prob.items()}
-    n_ops = len(tools_lib.operations(prof_json))
+    n_ops = len([l for l in tools_lib.run("qprofile", prof_text).splitlines() if l])
     sup.append(tile("A device-style noise profile",
         f"A JSON file describes a device: a depolarizing rate per qubit for one-qubit gates, per pair for two-qubit gates, and asymmetric readout error per qubit (a true 1 is misread more often than a true 0). <code>tools/qprofile.cho</code> (cancho) turns it into {n_ops} operations and puts them in front of a circuit; <code>qsim</code> still reads only standard input. Below, a 5-qubit GHZ state through <b>example-5q</b> (<em>invented</em> numbers of a realistic size, not a real machine) on the density matrix: fidelity <b>{pr_fid:.4f}</b>, purity <b>{pr_purity:.4f}</b>. The bars are the exact outcome probabilities (readout error acts on top, when measuring). It matches a Qiskit calculation made from the JSON to 1e-12.",
         f'      {bars_svg(5, pr_amps, "Exact probability of each of the 32 outcomes of a five-qubit GHZ state under the example noise profile: the all-zeros and all-ones outcomes dominate, with small leakage into neighbours")}\n'
@@ -624,12 +628,14 @@ def extras(t, P, diff_stdout):
     }
 
 
-def render(cancho):
+def render(cancho, dump=None):
     tpl = open(os.path.join(DOCS, "index.template.html")).read()
     P = build(cancho)
     t, d = P.pop("_t"), P.pop("_diff")
     files = extras(t, P, d)
     P["SVG_CSS"] = SVG_CSS
+    if dump:
+        json.dump(P, open(dump, "w"), indent=1, sort_keys=True)
     for k, v in P.items():
         tpl = tpl.replace("{{" + k + "}}", v)
     left = re.findall(r"\{\{[A-Z_]+\}\}", tpl)
@@ -638,12 +644,46 @@ def render(cancho):
     return tpl, files
 
 
+class Recorder:
+    """With --transcript, remember every command the builder runs (argv, stdin) and what it printed, so that
+    `tools/site/` can replay the same build without running anything (and be compared with this one)."""
+
+    def __init__(self):
+        self.calls = {}
+        self.real = subprocess.run
+
+    def norm(self, cmd):
+        out = []
+        for c in cmd:
+            c = str(c)
+            c = re.sub(r"/tmp/[^/ ]*(site|qprofile|qcalib|qcconv)-[^/ ]*", "$TMP", c)
+            c = re.sub(r"^.*/(cancho)$", r"\1", c)
+            if c == sys.executable:
+                c = "python3"
+            out.append(c)
+        return out
+
+    def run(self, cmd, *a, **kw):
+        r = self.real(cmd, *a, **kw)
+        key = "\x01".join(self.norm(cmd)) + "\x02" + (kw.get("input") or "")
+        self.calls[key] = {"rc": r.returncode, "out": r.stdout if isinstance(r.stdout, str) else "", "err": r.stderr if isinstance(r.stderr, str) else ""}
+        return r
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--transcript", help="write every command run, and its output, to this JSON file")
+    ap.add_argument("--dump", help="write every placeholder's value to this JSON file")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--compiler", default=os.environ.get("CANCHO", "cancho"))
     args = ap.parse_args()
-    out, files = render(args.compiler)
+    rec = None
+    if args.transcript:
+        rec = Recorder()
+        subprocess.run = rec.run
+    out, files = render(args.compiler, args.dump)
+    if rec:
+        json.dump(rec.calls, open(args.transcript, "w"))
     files[os.path.join(DOCS, "index.html")] = out
     stale = [p for p, v in files.items() if not os.path.exists(p) or open(p).read() != v]
     if args.check:
