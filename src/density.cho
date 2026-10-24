@@ -9,6 +9,7 @@ import qc.profile;
 import qc.reader;
 import qc.state;
 import std.io;
+import std.math;
 
 // The exact way to simulate noise: keep the density matrix rho (2^n by 2^n)
 // and apply each operation as rho -> U rho U^dagger, each channel as
@@ -40,7 +41,7 @@ import std.io;
 fn mix1[&s](st: &!s [float], n: int, q: int, a: float, b: float, c: float, d: float, e: float, f: float) -> [] int {
     gates.in_range(n, q);
     let rbit = 1 << q;
-    let cbit = 1 << (q + n);
+    let cbit = 1 << q + n;
     let total = state.amplitudes_for(2 * n);
     var i = 0;
     while i < total {
@@ -129,7 +130,7 @@ fn channel2[&s](st: &!s [float], n: int, a: int, b: int, p: float) -> [] int {
     let share = 4.0 * p / 15.0;
     let abit = 1 << a;
     let bbit = 1 << b;
-    let mask = abit | bbit | (abit << n) | (bbit << n);
+    let mask = abit | bbit | abit << n | bbit << n;
     let total = state.amplitudes_for(2 * n);
     var i = 0;
     while i < total {
@@ -140,7 +141,7 @@ fn channel2[&s](st: &!s [float], n: int, a: int, b: int, p: float) -> [] int {
                 var tr = 0.0;
                 var r = 0;
                 while r < 4 {
-                    let row = (r & 1) * abit + (r / 2) * bbit;
+                    let row = (r & 1) * abit + r / 2 * bbit;
                     tr = tr + st[2 * (i + row + (row << n)) + part];
                     r = r + 1;
                 }
@@ -148,8 +149,8 @@ fn channel2[&s](st: &!s [float], n: int, a: int, b: int, p: float) -> [] int {
                 while r < 4 {
                     var c = 0;
                     while c < 4 {
-                        let row = (r & 1) * abit + (r / 2) * bbit;
-                        let col = (c & 1) * abit + (c / 2) * bbit;
+                        let row = (r & 1) * abit + r / 2 * bbit;
+                        let col = (c & 1) * abit + c / 2 * bbit;
                         let k = 2 * (i + row + (col << n)) + part;
                         if r == c {
                             st[k] = lam * st[k] + share * tr;
@@ -168,47 +169,195 @@ fn channel2[&s](st: &!s [float], n: int, a: int, b: int, p: float) -> [] int {
     return 0;
 }
 
-// One-qubit unitaries by word: the gate on the rows, its conjugate on the columns.
+// A one-qubit gate on rho is the gate on the rows and its conjugate on the columns. Done as two passes over the whole
+// matrix (what `gates.cho` does on the vector of 2n qubits) it streams the matrix twice; each 2 x 2 block (row bit r,
+// column bit c: x_rc) is independent of the others, so these do both in one pass, with the same arithmetic in the same
+// order, entry by entry, as the two passes: the result is bit for bit the same.
+
+// diag(r0, r1) on the rows, diag(c0, c1) on the columns.
+fn both_diagonal[&s](st: &!s [float], n: int, q: int, r0: complex.Complex, r1: complex.Complex, c0: complex.Complex, c1: complex.Complex) -> [] int {
+    gates.in_range(n, q);
+    let rbit = 1 << q;
+    let cbit = 1 << q + n;
+    let total = state.amplitudes_for(2 * n);
+    var i = 0;
+    while i < total {
+        if i & rbit == 0 && i & cbit == 0 {
+            state.put(st, i, complex.mul(complex.mul(state.get(st, i), r0), c0));
+            state.put(st, i | cbit, complex.mul(complex.mul(state.get(st, i | cbit), r0), c1));
+            state.put(st, i | rbit, complex.mul(complex.mul(state.get(st, i | rbit), r1), c0));
+            state.put(st, i | rbit | cbit, complex.mul(complex.mul(state.get(st, i | rbit | cbit), r1), c1));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// X on the rows and on the columns: (r, c) -> (1 - r, 1 - c).
+fn both_x[&s](st: &!s [float], n: int, q: int) -> [] int {
+    gates.in_range(n, q);
+    let rbit = 1 << q;
+    let cbit = 1 << q + n;
+    let total = state.amplitudes_for(2 * n);
+    var i = 0;
+    while i < total {
+        if i & rbit == 0 && i & cbit == 0 {
+            let x00 = state.get(st, i);
+            let x01 = state.get(st, i | cbit);
+            state.put(st, i, state.get(st, i | rbit | cbit));
+            state.put(st, i | cbit, state.get(st, i | rbit));
+            state.put(st, i | rbit, x01);
+            state.put(st, i | rbit | cbit, x00);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// H on the rows and on the columns.
+fn both_hadamard[&s](st: &!s [float], n: int, q: int) -> [] int {
+    gates.in_range(n, q);
+    let rbit = 1 << q;
+    let cbit = 1 << q + n;
+    let total = state.amplitudes_for(2 * n);
+    let r = 1.0 / sqrt(2.0);
+    var i = 0;
+    while i < total {
+        if i & rbit == 0 && i & cbit == 0 {
+            let x00 = state.get(st, i);
+            let x01 = state.get(st, i | cbit);
+            let x10 = state.get(st, i | rbit);
+            let x11 = state.get(st, i | rbit | cbit);
+            let t00 = complex.scale(complex.add(x00, x10), r);
+            let t10 = complex.scale(complex.sub(x00, x10), r);
+            let t01 = complex.scale(complex.add(x01, x11), r);
+            let t11 = complex.scale(complex.sub(x01, x11), r);
+            state.put(st, i, complex.scale(complex.add(t00, t01), r));
+            state.put(st, i | cbit, complex.scale(complex.sub(t00, t01), r));
+            state.put(st, i | rbit, complex.scale(complex.add(t10, t11), r));
+            state.put(st, i | rbit | cbit, complex.scale(complex.sub(t10, t11), r));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// [[a, b], [c, d]] on the rows and [[a2, b2], [c2, d2]] on the columns.
+fn both_unitary[&s](st: &!s [float], n: int, q: int, a: complex.Complex, b: complex.Complex, c: complex.Complex, d: complex.Complex, a2: complex.Complex, b2: complex.Complex, c2: complex.Complex, d2: complex.Complex) -> [] int {
+    gates.in_range(n, q);
+    let rbit = 1 << q;
+    let cbit = 1 << q + n;
+    let total = state.amplitudes_for(2 * n);
+    var i = 0;
+    while i < total {
+        if i & rbit == 0 && i & cbit == 0 {
+            let x00 = state.get(st, i);
+            let x01 = state.get(st, i | cbit);
+            let x10 = state.get(st, i | rbit);
+            let x11 = state.get(st, i | rbit | cbit);
+            let t00 = complex.add(complex.mul(a, x00), complex.mul(b, x10));
+            let t10 = complex.add(complex.mul(c, x00), complex.mul(d, x10));
+            let t01 = complex.add(complex.mul(a, x01), complex.mul(b, x11));
+            let t11 = complex.add(complex.mul(c, x01), complex.mul(d, x11));
+            state.put(st, i, complex.add(complex.mul(a2, t00), complex.mul(b2, t01)));
+            state.put(st, i | cbit, complex.add(complex.mul(c2, t00), complex.mul(d2, t01)));
+            state.put(st, i | rbit, complex.add(complex.mul(a2, t10), complex.mul(b2, t11)));
+            state.put(st, i | rbit | cbit, complex.add(complex.mul(c2, t10), complex.mul(d2, t11)));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// CX with control `a`, target `b` on the rows and on the columns (a + n, b + n): a permutation, so any order is exact.
+fn both_cx[&s](st: &!s [float], n: int, a: int, b: int) -> [] int {
+    gates.distinct(n, a, b);
+    let crow = 1 << a;
+    let ccol = 1 << a + n;
+    let trow = 1 << b;
+    let tcol = 1 << b + n;
+    let total = state.amplitudes_for(2 * n);
+    var i = 0;
+    while i < total {
+        if i & trow == 0 && i & tcol == 0 && (i & crow != 0 || i & ccol != 0) {
+            var x00 = state.get(st, i);
+            var x01 = state.get(st, i | tcol);
+            var x10 = state.get(st, i | trow);
+            var x11 = state.get(st, i | trow | tcol);
+            if i & crow != 0 {
+                let t0 = x00;
+                let t1 = x01;
+                x00 = x10;
+                x01 = x11;
+                x10 = t0;
+                x11 = t1;
+            }
+            if i & ccol != 0 {
+                let t0 = x00;
+                let t1 = x10;
+                x00 = x01;
+                x10 = x11;
+                x01 = t0;
+                x11 = t1;
+            }
+            state.put(st, i, x00);
+            state.put(st, i | tcol, x01);
+            state.put(st, i | trow, x10);
+            state.put(st, i | trow | tcol, x11);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One-qubit unitaries by word: the gate on the rows, its conjugate on the columns. The matrices are those of `gates.cho`.
 fn gate1[&s](st: &!s [float], n: int, w: int, q: int, theta: float) -> [] int {
     gates.in_range(n, q);
-    let m = 2 * n;
-    let c = q + n;
+    let one = complex.make(1.0, 0.0);
+    let minus_one = complex.make(0.0 - 1.0, 0.0);
+    let i = complex.make(0.0, 1.0);
+    let minus_i = complex.make(0.0, 0.0 - 1.0);
+    let o = complex.zero();
     if w == 104 {
-        gates.h(st, m, q);
-        gates.h(st, m, c);
+        both_hadamard(st, n, q);
     } else if w == 120 {
-        gates.x(st, m, q);
-        gates.x(st, m, c);
+        both_x(st, n, q);
     } else if w == 121 {
-        gates.y(st, m, q);
-        gates.unitary(st, m, c, complex.zero(), complex.make(0.0, 1.0), complex.make(0.0, 0.0 - 1.0), complex.zero());
+        both_unitary(st, n, q, o, minus_i, i, o, o, i, minus_i, o);
     } else if w == 122 {
-        gates.z(st, m, q);
-        gates.z(st, m, c);
+        both_diagonal(st, n, q, one, minus_one, one, minus_one);
     } else if w == 115 {
-        gates.s(st, m, q);
-        gates.sdg(st, m, c);
+        both_diagonal(st, n, q, one, i, one, minus_i);
     } else if w == 7562343 {
-        gates.sdg(st, m, q);
-        gates.s(st, m, c);
+        both_diagonal(st, n, q, one, minus_i, one, i);
     } else if w == 116 {
-        gates.t(st, m, q);
-        gates.tdg(st, m, c);
+        let a = gates.pi() / 4.0;
+        both_diagonal(st, n, q, one, complex.make(math.cos(a), math.sin(a)), one, complex.make(math.cos(a), 0.0 - math.sin(a)));
     } else if w == 7627879 {
-        gates.tdg(st, m, q);
-        gates.t(st, m, c);
+        let a = gates.pi() / 4.0;
+        both_diagonal(st, n, q, one, complex.make(math.cos(a), 0.0 - math.sin(a)), one, complex.make(math.cos(a), math.sin(a)));
     } else if w == 29304 {
-        gates.rx(st, m, q, theta);
-        gates.rx(st, m, c, 0.0 - theta);
+        let half = theta * 0.5;
+        let half2 = (0.0 - theta) * 0.5;
+        let c = complex.make(math.cos(half), 0.0);
+        let m = complex.make(0.0, 0.0 - math.sin(half));
+        let c2 = complex.make(math.cos(half2), 0.0);
+        let m2 = complex.make(0.0, 0.0 - math.sin(half2));
+        both_unitary(st, n, q, c, m, m, c, c2, m2, m2, c2);
     } else if w == 29305 {
-        gates.ry(st, m, q, theta);
-        gates.ry(st, m, c, theta);
+        let half = theta * 0.5;
+        let cs = math.cos(half);
+        let sn = math.sin(half);
+        let c = complex.make(cs, 0.0);
+        let mn = complex.make(0.0 - sn, 0.0);
+        let pn = complex.make(sn, 0.0);
+        both_unitary(st, n, q, c, mn, pn, c, c, mn, pn, c);
     } else if w == 29306 {
-        gates.rz(st, m, q, theta);
-        gates.rz(st, m, c, 0.0 - theta);
+        let half = theta * 0.5;
+        let half2 = (0.0 - theta) * 0.5;
+        both_diagonal(st, n, q, complex.make(math.cos(half), 0.0 - math.sin(half)), complex.make(math.cos(half), math.sin(half)), complex.make(math.cos(half2), 0.0 - math.sin(half2)), complex.make(math.cos(half2), math.sin(half2)));
     } else {
-        gates.p(st, m, q, theta);
-        gates.p(st, m, c, 0.0 - theta);
+        both_diagonal(st, n, q, one, complex.make(math.cos(theta), math.sin(theta)), one, complex.make(math.cos(0.0 - theta), math.sin(0.0 - theta)));
     }
     return 0;
 }
@@ -332,8 +481,7 @@ pub fn run[&i, &s, &r, &b, &q](io: &!i Io, st: &!s [float], n: int, rng: &!r [in
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
             before2(st, n, a, b, rng);
-            gates.cx(st, 2 * n, a, b);
-            gates.cx(st, 2 * n, a + n, b + n);
+            both_cx(st, n, a, b);
             post2a = a;
             post2b = b;
         } else if w == 25466 {
