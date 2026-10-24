@@ -341,16 +341,13 @@ fn run_qasm[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int
 }
 
 // A density-matrix circuit, after its `dm <n>` header (`density.cho`). The matrix of
-// n qubits is a vector of 2n, so n is at most 10; two scratch matrices of the same
-// size hold the channel arithmetic.
+// n qubits is a vector of 2n, so n is at most 10; every channel is applied in place.
 fn run_dm[&h, &i](heap: &!h Heap, io: &!i Io, n: int) -> [heap, io_read, io_write] int {
     if n < 1 || n > 10 {
         return 2;
     }
     let size = state.floats_for(2 * n);
     let amp = box_slice(heap, size, 0.0);
-    let tmp = box_slice(heap, size, 0.0);
-    let acc = box_slice(heap, size, 0.0);
     var status = 0;
     region r {
         let rng = alloc_slice[r](profile.size(), 0);
@@ -359,18 +356,12 @@ fn run_dm[&h, &i](heap: &!h Heap, io: &!i Io, n: int) -> [heap, io_read, io_writ
         let quiet = alloc_slice[r](1, 0);
         quiet[0] = 0;
         borrow mut amp as &!w in {
-            borrow mut tmp as &!x in {
-                borrow mut acc as &!y in {
-                    let st = contents(w);
-                    st[0] = 1.0;
-                    status = density.run(io, st, contents(x), contents(y), n, rng, scratch, quiet);
-                }
-            }
+            let st = contents(w);
+            st[0] = 1.0;
+            status = density.run(io, st, n, rng, scratch, quiet);
         }
     }
     unbox_slice(heap, amp);
-    unbox_slice(heap, tmp);
-    unbox_slice(heap, acc);
     return status;
 }
 
