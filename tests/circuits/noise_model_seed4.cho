@@ -4,29 +4,34 @@ import qc.dump;
 import qc.gates;
 import qc.measure;
 import qc.noise;
+import qc.profile;
 import qc.state;
 import std.io;
 
 // The circuit. `cancho ids` gives this function's body its identity.
 fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch: &!b [byte]) -> [io_write] int {
     rng[0] = 4;
+    profile.set_slot(rng, 4, 1, 10);
+    profile.set_slot(rng, 6, 1, 8);
     gates.h(st, 3, 0);
-    noise.depol(st, 3, 0, noise.prob(1, 10), rng);
+    noise.after1(st, 3, 0, rng);
     gates.cx(st, 3, 0, 1);
-    noise.depol2(st, 3, 0, 1, noise.prob(1, 8), rng);
+    noise.after2(st, 3, 0, 1, rng);
     gates.cx(st, 3, 1, 2);
-    noise.depol2(st, 3, 1, 2, noise.prob(1, 8), rng);
+    noise.after2(st, 3, 1, 2, rng);
     gates.ry(st, 3, 2, gates.angle(1, 3));
-    noise.depol(st, 3, 2, noise.prob(1, 10), rng);
-    dump.measurement(io, 0, noise.readout(measure.measure(st, 3, 0, rng), noise.prob(1, 5), rng));
-    dump.samples_with(io, st, 3, rng, 200, noise.prob(1, 5));
+    noise.after1(st, 3, 2, rng);
+    profile.set_slot(rng, 2, 1, 5);
+    dump.measurement(io, 0, noise.readout(measure.measure(st, 3, 0, rng), 0, rng));
+    dump.samples(io, st, 3, rng, 200);
     return 0;
 }
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     let amp = box_slice(heap, state.floats_for(3), 0.0);
     region r {
-        let rng = alloc_slice[r](1, 88172645463325252);
+        let rng = alloc_slice[r](profile.size(), 0);
+        profile.init(rng, 88172645463325252);
         let scratch = alloc_slice[r](24, byte_of(0));
         borrow mut amp as &!w in {
             let st = contents(w);

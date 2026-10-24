@@ -1,6 +1,7 @@
 module qc.measure;
 
 import qc.complex;
+import qc.profile;
 import qc.state;
 
 // Measurement with a seeded sampler. Entropy is a value, never ambient
@@ -77,7 +78,7 @@ pub fn measure[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] in
 // the sampler: the outcome is the first basis state whose running total of
 // probability exceeds `u`. If rounding leaves the total just short of `u`,
 // the last state with any probability is taken.
-pub fn sample[&s, &r, &p](st: &s [float], n: int, rng: &!r [int], picks: &!p [int], readout: float) -> [] int {
+pub fn sample[&s, &r, &p](st: &s [float], n: int, rng: &!r [int], picks: &!p [int]) -> [] int {
     let total = state.amplitudes_for(n);
     var k = 0;
     while k < len(picks) {
@@ -100,17 +101,19 @@ pub fn sample[&s, &r, &p](st: &s [float], n: int, rng: &!r [int], picks: &!p [in
         if pick < 0 {
             pick = last;
         }
-        // Readout error: each bit of the outcome is reported flipped with probability
-        // `readout`, one draw per qubit, lowest qubit first, and only when it is above 0.
-        if readout > 0.0 {
-            var q = 0;
-            while q < n {
-                if next(rng) < readout {
-                    pick = pick ^ 1 << q;
-                }
-                q = q + 1;
+        // Readout error: each bit of the outcome is reported flipped with the probability
+        // for that qubit and that true value (`profile.ro_p`), one draw per bit, lowest qubit
+        // first, and a bit draws only when its probability is above 0.
+        var q = 0;
+        var reported = pick;
+        while q < n {
+            let pr = profile.ro_p(rng, q, pick >> q & 1);
+            if pr > 0.0 && next(rng) < pr {
+                reported = reported ^ 1 << q;
             }
+            q = q + 1;
         }
+        pick = reported;
         picks[k] = pick;
         k = k + 1;
     }

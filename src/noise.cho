@@ -3,6 +3,7 @@ module qc.noise;
 import qc.complex;
 import qc.gates;
 import qc.measure;
+import qc.profile;
 import qc.state;
 
 // Noise by quantum trajectories. The state stays a pure vector. Each channel
@@ -19,7 +20,7 @@ import qc.state;
 // integers rounds the same way here and in the reference.
 
 pub fn prob(num: int, den: int) -> [] float {
-    return float_of(num) / float_of(den);
+    return profile.prob(num, den);
 }
 
 // With probability `p`, flip the qubit (X).
@@ -127,10 +128,11 @@ pub fn pauli[&s](st: &!s [float], n: int, q: int, k: int) -> [] int {
     return 0;
 }
 
-// Readout error: the reported bit is the true one flipped with probability `p`.
-// It draws only when `p > 0`, so a circuit without readout error draws exactly
-// as before.
-pub fn readout[&r](bit: int, p: float, rng: &!r [int]) -> [] int {
+// Readout error: qubit `q`, whose true value is `bit`, is reported flipped with the
+// probability `profile.ro_p` gives. It draws only when that probability is above 0, so a
+// circuit without readout error draws exactly as before.
+pub fn readout[&r](bit: int, q: int, rng: &!r [int]) -> [] int {
+    let p = profile.ro_p(rng, q, bit);
     if p > 0.0 {
         let u = measure.next(rng);
         if u < p {
@@ -140,26 +142,21 @@ pub fn readout[&r](bit: int, p: float, rng: &!r [int]) -> [] int {
     return bit;
 }
 
-// The sampler's slots 2 and 3 hold the readout probability as num/den.
-pub fn readout_p[&r](rng: &r [int]) -> [] float {
-    if rng[2] == 0 {
-        return 0.0;
-    }
-    return prob(rng[2], rng[3]);
-}
-
-// The gate-noise model (slots 4 to 7): after a one-qubit gate, `depol`; after a
-// two-qubit gate, `depol2`. Not after Toffoli, measurement or a noise operation.
+// The gate-noise model: after a one-qubit gate, `depol`; after a two-qubit gate,
+// `depol2`; with the probability `profile` gives for that qubit or pair (its own, if set,
+// else the `model1` / `model2` default). Not after Toffoli, measurement or a noise operation.
 pub fn after1[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
-    if rng[4] != 0 {
-        depol(st, n, q, prob(rng[4], rng[5]), rng);
+    let p = profile.g1_p(rng, q);
+    if p > 0.0 {
+        depol(st, n, q, p, rng);
     }
     return 0;
 }
 
 pub fn after2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -> [] int {
-    if rng[6] != 0 {
-        depol2(st, n, a, b, prob(rng[6], rng[7]), rng);
+    let p = profile.g2_p(rng, a, b);
+    if p > 0.0 {
+        depol2(st, n, a, b, p, rng);
     }
     return 0;
 }

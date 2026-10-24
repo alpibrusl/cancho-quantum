@@ -1,7 +1,7 @@
 # Exact noise: the density matrix
 
 > **Status: built and measured.** Compiler `3fa3fbb`, Qiskit 2.6.1. Checked by
-> `scripts/check_diff.py` (13 `dm_*` circuits), `check_determinism.py` and
+> `scripts/check_diff.py` (14 `dm_*` circuits), `check_determinism.py` and
 > `scripts/purity_curve.py`.
 
 ## What was built
@@ -25,17 +25,17 @@ error, `seed`, `purity`, `trace`, `probs`, `quiet`. Not in this mode:
 
 ## Measured
 
-- **Exact against Qiskit's `DensityMatrix`.** 13 circuits (every gate; all five
-  channels on 3 qubits; a gate-noise model; readout error on a measurement; amplitude damping; a noisy 3-qubit Fourier transform; a
+- **Exact against Qiskit's `DensityMatrix`.** 14 circuits (every gate; all five
+  channels on 3 qubits; a gate-noise model; per-qubit and per-pair rates with asymmetric readout; readout error on a measurement; amplitude damping; a noisy 3-qubit Fourier transform; a
   noisy 4-qubit GHZ chain; a 40-operation random circuit; probability 0 and 1;
-  a measurement in the middle) agree entry by entry, worst error **1.1e-15**.
+  a measurement in the middle) agree entry by entry, worst error **2.4e-15**.
 - **A formula, not just a reference.** A Bell pair through depolarizing noise on one
   qubit has purity (1 - p)^2 + p^2/3. For p = 0 to 0.5 in steps of 0.05, cancho's
   `purity`, Qiskit's and the formula agree to **7.8e-16** (`docs/data/purity_curve.json`).
 - **It is the limit of the sampled method.** `noise-results.md` checks the trajectory
   method against an exact Kraus calculation in numpy; this mode is a second, independent
   exact calculation, in cancho, and it matches the same reference.
-- **Determinism.** The 13 circuits run interpreted on Cranelift, LLVM and aarch64
+- **Determinism.** The 14 circuits run interpreted on Cranelift, LLVM and aarch64
   (under emulation) with identical bytes. They have no compiled form, so they get three
   builds, not six. No earlier hash changed.
 
@@ -46,5 +46,5 @@ error, `seed`, `purity`, `trace`, `probs`, `quiet`. Not in this mode:
   compiled form.
 - Measurement collapses the matrix to one outcome, as a run would; there is no
   "average over outcomes" operation.
-- The gate-noise model is one probability for one-qubit gates and one for two-qubit gates.
+- The gate-noise model is one probability for one-qubit gates and one for two-qubit gates, with per-qubit and per-pair overrides (`noise-profile.md`).
 - Speed was not measured.

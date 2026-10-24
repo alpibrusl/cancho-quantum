@@ -5,6 +5,7 @@ import qc.dump;
 import qc.gates;
 import qc.measure;
 import qc.noise;
+import qc.profile;
 import qc.reader;
 import qc.state;
 import std.io;
@@ -367,13 +368,40 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             }
             rng[slot] = num;
             rng[slot + 1] = den;
+        } else if w == 29099075143034226 {
+            let q = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            if q < 0 || q >= 20 || den < 1 || num < 0 || num > den {
+                return 2;
+            }
+            profile.set_g1(rng, q, num, den);
+        } else if w == 29099075143099762 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            if a < 0 || a >= 20 || b < 0 || b >= 20 || a == b || den < 1 || num < 0 || num > den {
+                return 2;
+            }
+            profile.set_g2(rng, a, b, num, den);
+        } else if w == 32199616315617906 {
+            let q = reader.read_int(io);
+            let n01 = reader.read_int(io);
+            let d01 = reader.read_int(io);
+            let n10 = reader.read_int(io);
+            let d10 = reader.read_int(io);
+            if q < 0 || q >= 20 || d01 < 1 || n01 < 0 || n01 > d01 || d10 < 1 || n10 < 0 || n10 > d10 {
+                return 2;
+            }
+            profile.set_ro(rng, q, n01, d01, n10, d10);
         } else if w == 1936024932 {
             rng[0] = reader.read_int(io);
         } else if w == 109 {
             let a = reader.read_int(io);
             gates.in_range(n, a);
             let bit = measure_q(st, n, a, rng);
-            dump.measurement(io, a, noise.readout(bit, noise.readout_p(rng), rng));
+            dump.measurement(io, a, noise.readout(bit, a, rng));
         } else if w == 123649732998265 {
             var total = 0.0;
             var k = 0;
@@ -401,11 +429,11 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
         } else {
             return 2;
         }
-        if post1 >= 0 && rng[4] != 0 {
-            channel(st, tmp, acc, n, post1, 431198596972, noise.prob(rng[4], rng[5]));
+        if post1 >= 0 && profile.g1_p(rng, post1) > 0.0 {
+            channel(st, tmp, acc, n, post1, 431198596972, profile.g1_p(rng, post1));
         }
-        if post2a >= 0 && rng[6] != 0 {
-            channel2(st, tmp, acc, n, post2a, post2b, noise.prob(rng[6], rng[7]));
+        if post2a >= 0 && profile.g2_p(rng, post2a, post2b) > 0.0 {
+            channel2(st, tmp, acc, n, post2a, post2b, profile.g2_p(rng, post2a, post2b));
         }
         w = reader.read_word(io);
     }

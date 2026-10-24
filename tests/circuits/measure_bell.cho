@@ -4,6 +4,7 @@ import qc.dump;
 import qc.gates;
 import qc.measure;
 import qc.noise;
+import qc.profile;
 import qc.state;
 import std.io;
 
@@ -12,15 +13,16 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     rng[0] = 7;
     gates.h(st, 2, 0);
     gates.cx(st, 2, 0, 1);
-    dump.measurement(io, 0, noise.readout(measure.measure(st, 2, 0, rng), 0.0, rng));
-    dump.measurement(io, 1, noise.readout(measure.measure(st, 2, 1, rng), 0.0, rng));
+    dump.measurement(io, 0, noise.readout(measure.measure(st, 2, 0, rng), 0, rng));
+    dump.measurement(io, 1, noise.readout(measure.measure(st, 2, 1, rng), 1, rng));
     return 0;
 }
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     let amp = box_slice(heap, state.floats_for(2), 0.0);
     region r {
-        let rng = alloc_slice[r](1, 88172645463325252);
+        let rng = alloc_slice[r](profile.size(), 0);
+        profile.init(rng, 88172645463325252);
         let scratch = alloc_slice[r](24, byte_of(0));
         borrow mut amp as &!w in {
             let st = contents(w);

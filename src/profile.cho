@@ -1,0 +1,103 @@
+module qc.profile;
+
+// The noise parameters a run carries, in the sampler's slice (`rng`). Lookups only:
+// nothing here draws, so `measure.cho` can read them and `noise.cho` can use them.
+//
+// Layout (n is at most 20, so the strides are fixed):
+//
+//   rng[0]            the sampler's state
+//   rng[1]            1 after `quiet`
+//   rng[2], rng[3]    readout error, symmetric: numerator, denominator (numerator 0: off)
+//   rng[4], rng[5]    depolarizing noise after every one-qubit gate (`model1`)
+//   rng[6], rng[7]    depolarizing noise after every two-qubit gate (`model2`)
+//   rng[8 + 2q] and the next      qubit q's own one-qubit-gate error (`gate1err`), numerator then denominator
+//   rng[48 + 2 (20 a + b)] ...     the pair (a, b)'s two-qubit-gate error (`gate2err`), stored for both orders
+//   rng[848 + 4q] ...              qubit q's asymmetric readout error (`readerr`): P(report 1 | true 0) then P(report 0 | true 1)
+//
+// A denominator of 0 in an override slot means "not set": the default above applies. An
+// override with numerator 0 and a real denominator is set, and means probability 0.
+
+pub fn size() -> [] int {
+    return 928;
+}
+
+pub fn prob(num: int, den: int) -> [] float {
+    return float_of(num) / float_of(den);
+}
+
+// Every slot to its starting value; the sampler state is `seed`.
+pub fn init[&r](rng: &!r [int], seed: int) -> [] int {
+    var k = 0;
+    while k < len(rng) {
+        rng[k] = 0;
+        k = k + 1;
+    }
+    rng[0] = seed;
+    rng[3] = 1;
+    rng[5] = 1;
+    rng[7] = 1;
+    return 0;
+}
+
+// `slot` is 2 (readout), 4 (model1) or 6 (model2).
+pub fn set_slot[&r](rng: &!r [int], slot: int, num: int, den: int) -> [] int {
+    rng[slot] = num;
+    rng[slot + 1] = den;
+    return 0;
+}
+
+pub fn set_g1[&r](rng: &!r [int], q: int, num: int, den: int) -> [] int {
+    rng[8 + 2 * q] = num;
+    rng[9 + 2 * q] = den;
+    return 0;
+}
+
+pub fn set_g2[&r](rng: &!r [int], a: int, b: int, num: int, den: int) -> [] int {
+    rng[48 + 2 * (20 * a + b)] = num;
+    rng[49 + 2 * (20 * a + b)] = den;
+    rng[48 + 2 * (20 * b + a)] = num;
+    rng[49 + 2 * (20 * b + a)] = den;
+    return 0;
+}
+
+pub fn set_ro[&r](rng: &!r [int], q: int, n01: int, d01: int, n10: int, d10: int) -> [] int {
+    rng[848 + 4 * q] = n01;
+    rng[849 + 4 * q] = d01;
+    rng[850 + 4 * q] = n10;
+    rng[851 + 4 * q] = d10;
+    return 0;
+}
+
+// The depolarizing probability after a one-qubit gate on `q`.
+pub fn g1_p[&r](rng: &r [int], q: int) -> [] float {
+    if rng[9 + 2 * q] != 0 {
+        return prob(rng[8 + 2 * q], rng[9 + 2 * q]);
+    }
+    if rng[4] == 0 {
+        return 0.0;
+    }
+    return prob(rng[4], rng[5]);
+}
+
+// The depolarizing probability after a two-qubit gate on `a` and `b`.
+pub fn g2_p[&r](rng: &r [int], a: int, b: int) -> [] float {
+    if rng[49 + 2 * (20 * a + b)] != 0 {
+        return prob(rng[48 + 2 * (20 * a + b)], rng[49 + 2 * (20 * a + b)]);
+    }
+    if rng[6] == 0 {
+        return 0.0;
+    }
+    return prob(rng[6], rng[7]);
+}
+
+// The probability that qubit `q`, whose true value is `bit`, is reported flipped.
+pub fn ro_p[&r](rng: &r [int], q: int, bit: int) -> [] float {
+    let at = 848 + 4 * q + 2 * bit;
+    if rng[at + 1] != 0 {
+        return prob(rng[at], rng[at + 1]);
+    }
+    if rng[2] == 0 {
+        return 0.0;
+    }
+    return prob(rng[2], rng[3]);
+}

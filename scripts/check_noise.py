@@ -30,6 +30,9 @@ CIRCUITS = {
     "amplitude damping of |+> and a Bell pair": (2, [("h", 0), ("ampdamp", 0, 1, 3), ("cx", 0, 1), ("ampdamp", 1, 1, 2)]),
     "two-qubit depolarizing on a Bell pair and a chain": (3, [("h", 0), ("cx", 0, 1), ("depol2", 0, 1, 1, 4), ("cx", 1, 2), ("depol2", 1, 2, 1, 3)]),
     "a gate-noise model on a GHZ state": (3, [("model1", 1, 12), ("model2", 1, 8), ("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3)]),
+    "per-qubit and per-pair rates (an invented profile)": (3, [("model1", 1, 100), ("gate1err", 0, 1, 15), ("gate1err", 2, 1, 6), ("model2", 1, 20),
+                                                                ("gate2err", 0, 1, 1, 7), ("gate2err", 2, 1, 1, 9), ("h", 0), ("cx", 0, 1),
+                                                                ("cx", 1, 2), ("ry", 2, 1, 3), ("cx", 2, 0)]),
     "all four channels on 3 qubits": (3, [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("depol", 0, 1, 6), ("ampdamp", 1, 1, 4),
                                           ("phaseflip", 2, 1, 5), ("bitflip", 1, 1, 7), ("ry", 2, 1, 4), ("depol", 2, 1, 3)]),
 }
@@ -85,6 +88,20 @@ def main():
     ones1 = sum(r[1] for r in rows)       # true 0, flipped to 1 with probability 1/4
     sd = (args.shots * 0.75 * 0.25) ** 0.5
     z_ro = max(abs(ones0 - 0.75 * args.shots), abs(ones1 - 0.25 * args.shots)) / sd
+    # Asymmetric readout: a true 1 on qubit 0 reads 0 one time in 10; a true 0 on qubit 1 reads 1 one time in 5.
+    def asym(seed):
+        out = run(f"n 2\nseed {seed}\nx 0\nreaderr 0 1 5 1 10\nreaderr 1 1 5 1 10\nm 0\nm 1\nquiet\n")
+        return [int(l.split()[2]) for l in out.splitlines() if l.startswith("m ")]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        arows = list(pool.map(asym, range(1, args.shots + 1)))
+    a0 = sum(r[0] for r in arows)         # expect 0.9 * shots
+    a1 = sum(r[1] for r in arows)         # expect 0.2 * shots
+    z_asym = max(abs(a0 - 0.9 * args.shots) / (args.shots * 0.9 * 0.1) ** 0.5, abs(a1 - 0.2 * args.shots) / (args.shots * 0.2 * 0.8) ** 0.5)
+    ok_asym = z_asym < 4.5
+    print(("ok   " if ok_asym else "FAIL ") + f"asymmetric readout (1/5 up, 1/10 down): z {z_asym:.2f}")
+    if not ok_asym:
+        failed.append("asymmetric readout")
     out = run("n 1\nseed 5\nx 0\nreadout 1 4\nsample 4000\nquiet\n")
     hits = sum(int(l.split()[2]) for l in out.splitlines() if l.startswith("sample 1 "))
     z_sample = abs(hits - 3000) / (4000 * 0.75 * 0.25) ** 0.5
@@ -105,7 +122,8 @@ def main():
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "data", "noise_check.json")
     with open(out, "w") as f:
         json.dump({"shots": args.shots, "circuits": results, "wrong_probability_z": round(float(z), 1),
-                   "readout": {"measured_z": round(float(z_ro), 2), "sample_z": round(float(z_sample), 2)}}, f, indent=2)
+                   "readout": {"measured_z": round(float(z_ro), 2), "sample_z": round(float(z_sample), 2),
+                               "asymmetric_z": round(float(z_asym), 2)}}, f, indent=2)
         f.write("\n")
     sys.exit(1 if failed else 0)
 

@@ -62,8 +62,8 @@ qubit and per sample for `sample`), so a circuit without it draws exactly as bef
   exact version, up to 10 qubits.
 - The model is one depolarizing probability for all one-qubit gates and one for all
   two-qubit gates: no per-qubit or per-gate-type rates, no noise after Toffoli, no idle noise.
-- No correlated or non-Pauli two-qubit noise, and readout error is symmetric (the same
-  probability for 0 to 1 and 1 to 0).
+- No correlated or non-Pauli two-qubit noise. `readout` is symmetric; `readerr` (see `noise-profile.md`) is
+  asymmetric, per qubit.
 - The z-score test is statistical. With the thresholds used a correct simulator fails it with
   probability around 1e-4 per circuit; the seeds are fixed, so the result is reproducible, but a
   different seed set could in principle cross the line.

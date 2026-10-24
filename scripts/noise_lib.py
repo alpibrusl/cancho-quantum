@@ -47,6 +47,7 @@ def exact_rho(n, ops):
     """The density matrix after `ops` (tuples as in the .qc format, noise included)."""
     rho = DensityMatrix.from_int(0, 2 ** n)
     m1 = m2 = 0.0
+    g1, g2 = {}, {}
     for name, *a in ops:
         if name in ("h", "x", "y", "z"):
             rho = rho.evolve(Operator({"h": HGate, "x": XGate, "y": YGate, "z": ZGate}[name]()), qargs=[a[0]])
@@ -64,13 +65,19 @@ def exact_rho(n, ops):
                 m1 = val
             else:
                 m2 = val
+        elif name == "gate1err":
+            g1[a[0]] = a[1] / a[2] if a[1] else 0.0
+        elif name == "gate2err":
+            g2[frozenset((a[0], a[1]))] = a[2] / a[3] if a[2] else 0.0
         else:
             raise ValueError(name)
         # The gate-noise model acts after each gate, never after a noise operation.
-        if name in ONE_Q and m1:
-            rho = rho.evolve(Kraus(kraus("depol", m1)), qargs=[a[0]])
-        if name in TWO_Q and m2:
-            rho = rho.evolve(Kraus(depol2_kraus(m2)), qargs=[a[0], a[1]])
+        p1 = g1[a[0]] if (name in ONE_Q and a[0] in g1) else m1
+        if name in ONE_Q and p1 > 0.0:
+            rho = rho.evolve(Kraus(kraus("depol", p1)), qargs=[a[0]])
+        p2 = g2[frozenset((a[0], a[1]))] if (name in TWO_Q and frozenset((a[0], a[1])) in g2) else m2
+        if name in TWO_Q and p2 > 0.0:
+            rho = rho.evolve(Kraus(depol2_kraus(p2)), qargs=[a[0], a[1]])
     return rho.data
 
 
