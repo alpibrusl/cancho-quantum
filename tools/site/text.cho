@@ -159,3 +159,84 @@ pub fn line_count[&s](blob: &s [byte]) -> [] int {
     }
     return n;
 }
+
+// Python's json.dumps for a string (ensure_ascii): quotes, backslashes and control characters escaped, anything above
+// ASCII written as \uXXXX (a pair for a character above U+FFFF). `text` is UTF-8.
+pub fn put_json_string[&h, &s](heap: &!h Heap, buf: buffer.Buffer, t: &s [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buf, byte_of('"'));
+    var k = 0;
+    while k < len(t) {
+        let c = int_of(t[k]);
+        if c == '"' {
+            out = buffer.append(heap, out, "\\\"");
+            k = k + 1;
+        } else if c == 92 {
+            out = buffer.append(heap, out, "\\\\");
+            k = k + 1;
+        } else if c == 10 {
+            out = buffer.append(heap, out, "\\n");
+            k = k + 1;
+        } else if c == 13 {
+            out = buffer.append(heap, out, "\\r");
+            k = k + 1;
+        } else if c == 9 {
+            out = buffer.append(heap, out, "\\t");
+            k = k + 1;
+        } else if c == 8 {
+            out = buffer.append(heap, out, "\\b");
+            k = k + 1;
+        } else if c == 12 {
+            out = buffer.append(heap, out, "\\f");
+            k = k + 1;
+        } else if c < 32 {
+            out = put_u4(heap, out, c);
+            k = k + 1;
+        } else if c < 128 {
+            out = buffer.push(heap, out, t[k]);
+            k = k + 1;
+        } else {
+            // a UTF-8 sequence
+            var cp = 0;
+            var w = 1;
+            if c >= 240 {
+                cp = c & 7;
+                w = 4;
+            } else if c >= 224 {
+                cp = c & 15;
+                w = 3;
+            } else {
+                cp = c & 31;
+                w = 2;
+            }
+            var j = 1;
+            while j < w && k + j < len(t) {
+                cp = cp * 64 + (int_of(t[k + j]) & 63);
+                j = j + 1;
+            }
+            if cp >= 65536 {
+                let v = cp - 65536;
+                out = put_u4(heap, out, 55296 + (v >> 10));
+                out = put_u4(heap, out, 56320 + (v & 1023));
+            } else {
+                out = put_u4(heap, out, cp);
+            }
+            k = k + w;
+        }
+    }
+    return buffer.push(heap, out, byte_of('"'));
+}
+
+fn put_u4[&h](heap: &!h Heap, buf: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buf, "\\u");
+    var shift = 12;
+    while shift >= 0 {
+        let d = (v >> shift) & 15;
+        if d < 10 {
+            out = buffer.push(heap, out, byte_of('0' + d));
+        } else {
+            out = buffer.push(heap, out, byte_of('a' + (d - 10)));
+        }
+        shift = shift - 4;
+    }
+    return out;
+}

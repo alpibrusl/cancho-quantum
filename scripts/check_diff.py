@@ -16,6 +16,7 @@ Exits 0 only if every gated comparison passes. Prints the worst error seen
 per circuit and overall, which is the number the M1 gate asks for.
 """
 import argparse
+import json
 import math
 import os
 import struct
@@ -79,6 +80,7 @@ def main():
 
     names = args.names or sorted(f[:-3] for f in os.listdir(DIFF) if f.endswith(".qc"))
     worst_all, failed, trig_worst = 0.0, [], 0
+    rows = []
     for name in names:
         with open(os.path.join(DIFF, name + ".qc")) as f:
             circuit = f.read()
@@ -129,6 +131,7 @@ def main():
         if ok:
             extra = f"  trig {tw} ulp" if want[1] else ""
             print(f"ok   {name:18s} worst {worst:.2e}  {dt:5.2f}s{extra}")
+            rows.append([name, f"{worst:.2e}"])
         else:
             failed.append(name)
     # Programs that must stop. A trap is the run-time half of the must-reject
@@ -142,6 +145,11 @@ def main():
             print(f"FAIL trap {f[:-3]}: exit {run.returncode}, {len(run.stdout)} bytes out")
             failed.append(f)
     print(f"\nworst amplitude error over {len(names)} circuits: {worst_all:.3e} (gate {args.tol:g})")
+    if not args.names and not failed:
+        # What the landing page reports (docs/data/check_diff.json); the builders read it and do not re-run this.
+        with open(os.path.join(ROOT, "docs", "data", "check_diff.json"), "w") as f:
+            json.dump({"circuits": len(names), "worst": f"{worst_all:.3e}", "trig_ulp": trig_worst, "rows": rows}, f, indent=1)
+            f.write("\n")
     print(f"worst sin/cos distance from libm over the `trig` lines: {trig_worst} ulp")
     sys.exit(1 if failed else 0)
 

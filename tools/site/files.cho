@@ -1,0 +1,58 @@
+module site.files;
+
+import std.buffer;
+import std.io;
+import std.json;
+
+// Whole-file reads and writes for the site builder: the file is read into a buffer of at most `limit` bytes.
+// `fs_read` answers -1 for a file it cannot open (and the caller decides what that means).
+
+pub fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], limit: int) -> [heap, fs_read("")] (buffer.Buffer, int) {
+    let room = box_slice(heap, limit, byte_of(0));
+    var out = buffer.empty(heap, 16);
+    var got = 0 - 1;
+    borrow mut room as &!rw in {
+        let r = contents(rw);
+        got = fs_read(fs, path, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, room);
+    return (out, got);
+}
+
+pub fn write_all[&f, &p, &b](fs: &f Fs(""), path: &p [byte], text: &b [byte]) -> [fs_write("")] int {
+    return fs_write(fs, path, text);
+}
+
+// A JSON file read and parsed: its text and the tape. A file that is missing or not JSON stops the build.
+pub fn load[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), err_write] (buffer.Buffer, Box[[int]]) {
+    let (src, got) = read_all(heap, fs, path, 16777216);
+    if got <= 0 {
+        io.error_all(io, "site: cannot read ");
+        io.error_all(io, path);
+        io.error_all(io, "\n");
+        let missing = trap();
+    }
+    var parsed = box_slice(heap, 8, 0);
+    borrow src as &sr in {
+        unbox_slice(heap, parsed);
+        parsed = box_slice(heap, json.tape_len(buffer.bytes(sr)), 0);
+        borrow mut parsed as &!pw in {
+            if json.parse(buffer.bytes(sr), contents(pw)) <= 0 {
+                io.error_all(io, "site: not JSON: ");
+                io.error_all(io, path);
+                io.error_all(io, "\n");
+                let broken = trap();
+            }
+        }
+    }
+    return (src, parsed);
+}
+
+pub fn unload[&h](heap: &!h Heap, src: buffer.Buffer, tape: Box[[int]]) -> [heap] int {
+    buffer.drop(heap, src);
+    unbox_slice(heap, tape);
+    return 0;
+}

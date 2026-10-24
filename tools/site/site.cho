@@ -1,0 +1,155 @@
+// `site` — build the landing page, docs/index.html, from docs/index.template.html and the real tools.
+//
+//     site --transcript T.json [--dump D.json] [--check]
+//
+// A port of scripts/build_site.py (kept as its reference implementation: `scripts/check_site.py` builds the page with
+// both and compares them byte for byte). In this mode every command the builder would run is answered from a
+// transcript the Python builder recorded; running the commands live comes later.
+
+import site.facts;
+import site.files;
+import site.page1;
+import site.page2;
+import site.page3;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The value of `--flag VALUE` among the arguments, or an empty slice.
+fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+fn has_flag[&g](args: &g Args, flag: &static [byte]) -> [args] bool {
+    var k = 1;
+    while k < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), args] int {
+    let tr_path = flag_value(args, "--transcript");
+    let dump_path = flag_value(args, "--dump");
+    let (tr_buf, got) = files.read_all(heap, fs, tr_path, 33554432);
+    var status = 0;
+    if got <= 0 {
+        io.error_all(io, "site: cannot read the transcript (--transcript FILE)\n");
+        status = 2;
+    }
+    borrow tr_buf as &trr in {
+        let tr_src = buffer.bytes(trr);
+        let tr_tape = box_slice(heap, json.tape_len(tr_src), 0);
+        borrow mut tr_tape as &!trw in {
+            let tt = contents(trw);
+            if status == 0 && json.parse(tr_src, tt) <= 0 {
+                io.error_all(io, "site: the transcript is not JSON\n");
+                status = 2;
+            }
+            if status == 0 {
+                let (spb, spbox) = files.load(heap, io, fs, "docs/page/spec.json");
+                borrow spb as &spr in {
+                borrow mut spbox as &!spw in {
+                let sp_src = buffer.bytes(spr);
+                let spt = contents(spw);
+                let names = box_slice(heap, facts.names_size(), byte_of(0));
+                let ints = box_slice(heap, facts.ints_size(), 0);
+                let texts = box_slice(heap, facts.texts_size(), byte_of(0));
+                let floats = box_slice(heap, facts.floats_size(), 0.0);
+                borrow mut names as &!nw in {
+                    borrow mut ints as &!iw in {
+                        borrow mut texts as &!xw in {
+                            borrow mut floats as &!fw in {
+                                let n = contents(nw);
+                                let it = contents(iw);
+                                let x = contents(xw);
+                                let fl = contents(fw);
+                                page1.terminal(heap, io, tr_src, tt, n, it, x);
+                                page1.checks(heap, io, fs, n, it, x);
+                                page2.tiles_states(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                page3.tiles_circuits(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                if len(dump_path) > 0 {
+                                    status = dump(heap, io, fs, dump_path, n, it, x);
+                                }
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, names);
+                unbox_slice(heap, ints);
+                unbox_slice(heap, texts);
+                unbox_slice(heap, floats);
+                }
+                }
+                files.unload(heap, spb, spbox);
+            }
+        }
+        unbox_slice(heap, tr_tape);
+    }
+    buffer.drop(heap, tr_buf);
+    return status;
+}
+
+// Every placeholder (a fact named in capitals) as a JSON object, for comparing with the Python builder's.
+fn dump[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &static [byte], names: &n [byte], ints: &q [int], texts: &x [byte]) -> [heap, fs_write(""), err_write] int {
+    var w = json.writer(heap, 65536);
+    w = json.begin_object(heap, w);
+    var k = 0;
+    while k < ints[0] {
+        let start = ints[8 + 4 * k + 1];
+        var e = start;
+        while int_of(names[e]) != 10 {
+            e = e + 1;
+        }
+        let first = int_of(names[start]);
+        if (first >= 'A' && first <= 'Z' || first == 't' && int_of(names[start + 1]) == 'i') && ints[8 + 4 * k] == 3 {
+            w = json.put_key(heap, w, names[start..e]);
+            w = json.put_string(heap, w, texts[ints[8 + 4 * k + 2]..ints[8 + 4 * k + 3]]);
+        }
+        k = k + 1;
+    }
+    w = json.end_object(heap, w);
+    let out = json.finish(w);
+    var status = 0;
+    borrow out as &or in {
+        if fs_write(fs, path, buffer.bytes(or)) < 0 {
+            io.error_all(io, "site: cannot write the dump\n");
+            status = 2;
+        }
+    }
+    buffer.drop(heap, out);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    var status = 0;
+    borrow fs as &f in {
+        borrow args as &g in {
+            borrow mut heap as &!h in {
+                borrow mut io as &!i in {
+                    status = build(h, i, f, g);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
