@@ -32,7 +32,7 @@ import shutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import site_svg as svgs
-import noise_profile
+import tools_lib
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOCS = os.path.join(ROOT, "docs")
@@ -258,18 +258,18 @@ def build(cancho):
         f'      {svgs.curve_chart(pc["rows"], "Purity of a Bell pair against the depolarizing probability: cancho, Qiskit and the formula coincide", "depolarizing probability p", "purity", y0=0.3, y1=1.0, label_est="cancho (exact)", label_exact="formula", errbars=False)}\n'
         + links(("Source", blob("src/density.cho")), ("Circuits", blob("tests/diff")), ("Results", blob("docs/density-results.md")))))
     prof_json = json.load(open(os.path.join(ROOT, "profiles", "example_5q.json")))
-    prof_circuit = noise_profile.apply(prof_json, open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read())
+    prof_circuit = tools_lib.apply(prof_json, open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read())
     pr_out = subprocess.run([t.qsim], input=prof_circuit, capture_output=True, text=True).stdout.splitlines()
     pr_prob = {int(l.split()[1], 2): float(l.split()[2]) for l in pr_out if l.startswith("prob ")}
     pr_rho = {(int(l.split()[1]), int(l.split()[2])): float(l.split()[3]) for l in pr_out if l.startswith("rho ")}
     pr_purity = float(next(l.split()[1] for l in pr_out if l.startswith("purity ")))
     pr_fid = (pr_rho[(0, 0)] + pr_rho[(31, 31)] + 2 * pr_rho[(0, 31)]) / 2
     pr_amps = {i: (math.sqrt(v), 0.0) for i, v in pr_prob.items()}
-    n_ops = len(noise_profile.operations(prof_json))
+    n_ops = len(tools_lib.operations(prof_json))
     sup.append(tile("A device-style noise profile",
-        f"A JSON file describes a device: a depolarizing rate per qubit for one-qubit gates, per pair for two-qubit gates, and asymmetric readout error per qubit (a true 1 is misread more often than a true 0). <code>scripts/noise_profile.py</code> turns it into {n_ops} operations and puts them in front of a circuit; <code>qsim</code> still reads only standard input. Below, a 5-qubit GHZ state through <b>example-5q</b> (<em>invented</em> numbers of a realistic size, not a real machine) on the density matrix: fidelity <b>{pr_fid:.4f}</b>, purity <b>{pr_purity:.4f}</b>. The bars are the exact outcome probabilities (readout error acts on top, when measuring). It matches a Qiskit calculation made from the JSON to 1e-12.",
+        f"A JSON file describes a device: a depolarizing rate per qubit for one-qubit gates, per pair for two-qubit gates, and asymmetric readout error per qubit (a true 1 is misread more often than a true 0). <code>tools/qprofile.cho</code> (cancho) turns it into {n_ops} operations and puts them in front of a circuit; <code>qsim</code> still reads only standard input. Below, a 5-qubit GHZ state through <b>example-5q</b> (<em>invented</em> numbers of a realistic size, not a real machine) on the density matrix: fidelity <b>{pr_fid:.4f}</b>, purity <b>{pr_purity:.4f}</b>. The bars are the exact outcome probabilities (readout error acts on top, when measuring). It matches a Qiskit calculation made from the JSON to 1e-12.",
         f'      {bars_svg(5, pr_amps, "Exact probability of each of the 32 outcomes of a five-qubit GHZ state under the example noise profile: the all-zeros and all-ones outcomes dominate, with small leakage into neighbours")}\n'
-        + links(("Profile", blob("profiles/example_5q.json")), ("Converter", blob("scripts/noise_profile.py")), ("Check", blob("scripts/check_profile.py")), ("Format", blob("docs/noise-profile.md")))))
+        + links(("Profile", blob("profiles/example_5q.json")), ("Converter", blob("tools/qprofile.cho")), ("Check", blob("scripts/check_profile.py")), ("Format", blob("docs/noise-profile.md")))))
     ic = json.load(open(os.path.join(DOCS, "data", "idle_curve.json")))
     n_idle = len([f for f in os.listdir(os.path.join(ROOT, "tests", "diff")) if "idle" in f and f.endswith(".qc")])
     sup.append(tile("Idle noise: T1 and T2",
@@ -298,9 +298,9 @@ def build(cancho):
     ctrl = [r[k] / r["cancho_vs_aer"] for r in cc["circuits"] for k in ("control_no_idle", "control_naive")]
     moved = [r["noise_vs_ideal"] for r in cc["circuits"]]
     sup.append(tile("A real device's calibration",
-        f"The calibration <b>{esc(cc['backend'])}</b> published on {esc(cc['snapshot'][:10])} (the snapshot that ships with qiskit-ibm-runtime; no account, no live machine) is read into a profile by <code>scripts/calibration_import.py</code> (below: T1 and T2 in &micro;s, the depolarizing probability p kept for one-qubit gates, readout error 0&rarr;1 and 1&rarr;0; cx time and error). Its T1, T2, gate times, readout and gate errors are all there. One conversion matters: IBM&rsquo;s gate error already contains the decay during the gate, and the simulator adds that decay itself, so it is taken out first (for {n_decay_only} of {len(cal['conversion']['two_qubit'])} pairs the T1/T2 decay alone exceeds the published error, so they get no extra depolarizing noise). {cc['numbers_rederived']} numbers were re-derived from the raw file by another route. Two circuits of native gates run through the profile on 7 qubits land within <b>{worst_ok:.0e}</b> (trace distance) of Qiskit Aer&rsquo;s noise model built from the same snapshot, while the noise itself moves the state by {min(moved):.2f}&ndash;{max(moved):.2f}; leaving the idle decay out, or using the published error as is, is {min(ctrl):.0f}&ndash;{max(ctrl):.0f} times worse.",
+        f"The calibration <b>{esc(cc['backend'])}</b> published on {esc(cc['snapshot'][:10])} (the snapshot that ships with qiskit-ibm-runtime; no account, no live machine) is read into a profile by <code>tools/qcalib.cho</code> (cancho) (below: T1 and T2 in &micro;s, the depolarizing probability p kept for one-qubit gates, readout error 0&rarr;1 and 1&rarr;0; cx time and error). Its T1, T2, gate times, readout and gate errors are all there. One conversion matters: IBM&rsquo;s gate error already contains the decay during the gate, and the simulator adds that decay itself, so it is taken out first (for {n_decay_only} of {len(cal['conversion']['two_qubit'])} pairs the T1/T2 decay alone exceeds the published error, so they get no extra depolarizing noise). {cc['numbers_rederived']} numbers were re-derived from the raw file by another route. Two circuits of native gates run through the profile on 7 qubits land within <b>{worst_ok:.0e}</b> (trace distance) of Qiskit Aer&rsquo;s noise model built from the same snapshot, while the noise itself moves the state by {min(moved):.2f}&ndash;{max(moved):.2f}; leaving the idle decay out, or using the published error as is, is {min(ctrl):.0f}&ndash;{max(ctrl):.0f} times worse.",
         '      <pre class="code small">' + esc("\n".join(rows_q + [""] + rows_p)) + '</pre>\n'
-        + links(("Profile", blob("profiles/ibm_perth_2024-05-27.json")), ("Importer", blob("scripts/calibration_import.py")), ("Check", blob("scripts/check_calibration.py")), ("Notes", blob("docs/calibration.md")))))
+        + links(("Profile", blob("profiles/ibm_perth_2024-05-27.json")), ("Importer", blob("tools/qcalib.cho")), ("Check", blob("scripts/check_calibration.py")), ("Notes", blob("docs/calibration.md")))))
     qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
     sup.append(tile("OpenQASM 2.0 in",
         f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
@@ -342,7 +342,7 @@ def build(cancho):
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
         ("Crosstalk and richer gate noise", "Noise that depends on the gate type, crosstalk between neighbouring qubits, leakage and non-Pauli two-qubit noise are not built; the model is depolarizing noise plus idle decay, at a rate per qubit or pair. A Toffoli has neither a duration nor a noise rate.", "Planned", [("Idle noise", blob("docs/idle-noise.md"))]),
         ("Density matrices past 10 qubits", "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.", "Later", []),
-        ("More devices, live calibration", "One snapshot of one 7-qubit machine (2024) is used, taken from a file. Fetching a current calibration from a service, other devices, and reading the pulse-level durations are not built.", "Planned", [("Importer", blob("scripts/calibration_import.py"))]),
+        ("More devices, live calibration", "One snapshot of one 7-qubit machine (2024) is used, taken from a file. Fetching a current calibration from a service, other devices, and reading the pulse-level durations are not built.", "Planned", [("Importer", blob("tools/qcalib.cho"))]),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
         ("A cloud quantum service", "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.", "Later", []),

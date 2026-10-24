@@ -20,9 +20,11 @@ was never set falls back. The parameters live in the sampler's slice (`src/profi
 so a compiled circuit calls the same functions as the interpreter. A bit still draws a random number
 only when its probability is above zero.
 
-**The profile file.** `scripts/noise_profile.py` reads a JSON file and prints these operations (and, given
-a circuit, the circuit with them inserted after its header). `qsim` itself still reads only standard
-input and touches no file, which `cancho authority` confirms.
+**The profile file.** `tools/qprofile.cho` (cancho; `cancho build tools/qprofile.cho --std -o qprofile`) reads a profile on standard
+input and prints these operations; with a line `---` and a circuit after the profile it prints the circuit with them
+inserted after its header. Neither it nor `qsim` touches a file, which `cancho authority` confirms.
+`scripts/noise_profile.py` is the Python reference implementation it is differentially tested against
+(`scripts/check_tools.py`: 400 random profiles, 198 broken ones, byte for byte).
 
 ```json
 {"qubits": 5,

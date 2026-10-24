@@ -18,13 +18,27 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
 - `docs/idle-noise.md`: T1/T2 decay while a qubit waits, a gate runs, or it waits for a partner (`coher`, `wait`, `time1`, `time2`, `sched`), checked against Qiskit Aer's thermal-relaxation channel
 - `docs/calibration.md`: a real device's published calibration (`ibm_perth`, 2024-05-27) read into a profile, checked against Qiskit Aer's noise model built from the same snapshot (`scripts/calibration_import.py`, `check_calibration.py`)
-- `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`scripts/noise_profile.py`; `profiles/example_5q.json` has invented numbers)
+- `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`tools/qprofile.cho`; `profiles/example_5q.json` has invented numbers)
 - `docs/noise-results.md`: five channels, readout error and a gate-noise model, by trajectories, checked against exact density matrices
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
 ![The Bell-pair circuit](docs/img/bell-circuit.svg)
 
 ![Worst amplitude error against Qiskit, per circuit](docs/img/error-per-circuit.svg)
+
+**What is cancho and what is Python.** The simulator (`src/`) and the tools a user runs (`tools/`: `qprofile`, which
+turns a device-style JSON noise profile into `qsim` operations, and `qcalib`, which turns a published IBM calibration into
+such a profile) are cancho, with no Python and no file or network access (`cancho authority` says so). Python is only the
+test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks, the generators of the test
+circuits and the landing-page builder. `scripts/noise_profile.py` and `scripts/calibration_import.py` are reference
+implementations the cancho tools are differentially tested against, not what you run.
+
+```sh
+cancho build tools/qprofile.cho --std -o qprofile
+cancho build tools/qcalib.cho --std -o qcalib
+./qcalib < profiles/raw/ibm_perth_props_2024-05-27.json > perth.json       # IBM's published calibration -> a profile
+(cat perth.json; echo ---; printf 'dm 3\nh 0\ncx 0 1\ncx 1 2\npurity\n') | ./qprofile | ./qsim   # the circuit, with its noise
+```
 
 ```sh
 cancho build src/*.cho --std -o qsim
@@ -57,5 +71,5 @@ the circuits are written back out by Qiskit and fed to `qsim`.
 
 `scripts/check_schedule.py` checks `sched` against Qiskit's ASAP scheduler.
 `scripts/idle_curve.py` writes the T1/T2 decay curves the page shows.
-`scripts/check_calibration.py` checks the real-device profile against Aer.
+`scripts/check_calibration.py` checks the real-device profile against Aer; `scripts/check_tools.py` checks the cancho tools (`tools/`) against their Python reference implementations.
 `scripts/check_profile.py` checks the noise-profile converter and the simulator's use of it against Qiskit.

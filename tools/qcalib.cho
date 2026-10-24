@@ -1,0 +1,536 @@
+// `qcalib` — read a real device's published calibration into a noise profile.
+//
+//     qcalib < props.json > profile.json
+//
+// Standard input is a backend-properties JSON as IBM publishes it (`backend_name`,
+// `last_update_date`, `qubits`, `gates`); standard output is a profile for `qprofile`
+// (`docs/noise-profile.md`). No file, no network, no account: `cancho authority` says so. A
+// refusal prints `qcalib: <what>` on standard error, exits 2, and prints nothing on standard
+// output.
+//
+// The conversions (T2 clipped to 2 T1; the published gate error is an average infidelity that
+// already contains the decay during the gate, so the idle channel's infidelity is taken out
+// before the depolarizing rate is set; 3/2 and 5/4 turn an average infidelity into the
+// probability `qsim` applies) are in `docs/calibration.md`. `scripts/calibration_import.py` is
+// the reference implementation this is differentially tested against
+// (`scripts/check_tools.py`), and `scripts/check_calibration.py` checks the profile it makes
+// against Qiskit Aer.
+
+import std.buffer;
+import std.io;
+import std.json;
+import std.math;
+
+fn refuse[&i, &s](io: &!i Io, st: &!s [int], what: &static [byte]) -> [err_write] int {
+    if st[0] == 0 {
+        io.error_all(io, "qcalib: ");
+        io.error_all(io, what);
+        io.error_all(io, "\n");
+    }
+    st[0] = 2;
+    return 0;
+}
+
+// round half to even, for x >= 0
+fn round_even(x: float) -> [] int {
+    let f = truncate(x);
+    let d = x - float_of(f);
+    if d > 0.5 {
+        return f + 1;
+    }
+    if d < 0.5 {
+        return f;
+    }
+    if f % 2 == 0 {
+        return f;
+    }
+    return f + 1;
+}
+
+fn max_float(a: float, b: float) -> [] float {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+// The entry named `name` in an array of {"name": ..., "value": ...}: its value node, or -1.
+fn named[&s, &t](src: &s [byte], tape: &t [int], items: int, name: &static [byte]) -> [] int {
+    if !json.is_array(tape, items) {
+        return 0 - 1;
+    }
+    var j = items + 1;
+    var left = json.count(tape, items);
+    while left > 0 {
+        if json.string_equals(src, tape, json.get(src, tape, j, "name"), name) {
+            return json.get(src, tape, j, "value");
+        }
+        j = json.skip(tape, j);
+        left = left - 1;
+    }
+    return 0 - 1;
+}
+
+// Does gate object `g` have the name `name` and exactly these qubits?
+fn gate_is[&s, &t](src: &s [byte], tape: &t [int], g: int, name: &static [byte], count: int, a: int, b: int) -> [] bool {
+    if !json.string_equals(src, tape, json.get(src, tape, g, "gate"), name) {
+        return false;
+    }
+    let qs = json.get(src, tape, g, "qubits");
+    if qs < 0 || !json.is_array(tape, qs) || json.count(tape, qs) != count {
+        return false;
+    }
+    if json.to_int(src, tape, json.at(tape, qs, 0)) != a {
+        return false;
+    }
+    return count == 1 || json.to_int(src, tape, json.at(tape, qs, 1)) == b;
+}
+
+// The gate object for `name` on these qubits, or -1.
+fn find_gate[&s, &t](src: &s [byte], tape: &t [int], gates: int, name: &static [byte], count: int, a: int, b: int) -> [] int {
+    var j = gates + 1;
+    var left = json.count(tape, gates);
+    while left > 0 {
+        if gate_is(src, tape, j, name, count, a, b) {
+            return j;
+        }
+        j = json.skip(tape, j);
+        left = left - 1;
+    }
+    return 0 - 1;
+}
+
+// The process (entanglement) fidelity of `qsim`'s idle channel against the identity, for one qubit with
+// T1 and T2 (ns) idling `ns` nanoseconds: damping by gamma, then a phase flip with probability f. Its Kraus
+// operators have traces (1 + s) and (1 - s) times the square root of their weight, s = sqrt(1 - gamma);
+// the damping jump has trace 0. The sum of squared traces over d^2 = 4.
+fn pro_fidelity(t1: int, t2: int, ns: float) -> [] float {
+    let gamma = 1.0 - math.exp(0.0 - ns / float_of(t1));
+    let rate = 1.0 / float_of(t2) - 0.5 / float_of(t1);
+    var flip = 0.0;
+    if rate > 0.0 {
+        flip = 0.5 * (1.0 - math.exp(0.0 - ns * rate));
+    }
+    let s = sqrt(1.0 - gamma);
+    return ((1.0 - flip) * (1.0 + s) * (1.0 + s) + flip * (1.0 - s) * (1.0 - s)) / 4.0;
+}
+
+// Average infidelity from process fidelity, for a space of dimension d.
+fn avg_infidelity(f: float, d: float) -> [] float {
+    return 1.0 - (d * f + 1.0) / (d + 1.0);
+}
+
+// The decimal text of a non-negative number into `out` from position `at`, answering its length.
+fn digits_at[&o](n: int, out: &!o [byte], at: int) -> [] int {
+    var width = 1;
+    var p = 10;
+    while n >= p {
+        width = width + 1;
+        p = p * 10;
+    }
+    var m = n;
+    var k = width;
+    while k > 0 {
+        out[at + k - 1] = byte_of('0' + m % 10);
+        m = m / 10;
+        k = k - 1;
+    }
+    return width;
+}
+
+// The text "a-b" into `out`, answering its length.
+fn pair_text[&o](a: int, b: int, out: &!o [byte]) -> [] int {
+    let la = digits_at(a, out, 0);
+    out[la] = byte_of('-');
+    return la + 1 + digits_at(b, out, la + 1);
+}
+
+// Is "a1-b1" before "a2-b2", byte by byte (the reference sorts the keys as strings)? `x` and `y` are 16 bytes of scratch each.
+fn pair_before[&x, &y](a1: int, b1: int, a2: int, b2: int, x: &!x [byte], y: &!y [byte]) -> [] bool {
+    let lx = pair_text(a1, b1, x);
+    let ly = pair_text(a2, b2, y);
+    var k = 0;
+    while k < lx && k < ly {
+        let cx = int_of(x[k]);
+        let cy = int_of(y[k]);
+        if cx != cy {
+            return cx < cy;
+        }
+        k = k + 1;
+    }
+    return lx < ly;
+}
+
+fn put_pair_key[&h, &o](heap: &!h Heap, w: json.Writer, a: int, b: int, scratch: &!o [byte]) -> [heap] json.Writer {
+    let l = pair_text(a, b, scratch);
+    return json.put_key(heap, w, scratch[0..l]);
+}
+
+fn put_index_key[&h, &o](heap: &!h Heap, w: json.Writer, q: int, scratch: &!o [byte]) -> [heap] json.Writer {
+    let l = digits_at(q, scratch, 0);
+    return json.put_key(heap, w, scratch[0..l]);
+}
+
+// The value of the named parameter of gate object `g` as a float, or -1 in `*ok` terms: answers its node or -1.
+fn param[&s, &t](src: &s [byte], tape: &t [int], g: int, name: &static [byte]) -> [] int {
+    return named(src, tape, json.get(src, tape, g, "parameters"), name);
+}
+
+// The mean of the published error (`which` 0) or length (`which` 1) over the `cx` gate on (a, b) and, when there is one, the
+// one on (b, a); -1.0 when the first has no such parameter.
+fn mean_param[&s, &t](src: &s [byte], tape: &t [int], g1: int, g2: int, name: &static [byte]) -> [] float {
+    let v1 = param(src, tape, g1, name);
+    if v1 < 0 {
+        return 0.0 - 1.0;
+    }
+    let x1 = json.to_float(src, tape, v1);
+    if g2 < 0 {
+        return x1 / 1.0;
+    }
+    let v2 = param(src, tape, g2, name);
+    if v2 < 0 {
+        return 0.0 - 1.0;
+    }
+    return (x1 + json.to_float(src, tape, v2)) / 2.0;
+}
+
+fn convert[&h, &i, &s, &q](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte]) -> [heap, err_write] buffer.Buffer {
+    var w = json.writer(heap, 8192);
+    let tape = box_slice(heap, json.tape_len(src), 0);
+    borrow mut tape as &!tw in {
+    let t = contents(tw);
+    region r {
+        let nodes = json.parse(src, t);
+        let qubits = json.get(src, t, 0, "qubits");
+        let gates = json.get(src, t, 0, "gates");
+        let backend = json.get(src, t, 0, "backend_name");
+        let date = json.get(src, t, 0, "last_update_date");
+        if nodes < 0 || !json.is_object(t, 0) {
+            refuse(io, st, "the input is not a JSON object");
+        } else if qubits < 0 || !json.is_array(t, qubits) || gates < 0 || !json.is_array(t, gates) || !json.string_plain(t, backend) || !json.string_plain(t, date) || json.string_length(src, t, date) < 10 {
+            refuse(io, st, "the input is not backend properties: qubits, gates, backend_name and last_update_date are needed");
+        } else if json.count(t, qubits) < 1 || json.count(t, qubits) > 20 {
+            refuse(io, st, "a profile describes 1 to 20 qubits; this device has none or more");
+        } else {
+            let n = json.count(t, qubits);
+            let c1 = alloc_slice[r](n, 0);
+            let c2 = alloc_slice[r](n, 0);
+            let tg = alloc_slice[r](n, 0);
+            let clip = alloc_slice[r](n, 0);
+            let p1 = alloc_slice[r](n, 0.0);
+            let ro01 = alloc_slice[r](n, 0.0);
+            let ro10 = alloc_slice[r](n, 0.0);
+            let raw1 = alloc_slice[r](n, 0.0);
+            let raw2 = alloc_slice[r](n, 0.0);
+            let maxp = json.count(t, gates) + 1;
+            let pa = alloc_slice[r](maxp, 0);
+            let pb = alloc_slice[r](maxp, 0);
+            let pt = alloc_slice[r](maxp, 0);
+            let pd = alloc_slice[r](maxp, 0);
+            let pe = alloc_slice[r](maxp, 0.0);
+            let pr = alloc_slice[r](maxp, 0.0);
+            let pp = alloc_slice[r](maxp, 0.0);
+            let ord = alloc_slice[r](maxp, 0);
+            let sa = alloc_slice[r](16, byte_of(0));
+            let sb = alloc_slice[r](16, byte_of(0));
+            var q = 0;
+            while q < n && st[0] == 0 {
+                let items = json.at(t, qubits, q);
+                let v1 = named(src, t, items, "T1");
+                let v2 = named(src, t, items, "T2");
+                let a01 = named(src, t, items, "prob_meas1_prep0");
+                let a10 = named(src, t, items, "prob_meas0_prep1");
+                let sx = find_gate(src, t, gates, "sx", 1, q, 0);
+                if v1 < 0 || v2 < 0 || a01 < 0 || a10 < 0 || sx < 0 {
+                    refuse(io, st, "a qubit lacks T1, T2, a readout error or an sx gate");
+                } else {
+                    let e = param(src, t, sx, "gate_error");
+                    let l = param(src, t, sx, "gate_length");
+                    if e < 0 || l < 0 {
+                        refuse(io, st, "an sx gate lacks gate_error or gate_length");
+                    } else {
+                        raw1[q] = json.to_float(src, t, v1);
+                        raw2[q] = json.to_float(src, t, v2);
+                        let t1 = raw1[q] * 1000.0;
+                        var t2 = raw2[q] * 1000.0;
+                        if t2 > 2.0 * t1 {
+                            clip[q] = 1;
+                            t2 = 2.0 * t1;
+                        }
+                        if !(t1 >= 0.5) || t1 > 1.0e12 {
+                            refuse(io, st, "T1 must be positive");
+                        } else {
+                            c1[q] = round_even(t1);
+                            c2[q] = round_even(t2);
+                            ro01[q] = json.to_float(src, t, a01);
+                            ro10[q] = json.to_float(src, t, a10);
+                            let ln = json.to_float(src, t, l);
+                            tg[q] = round_even(ln);
+                            if c2[q] < 1 {
+                                refuse(io, st, "T2 must be positive");
+                            } else {
+                                let f = pro_fidelity(c1[q], c2[q], ln);
+                                p1[q] = 1.5 * max_float(0.0, json.to_float(src, t, e) - avg_infidelity(f, 2.0));
+                            }
+                        }
+                    }
+                }
+                q = q + 1;
+            }
+            var m = 0;
+            var j = gates + 1;
+            var left = json.count(t, gates);
+            while left > 0 && st[0] == 0 {
+                if gate_is(src, t, j, "cx", 2, json.to_int(src, t, json.at(t, json.get(src, t, j, "qubits"), 0)), json.to_int(src, t, json.at(t, json.get(src, t, j, "qubits"), 1))) {
+                    let a = json.to_int(src, t, json.at(t, json.get(src, t, j, "qubits"), 0));
+                    let b = json.to_int(src, t, json.at(t, json.get(src, t, j, "qubits"), 1));
+                    if a < b {
+                        if b >= n || a < 0 {
+                            refuse(io, st, "a cx gate names a qubit the device does not have");
+                        } else {
+                            let other = find_gate(src, t, gates, "cx", 2, b, a);
+                            let r1 = mean_param(src, t, j, other, "gate_error");
+                            let ln = mean_param(src, t, j, other, "gate_length");
+                            if r1 < 0.0 || ln < 0.0 {
+                                refuse(io, st, "a cx gate lacks gate_error or gate_length");
+                            } else {
+                                let fa = pro_fidelity(c1[a], c2[a], ln);
+                                let fb = pro_fidelity(c1[b], c2[b], ln);
+                                let rel = avg_infidelity(fa * fb, 4.0);
+                                pa[m] = a;
+                                pb[m] = b;
+                                pe[m] = r1;
+                                pr[m] = rel;
+                                pp[m] = 1.25 * max_float(0.0, r1 - rel);
+                                pt[m] = round_even(ln);
+                                pd[m] = 0;
+                                if other >= 0 {
+                                    let e1 = json.to_float(src, t, param(src, t, j, "gate_error"));
+                                    let e2 = json.to_float(src, t, param(src, t, other, "gate_error"));
+                                    let l1 = json.to_float(src, t, param(src, t, j, "gate_length"));
+                                    let l2 = json.to_float(src, t, param(src, t, other, "gate_length"));
+                                    if e1 != e2 || l1 != l2 {
+                                        pd[m] = 1;
+                                    }
+                                }
+                                // insertion into `ord`, sorted by the text of the pair
+                                var at = m;
+                                var going = true;
+                                while at > 0 && going {
+                                    if pair_before(a, b, pa[ord[at - 1]], pb[ord[at - 1]], sa, sb) {
+                                        ord[at] = ord[at - 1];
+                                        at = at - 1;
+                                    } else {
+                                        going = false;
+                                    }
+                                }
+                                ord[at] = m;
+                                m = m + 1;
+                            }
+                        }
+                    }
+                }
+                j = json.skip(t, j);
+                left = left - 1;
+            }
+            if st[0] == 0 {
+                var k = 0;
+                let name = alloc_slice[r](json.string_length(src, t, backend) + 11, byte_of(0));
+                let bv = json.string_view(src, t, backend);
+                while k < len(bv) {
+                    name[k] = bv[k];
+                    k = k + 1;
+                }
+                name[k] = byte_of('-');
+                let dv = json.string_view(src, t, date);
+                var d = 0;
+                while d < 10 {
+                    name[k + 1 + d] = dv[d];
+                    d = d + 1;
+                }
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "name");
+                w = json.put_string(heap, w, name);
+                w = json.put_key(heap, w, "note");
+                w = json.put_string(heap, w, "Converted from a published calibration snapshot by qcalib (see docs/calibration.md for every conversion). Not measured by this project.");
+                w = json.put_key(heap, w, "source");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "backend");
+                w = json.put_string(heap, w, bv);
+                w = json.put_key(heap, w, "snapshot");
+                w = json.put_string(heap, w, json.string_view(src, t, date));
+                w = json.put_key(heap, w, "origin");
+                w = json.put_string(heap, w, "backend properties JSON read from standard input");
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "qubits");
+                w = json.put_int(heap, w, n);
+                w = json.put_key(heap, w, "gate1");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_qubit");
+                w = json.begin_object(heap, w);
+                q = 0;
+                while q < n {
+                    w = put_index_key(heap, w, q, sa);
+                    w = json.put_float(heap, w, p1[q]);
+                    q = q + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "time_ns");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_qubit");
+                w = json.begin_object(heap, w);
+                q = 0;
+                while q < n {
+                    w = put_index_key(heap, w, q, sa);
+                    w = json.put_int(heap, w, tg[q]);
+                    q = q + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "gate2");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_pair");
+                w = json.begin_object(heap, w);
+                k = 0;
+                while k < m {
+                    w = put_pair_key(heap, w, pa[ord[k]], pb[ord[k]], sa);
+                    w = json.put_float(heap, w, pp[ord[k]]);
+                    k = k + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "time_ns");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_pair");
+                w = json.begin_object(heap, w);
+                k = 0;
+                while k < m {
+                    w = put_pair_key(heap, w, pa[ord[k]], pb[ord[k]], sa);
+                    w = json.put_int(heap, w, pt[ord[k]]);
+                    k = k + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "readout");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_qubit");
+                w = json.begin_object(heap, w);
+                q = 0;
+                while q < n {
+                    w = put_index_key(heap, w, q, sa);
+                    w = json.begin_array(heap, w);
+                    w = json.put_float(heap, w, ro01[q]);
+                    w = json.put_float(heap, w, ro10[q]);
+                    w = json.end_array(heap, w);
+                    q = q + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "coherence");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "per_qubit");
+                w = json.begin_object(heap, w);
+                q = 0;
+                while q < n {
+                    w = put_index_key(heap, w, q, sa);
+                    w = json.begin_array(heap, w);
+                    w = json.put_int(heap, w, c1[q]);
+                    w = json.put_int(heap, w, c2[q]);
+                    w = json.end_array(heap, w);
+                    q = q + 1;
+                }
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "conversion");
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "t2_clipped_to_2_t1");
+                w = json.begin_array(heap, w);
+                q = 0;
+                while q < n {
+                    if clip[q] == 1 {
+                        w = json.begin_object(heap, w);
+                        w = json.put_key(heap, w, "qubit");
+                        w = json.put_int(heap, w, q);
+                        w = json.put_key(heap, w, "t1_us");
+                        w = json.put_float(heap, w, raw1[q]);
+                        w = json.put_key(heap, w, "t2_us");
+                        w = json.put_float(heap, w, raw2[q]);
+                        w = json.end_object(heap, w);
+                    }
+                    q = q + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "two_qubit");
+                w = json.begin_array(heap, w);
+                k = 0;
+                while k < m {
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "pair");
+                    let l = pair_text(pa[ord[k]], pb[ord[k]], sa);
+                    w = json.put_string(heap, w, sa[0..l]);
+                    w = json.put_key(heap, w, "published_error");
+                    w = json.put_float(heap, w, pe[ord[k]]);
+                    w = json.put_key(heap, w, "relaxation_part");
+                    w = json.put_float(heap, w, pr[ord[k]]);
+                    w = json.put_key(heap, w, "directions_differ");
+                    w = json.put_bool(heap, w, pd[ord[k]] == 1);
+                    w = json.end_object(heap, w);
+                    k = k + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+            }
+        }
+    }
+    }
+    unbox_slice(heap, tape);
+    if st[0] != 0 {
+        json.drop(heap, w);
+        return buffer.empty(heap, 16);
+    }
+    return json.finish(w);
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write, err_write] int {
+    var input = buffer.empty(heap, 65536);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    region r {
+        let st = alloc_slice[r](1, 0);
+        borrow input as &ir in {
+            var out = convert(heap, io, st, buffer.bytes(ir));
+            if st[0] == 0 {
+                borrow out as &ob in {
+                    buffer.write(io, ob);
+                    io.newline(io);
+                }
+            }
+            buffer.drop(heap, out);
+        }
+        status = st[0];
+    }
+    buffer.drop(heap, input);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

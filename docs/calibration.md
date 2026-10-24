@@ -7,7 +7,7 @@
 
 `profiles/ibm_perth_2024-05-27.json` is the calibration IBM published for the 7-qubit
 `ibm_perth` on **2024-05-27**, converted into a noise profile by
-`scripts/calibration_import.py`. The numbers are IBM's, taken from the properties snapshot
+`tools/qcalib.cho`. The numbers are IBM's, taken from the properties snapshot
 that ships inside the `qiskit-ibm-runtime` package (its "fake backends"). Nothing was
 fetched from a live machine, no account was used, and this project measured nothing. One
 snapshot of one retired-class device from 2024 says little about any machine today; it is

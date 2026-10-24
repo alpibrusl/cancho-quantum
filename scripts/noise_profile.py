@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Turn a device-style noise profile (JSON) into `qsim` operations.
+"""REFERENCE IMPLEMENTATION of `tools/qprofile.cho` (the tool is cancho; this is the independent oracle it is
+differentially tested against by `scripts/check_tools.py`).
+
+Turn a device-style noise profile (JSON) into `qsim` operations.
 
     python3 scripts/noise_profile.py profiles/example_5q.json [circuit.qc]
 
@@ -50,7 +53,7 @@ def durations(block, n, what, default_op, per_op, per_key):
     ops = []
     if "default" in block:
         ops.append("%s %d" % (default_op, ns_int(block["default"], what + ".default")))
-    for key, v in sorted(block.get(per_key, {}).items()):
+    for key, v in sorted(block.get(per_key, {}).items(), key=(lambda kv: int(kv[0])) if per_key == "per_qubit" else None):
         if per_key == "per_qubit":
             ops.append("%s %d %d" % (per_op, qubit_ok(int(key), n, what), ns_int(v, f"{what}.{key}")))
         else:
@@ -128,7 +131,8 @@ def main(argv):
         if len(argv) == 3:
             sys.stdout.write(apply(profile, open(argv[2]).read()))
         else:
-            sys.stdout.write("\n".join(operations(profile)) + "\n")
+            ops = operations(profile)
+            sys.stdout.write("".join(op + "\n" for op in ops))
     except (ValueError, KeyError) as e:
         sys.exit(f"noise_profile: {e}")
 

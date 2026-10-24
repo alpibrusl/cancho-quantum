@@ -17,6 +17,7 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
    Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv && . .venv/bin/activate && pip install qiskit numpy qiskit-aer qiskit-ibm-runtime):
    python3 scripts/check_diff.py           # amplitudes against Qiskit; ends with the worst error, which must be under 1e-12
    python3 scripts/check_qasm.py           # OpenQASM files read by Qiskit's parser and by qsim agree
+   python3 scripts/check_tools.py          # the cancho tools in tools/ (qprofile, qcalib) against their Python reference implementations, and across builds
    python3 scripts/check_schedule.py       # `sched` against Qiskit's ASAP scheduler and Aer's relaxation channel
    python3 scripts/check_calibration.py    # the real-device (ibm_perth, 2024) profile against Qiskit Aer's noise model from the same snapshot
    python3 scripts/check_profile.py        # the device-style noise profile converter and its use, against Qiskit

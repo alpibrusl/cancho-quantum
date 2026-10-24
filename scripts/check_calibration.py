@@ -3,8 +3,8 @@
 
     CANCHO=path/to/cancho python3 scripts/check_calibration.py [--exe qsim]
 
-`profiles/ibm_perth_2024-05-27.json` is made by `scripts/calibration_import.py` from the
-calibration `ibm_perth` published on 2024-05-27 (as shipped in qiskit-ibm-runtime). Two checks:
+`profiles/ibm_perth_2024-05-27.json` is made by `tools/qcalib.cho` from the
+calibration `ibm_perth` published on 2024-05-27 (`profiles/raw/`, as shipped in qiskit-ibm-runtime). Two checks:
 
 1. Provenance. Every readout error, T1, T2 and gate time in the profile is re-read from the raw
    snapshot, and every depolarizing rate is recomputed with Qiskit Aer's own thermal-relaxation
@@ -28,8 +28,8 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import noise_profile  # noqa: E402
-from calibration_import import prop, snapshot  # noqa: E402
+import tools_lib  # noqa: E402
+from calibration_import import prop  # noqa: E402
 from check_diff import ROOT, build  # noqa: E402
 
 from qiskit import QuantumCircuit, transpile  # noqa: E402
@@ -39,6 +39,7 @@ from qiskit_aer.noise import NoiseModel, thermal_relaxation_error  # noqa: E402
 from qiskit_ibm_runtime.fake_provider import FakePerth  # noqa: E402
 
 PROFILE = os.path.join(ROOT, "profiles", "ibm_perth_2024-05-27.json")
+RAW = os.path.join(ROOT, "profiles", "raw", "ibm_perth_props_2024-05-27.json")
 CIRCUITS = {
     "a chain of 13 native gates": [("sx", 1), ("sx", 3), ("cx", 1, 3), ("x", 0), ("sx", 0), ("cx", 0, 1), ("sx", 5), ("cx", 3, 5),
                                    ("cx", 5, 6), ("x", 4), ("cx", 4, 5), ("sx", 2), ("cx", 1, 2)],
@@ -113,8 +114,12 @@ def main():
     exe = args.exe or os.path.join(tempfile.mkdtemp(prefix="calib-"), "qsim")
     if not args.exe:
         build(args.compiler, "cranelift", exe)
+    made = tools_lib.run("qcalib", open(RAW).read())
+    if json.loads(made) != json.load(open(PROFILE)):
+        sys.exit("FAIL the checked-in profile is not what qcalib makes from the raw snapshot")
+    print("ok   the checked-in profile is exactly what qcalib makes from the raw snapshot")
     prof = json.load(open(PROFILE))
-    raw = json.load(open(snapshot("perth")))
+    raw = json.load(open(RAW))
     checked, worst = provenance(raw, prof)
     print(f"ok   provenance: {checked} numbers re-derived from the raw snapshot, worst difference of a rate {worst:.1e}; times to the nanosecond")
 
@@ -143,10 +148,10 @@ def main():
         aer = np.array(sim.run(transpile(qc, sim, optimization_level=0)).result().data(0)["density_matrix"])
         want = DensityMatrix(ideal).data
         text = circuit_text(ops)
-        ours = run_dm(exe, noise_profile.apply(prof, text))
+        ours = run_dm(exe, tools_lib.apply(prof, text))
         d_ours, d_noise = trace_distance(ours, aer), trace_distance(aer, want)
-        d_no_idle = trace_distance(run_dm(exe, noise_profile.apply(no_idle, text)), aer)
-        d_naive = trace_distance(run_dm(exe, noise_profile.apply(naive, text)), aer)
+        d_no_idle = trace_distance(run_dm(exe, tools_lib.apply(no_idle, text)), aer)
+        d_naive = trace_distance(run_dm(exe, tools_lib.apply(naive, text)), aer)
         ok = d_ours < 0.005 and d_ours < 0.05 * d_noise and d_no_idle > 3 * d_ours and d_naive > 3 * d_ours
         failed |= not ok
         print(f"{'ok  ' if ok else 'FAIL'} {name}: cancho vs Aer {d_ours:.2e}; noise itself {d_noise:.3f}; "
@@ -157,7 +162,7 @@ def main():
     bad = json.loads(json.dumps(prof))
     bad["coherence"]["per_qubit"]["0"] = [1000, 2500]
     try:
-        noise_profile.operations(bad)
+        tools_lib.operations(bad)
         print("FAIL T2 > 2 T1 was accepted")
         failed = True
     except ValueError as e:

@@ -1,0 +1,592 @@
+// `qprofile` — turn a device-style noise profile (JSON) into `qsim` operations.
+//
+//     qprofile < profile.json                       the operations, one per line
+//     (cat profile.json; echo ---; cat c.qc) | qprofile
+//                                                   the circuit with them after its header
+//
+// Standard input only: the profile, then optionally a line holding `---` and a circuit
+// that starts `n <qubits>` or `dm <qubits>`. Output is `qsim` input. Nothing is read from a
+// file and nothing is written to one (`cancho authority` says so). A refusal prints
+// `qprofile: <what>` on standard error, exits 2, and prints nothing on standard output.
+//
+// The format and every conversion are in `docs/noise-profile.md`; `scripts/noise_profile.py`
+// is the reference implementation this is differentially tested against
+// (`scripts/check_tools.py`). Probabilities become round(p * 10^6) / 10^6, rounding half to
+// even, as the reference does. Differences from the reference, deliberately: a duplicate key
+// takes its first value (the reference takes the last), and a qubit key must be plain digits.
+
+import std.buffer;
+import std.io;
+import std.json;
+
+fn den() -> [] int {
+    return 1000000;
+}
+
+fn refuse[&i, &s](io: &!i Io, st: &!s [int], what: &static [byte]) -> [err_write] int {
+    if st[0] == 0 {
+        io.error_all(io, "qprofile: ");
+        io.error_all(io, what);
+        io.error_all(io, "\n");
+    }
+    st[0] = 2;
+    return 0;
+}
+
+// round half to even, for x >= 0
+fn round_even(x: float) -> [] int {
+    let f = truncate(x);
+    let d = x - float_of(f);
+    if d > 0.5 {
+        return f + 1;
+    }
+    if d < 0.5 {
+        return f;
+    }
+    if f % 2 == 0 {
+        return f;
+    }
+    return f + 1;
+}
+
+// The probability at node `i` as numerator of x / 10^6, or -1 when it is not a number in [0, 1].
+fn prob_num[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] int {
+    if !json.is_number(tape, i) {
+        return 0 - 1;
+    }
+    let p = json.to_float(src, tape, i);
+    if !(p >= 0.0 && p <= 1.0) {
+        return 0 - 1;
+    }
+    return round_even(p * float_of(den()));
+}
+
+// The duration at node `i` in whole nanoseconds (at least 1 when positive), or -1.
+fn ns_num[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] int {
+    if !json.is_number(tape, i) {
+        return 0 - 1;
+    }
+    let x = json.to_float(src, tape, i);
+    if !(x >= 0.0) || x > 1.0e15 {
+        return 0 - 1;
+    }
+    if x == 0.0 {
+        return 0;
+    }
+    let r = round_even(x);
+    if r < 1 {
+        return 1;
+    }
+    return r;
+}
+
+// A key that is plain digits, as a number, or -1.
+fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+fn key_int[&s, &t](src: &s [byte], tape: &t [int], k: int) -> [] int {
+    if !json.string_plain(tape, k) {
+        return 0 - 1;
+    }
+    return digits(json.string_view(src, tape, k));
+}
+
+// The qubit pair "a-b" at key node `k` as a * 100 + b, or -1.
+fn key_pair[&s, &t](src: &s [byte], tape: &t [int], k: int) -> [] int {
+    if !json.string_plain(tape, k) {
+        return 0 - 1;
+    }
+    let text = json.string_view(src, tape, k);
+    var cut = 0 - 1;
+    var j = 0;
+    while j < len(text) {
+        if int_of(text[j]) == '-' {
+            cut = j;
+        }
+        j = j + 1;
+    }
+    if cut < 0 {
+        return 0 - 1;
+    }
+    let a = digits(text[0..cut]);
+    let b = digits(text[cut + 1..len(text)]);
+    if a < 0 || b < 0 || a >= 20 || b >= 20 {
+        return 0 - 1;
+    }
+    return a * 100 + b;
+}
+
+// Is key node `a`'s text before key node `b`'s, byte by byte?
+fn key_before[&s, &t](src: &s [byte], tape: &t [int], a: int, b: int) -> [] bool {
+    let x = json.string_view(src, tape, a);
+    let y = json.string_view(src, tape, b);
+    var k = 0;
+    while k < len(x) && k < len(y) {
+        let cx = int_of(x[k]);
+        let cy = int_of(y[k]);
+        if cx != cy {
+            return cx < cy;
+        }
+        k = k + 1;
+    }
+    return len(x) < len(y);
+}
+
+// The key nodes of the object at `obj`, in `order` (room for its pairs), sorted: by the number the
+// key spells (`by_number`) or by its bytes. Answers how many.
+fn sorted_keys[&s, &t, &o](src: &s [byte], tape: &t [int], obj: int, by_number: bool, order: &!o [int]) -> [] int {
+    let count = json.count(tape, obj);
+    var j = obj + 1;
+    var m = 0;
+    while m < count {
+        // insertion sort: place key node j among order[0..m]
+        var at = m;
+        var going = true;
+        while at > 0 && going {
+            var before = false;
+            if by_number {
+                before = key_int(src, tape, j) < key_int(src, tape, order[at - 1]);
+            } else {
+                before = key_before(src, tape, j, order[at - 1]);
+            }
+            if before {
+                order[at] = order[at - 1];
+                at = at - 1;
+            } else {
+                going = false;
+            }
+        }
+        order[at] = j;
+        j = json.skip(tape, j + 1);
+        m = m + 1;
+    }
+    return count;
+}
+
+fn put_op[&h](heap: &!h Heap, buf: buffer.Buffer, name: &static [byte], count: int, a: int, b: int, c: int, d: int, e: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buf, name);
+    var k = 0;
+    while k < count {
+        out = buffer.push(heap, out, byte_of(32));
+        var v = a;
+        if k == 1 {
+            v = b;
+        } else if k == 2 {
+            v = c;
+        } else if k == 3 {
+            v = d;
+        } else if k == 4 {
+            v = e;
+        }
+        out = buffer.push_nat(heap, out, v);
+        k = k + 1;
+    }
+    return buffer.push(heap, out, byte_of(10));
+}
+
+// `gate1` or `gate2`: the default and per-qubit or per-pair depolarizing rates.
+fn gate_rates[&h, &i, &s, &t, &q, &o](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte], tape: &t [int], block: int, pairs: bool, n: int, order: &!o [int], buf: buffer.Buffer) -> [heap, err_write] buffer.Buffer {
+    var out = buf;
+    let d = json.get(src, tape, block, "default");
+    if d >= 0 {
+        let num = prob_num(src, tape, d);
+        if num < 0 {
+            refuse(io, st, "a gate rate must be a number from 0 to 1");
+            return out;
+        }
+        if pairs {
+            out = put_op(heap, out, "model2", 2, num, den(), 0, 0, 0);
+        } else {
+            out = put_op(heap, out, "model1", 2, num, den(), 0, 0, 0);
+        }
+    }
+    var key = "per_qubit";
+    if pairs {
+        key = "per_pair";
+    }
+    let per = json.get(src, tape, block, key);
+    if per >= 0 {
+        if !json.is_object(tape, per) {
+            refuse(io, st, "per_qubit and per_pair must be objects");
+            return out;
+        }
+        let count = sorted_keys(src, tape, per, !pairs, order);
+        var m = 0;
+        while m < count {
+            let k = order[m];
+            let num = prob_num(src, tape, k + 1);
+            if num < 0 {
+                refuse(io, st, "a gate rate must be a number from 0 to 1");
+                return out;
+            }
+            if pairs {
+                let ab = key_pair(src, tape, k);
+                if ab < 0 || ab / 100 >= n || ab % 100 >= n || ab / 100 == ab % 100 {
+                    refuse(io, st, "gate2.per_pair: a key must be two different qubits of the device, like 0-1");
+                    return out;
+                }
+                out = put_op(heap, out, "gate2err", 4, ab / 100, ab % 100, num, den(), 0);
+            } else {
+                let q = key_int(src, tape, k);
+                if q < 0 || q >= n {
+                    refuse(io, st, "gate1.per_qubit: a key must be a qubit of the device");
+                    return out;
+                }
+                out = put_op(heap, out, "gate1err", 3, q, num, den(), 0, 0);
+            }
+            m = m + 1;
+        }
+    }
+    return out;
+}
+
+// `gate1.time_ns` or `gate2.time_ns`.
+fn gate_times[&h, &i, &s, &t, &q, &o](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte], tape: &t [int], gate: int, pairs: bool, n: int, order: &!o [int], buf: buffer.Buffer) -> [heap, err_write] buffer.Buffer {
+    var out = buf;
+    let block = json.get(src, tape, gate, "time_ns");
+    if block < 0 {
+        return out;
+    }
+    if !json.is_object(tape, block) {
+        refuse(io, st, "time_ns must be an object");
+        return out;
+    }
+    let d = json.get(src, tape, block, "default");
+    if d >= 0 {
+        let ns = ns_num(src, tape, d);
+        if ns < 0 {
+            refuse(io, st, "a duration must be a number of nanoseconds, not negative");
+            return out;
+        }
+        if pairs {
+            out = put_op(heap, out, "time2", 1, ns, 0, 0, 0, 0);
+        } else {
+            out = put_op(heap, out, "time1", 1, ns, 0, 0, 0, 0);
+        }
+    }
+    var key = "per_qubit";
+    if pairs {
+        key = "per_pair";
+    }
+    let per = json.get(src, tape, block, key);
+    if per >= 0 {
+        if !json.is_object(tape, per) {
+            refuse(io, st, "per_qubit and per_pair must be objects");
+            return out;
+        }
+        let count = sorted_keys(src, tape, per, !pairs, order);
+        var m = 0;
+        while m < count {
+            let k = order[m];
+            let ns = ns_num(src, tape, k + 1);
+            if ns < 0 {
+                refuse(io, st, "a duration must be a number of nanoseconds, not negative");
+                return out;
+            }
+            if pairs {
+                let ab = key_pair(src, tape, k);
+                if ab < 0 || ab / 100 >= n || ab % 100 >= n || ab / 100 == ab % 100 {
+                    refuse(io, st, "gate2.time_ns.per_pair: a key must be two different qubits of the device, like 0-1");
+                    return out;
+                }
+                out = put_op(heap, out, "dur2", 3, ab / 100, ab % 100, ns, 0, 0);
+            } else {
+                let q = key_int(src, tape, k);
+                if q < 0 || q >= n {
+                    refuse(io, st, "gate1.time_ns.per_qubit: a key must be a qubit of the device");
+                    return out;
+                }
+                out = put_op(heap, out, "dur1", 2, q, ns, 0, 0, 0);
+            }
+            m = m + 1;
+        }
+    }
+    return out;
+}
+
+// The value for qubit `q` in a block with a "default" pair and "per_qubit" pairs: node index or -1.
+fn pair_for[&s, &t](src: &s [byte], tape: &t [int], block: int, q: int) -> [] int {
+    let per = json.get(src, tape, block, "per_qubit");
+    if per >= 0 && json.is_object(tape, per) {
+        var j = per + 1;
+        var left = json.count(tape, per);
+        while left > 0 {
+            if key_int(src, tape, j) == q {
+                return j + 1;
+            }
+            j = json.skip(tape, j + 1);
+            left = left - 1;
+        }
+    }
+    return json.get(src, tape, block, "default");
+}
+
+// Every key of "per_qubit" must be a qubit of the device.
+fn keys_in_range[&s, &t](src: &s [byte], tape: &t [int], block: int, n: int) -> [] bool {
+    let per = json.get(src, tape, block, "per_qubit");
+    if per < 0 {
+        return true;
+    }
+    if !json.is_object(tape, per) {
+        return false;
+    }
+    var j = per + 1;
+    var left = json.count(tape, per);
+    while left > 0 {
+        let q = key_int(src, tape, j);
+        if q < 0 || q >= n {
+            return false;
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    return true;
+}
+
+// `coherence`: one `coher` per qubit that has a [T1, T2] pair.
+fn coherence[&h, &i, &s, &t, &q](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte], tape: &t [int], block: int, n: int, buf: buffer.Buffer) -> [heap, err_write] buffer.Buffer {
+    var out = buf;
+    if !keys_in_range(src, tape, block, n) {
+        refuse(io, st, "coherence.per_qubit: a key must be a qubit of the device");
+        return out;
+    }
+    var q = 0;
+    while q < n {
+        let pair = pair_for(src, tape, block, q);
+        if pair >= 0 {
+            if !json.is_array(tape, pair) || json.count(tape, pair) != 2 {
+                refuse(io, st, "coherence for a qubit must be [t1_ns, t2_ns]");
+                return out;
+            }
+            let t1 = ns_num(src, tape, json.at(tape, pair, 0));
+            let t2 = ns_num(src, tape, json.at(tape, pair, 1));
+            if t1 < 1 || t2 < 1 || t2 > 2 * t1 {
+                refuse(io, st, "coherence: T1 and T2 must be positive with T2 <= 2 T1");
+                return out;
+            }
+            out = put_op(heap, out, "coher", 3, q, t1, t2, 0, 0);
+        }
+        q = q + 1;
+    }
+    return out;
+}
+
+// `readout`: one `readerr` per qubit that has a [p01, p10] pair.
+fn readout[&h, &i, &s, &t, &q](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte], tape: &t [int], block: int, n: int, buf: buffer.Buffer) -> [heap, err_write] buffer.Buffer {
+    var out = buf;
+    if !keys_in_range(src, tape, block, n) {
+        refuse(io, st, "readout.per_qubit: a key must be a qubit of the device");
+        return out;
+    }
+    var q = 0;
+    while q < n {
+        let pair = pair_for(src, tape, block, q);
+        if pair >= 0 {
+            if !json.is_array(tape, pair) || json.count(tape, pair) != 2 {
+                refuse(io, st, "readout for a qubit must be [p01, p10]");
+                return out;
+            }
+            let a = prob_num(src, tape, json.at(tape, pair, 0));
+            let b = prob_num(src, tape, json.at(tape, pair, 1));
+            if a < 0 || b < 0 {
+                refuse(io, st, "a readout error must be a number from 0 to 1");
+                return out;
+            }
+            out = put_op(heap, out, "readerr", 5, q, a, den(), b, den());
+        }
+        q = q + 1;
+    }
+    return out;
+}
+
+// The operations for the profile in `src`; `circuit_qubits` is the size of the circuit they
+// precede, or 0 when there is none.
+fn operations[&h, &i, &s, &q](heap: &!h Heap, io: &!i Io, st: &!q [int], src: &s [byte], circuit_qubits: int, buf: buffer.Buffer) -> [heap, err_write] buffer.Buffer {
+    var out = buf;
+    let tape = box_slice(heap, json.tape_len(src), 0);
+    borrow mut tape as &!w in {
+        let t = contents(w);
+        let nodes = json.parse(src, t);
+        if nodes < 0 {
+            refuse(io, st, "the profile is not valid JSON");
+        } else if !json.is_object(t, 0) {
+            refuse(io, st, "the profile must be a JSON object");
+        } else {
+            let qn = json.get(src, t, 0, "qubits");
+            if qn < 0 || !json.is_int(t, qn) || !json.fits_int(src, t, qn) || json.to_int(src, t, qn) < 1 || json.to_int(src, t, qn) > 20 {
+                refuse(io, st, "qubits must be an integer from 1 to 20");
+            } else {
+                let n = json.to_int(src, t, qn);
+                if circuit_qubits > n {
+                    refuse(io, st, "the circuit uses more qubits than the profile describes");
+                } else {
+                    let order = box_slice(heap, 2 * nodes + 2, 0);
+                    borrow mut order as &!ow in {
+                        let o = contents(ow);
+                        let g1 = json.get(src, t, 0, "gate1");
+                        let g2 = json.get(src, t, 0, "gate2");
+                        if g1 >= 0 && !json.is_object(t, g1) {
+                            refuse(io, st, "gate1 must be an object");
+                        }
+                        if g2 >= 0 && !json.is_object(t, g2) {
+                            refuse(io, st, "gate2 must be an object");
+                        }
+                        if st[0] == 0 && g1 >= 0 {
+                            out = gate_rates(heap, io, st, src, t, g1, false, n, o, out);
+                        }
+                        if st[0] == 0 && g2 >= 0 {
+                            out = gate_rates(heap, io, st, src, t, g2, true, n, o, out);
+                        }
+                        if st[0] == 0 && g1 >= 0 {
+                            out = gate_times(heap, io, st, src, t, g1, false, n, o, out);
+                        }
+                        if st[0] == 0 && g2 >= 0 {
+                            out = gate_times(heap, io, st, src, t, g2, true, n, o, out);
+                        }
+                        let co = json.get(src, t, 0, "coherence");
+                        if st[0] == 0 && co >= 0 {
+                            if !json.is_object(t, co) {
+                                refuse(io, st, "coherence must be an object");
+                            } else {
+                                out = coherence(heap, io, st, src, t, co, n, out);
+                            }
+                        }
+                        let ro = json.get(src, t, 0, "readout");
+                        if st[0] == 0 && ro >= 0 {
+                            if !json.is_object(t, ro) {
+                                refuse(io, st, "readout must be an object");
+                            } else {
+                                out = readout(heap, io, st, src, t, ro, n, out);
+                            }
+                        }
+                    }
+                    unbox_slice(heap, order);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tape);
+    return out;
+}
+
+// Where the line `---` starts in `src`, or -1.
+fn separator[&s](src: &s [byte]) -> [] int {
+    var k = 0;
+    while k + 3 <= len(src) {
+        if (k == 0 || int_of(src[k - 1]) == 10) && int_of(src[k]) == '-' && int_of(src[k + 1]) == '-' && int_of(src[k + 2]) == '-' && (k + 3 == len(src) || int_of(src[k + 3]) == 10 || int_of(src[k + 3]) == 13) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write, err_write] int {
+    var input = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    borrow input as &ir in {
+    region r {
+        let st = alloc_slice[r](1, 0);
+        let all = buffer.bytes(ir);
+        let cut = separator(all);
+        var head = all[0..len(all)];
+        var circuit = all[0..0];
+        var qubits = 0;
+        var line_end = 0;
+        if cut >= 0 {
+            head = all[0..cut];
+            // the circuit: skip the separator line
+            var from = cut;
+            while from < len(all) && int_of(all[from]) != 10 {
+                from = from + 1;
+            }
+            from = from + 1;
+            if from > len(all) {
+                from = len(all);
+            }
+            circuit = all[from..len(all)];
+            // its header line: `n N` or `dm N`
+            while line_end < len(circuit) && int_of(circuit[line_end]) != 10 {
+                line_end = line_end + 1;
+            }
+            let first = circuit[0..line_end];
+            var sp = 0;
+            while sp < len(first) && int_of(first[sp]) != 32 {
+                sp = sp + 1;
+            }
+            let word = first[0..sp];
+            if !((len(word) == 1 && int_of(word[0]) == 'n') || (len(word) == 2 && int_of(word[0]) == 'd' && int_of(word[1]) == 'm')) {
+                refuse(io, st, "the circuit must start with `n <qubits>` or `dm <qubits>`");
+            } else {
+                var a = sp;
+                while a < len(first) && int_of(first[a]) == 32 {
+                    a = a + 1;
+                }
+                var b = a;
+                while b < len(first) && int_of(first[b]) != 32 && int_of(first[b]) != 13 {
+                    b = b + 1;
+                }
+                qubits = digits(first[a..b]);
+                if qubits < 0 {
+                    refuse(io, st, "the circuit's qubit count is not a number");
+                }
+            }
+        }
+        if st[0] == 0 {
+            var out = buffer.empty(heap, 1024);
+            if cut >= 0 {
+                out = buffer.append(heap, out, circuit[0..line_end]);
+                out = buffer.push(heap, out, byte_of(10));
+            }
+            out = operations(heap, io, st, head, qubits, out);
+            if st[0] == 0 {
+                if cut >= 0 && line_end < len(circuit) {
+                    out = buffer.append(heap, out, circuit[line_end + 1..len(circuit)]);
+                }
+                borrow out as &ob in {
+                    buffer.write(io, ob);
+                }
+            }
+            buffer.drop(heap, out);
+        }
+        status = st[0];
+    }
+    }
+    buffer.drop(heap, input);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
