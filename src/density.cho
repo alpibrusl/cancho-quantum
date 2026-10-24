@@ -454,6 +454,23 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             } else {
                 profile.set_time(rng, 969, ns);
             }
+        } else if w == 1685418545 || w == 1685418546 {
+            // `dur1 q ns`, `dur2 a b ns`: one qubit's or one pair's own gate time.
+            let a = reader.read_int(io);
+            if w == 1685418545 {
+                let ns = reader.read_int(io);
+                if a < 0 || a >= 20 || ns < 0 {
+                    return 2;
+                }
+                profile.set_dur1(rng, a, ns);
+            } else {
+                let b = reader.read_int(io);
+                let ns = reader.read_int(io);
+                if a < 0 || a >= 20 || b < 0 || b >= 20 || a == b || ns < 0 {
+                    return 2;
+                }
+                profile.set_dur2(rng, a, b, ns);
+            }
         } else if w == 2002872692 {
             let q = reader.read_int(io);
             let ns = reader.read_int(io);
@@ -473,11 +490,11 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             channel2(st, tmp, acc, n, post2a, post2b, profile.g2_p(rng, post2a, post2b));
         }
         if post1 >= 0 {
-            relax(st, tmp, acc, n, post1, rng[968], rng);
+            relax(st, tmp, acc, n, post1, profile.dur1(rng, post1), rng);
         }
         if post2a >= 0 {
-            relax(st, tmp, acc, n, post2a, rng[969], rng);
-            relax(st, tmp, acc, n, post2b, rng[969], rng);
+            relax(st, tmp, acc, n, post2a, profile.dur2(rng, post2a, post2b), rng);
+            relax(st, tmp, acc, n, post2b, profile.dur2(rng, post2a, post2b), rng);
         }
         w = reader.read_word(io);
     }

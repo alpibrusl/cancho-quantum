@@ -10,6 +10,7 @@ duration.
 | `coher q T1 T2` | qubit `q` has relaxation time T1 and dephasing time T2, in nanoseconds. Refused (exit 2) unless 0 < T1, 0 < T2 and T2 <= 2 T1 (the physical limit). |
 | `wait q ns` | qubit `q` idles for `ns` nanoseconds. Does nothing, and draws nothing from the sampler, if `q` has no `coher`. |
 | `time1 ns`, `time2 ns` | a one-qubit and a two-qubit gate take `ns` nanoseconds. After each gate (and after its depolarizing noise, if any) each qubit the gate touched idles for that long. |
+| `dur1 q ns`, `dur2 a b ns` | one qubit's, or one pair's (either order), own gate time, replacing `time1` / `time2` for it. Added for real-device profiles, where `cx` times differ several-fold between pairs (`calibration.md`). |
 
 Works in `n` mode (trajectories) and `dm` mode (exact). Not in OpenQASM input.
 
@@ -50,6 +51,6 @@ on a qubit without `coher` moves no later draw.
   that waits while others work does not decay unless the circuit says `wait`.
   A real device's idle error depends on the schedule.
 - Toffoli has no duration (it is not a native gate), as it has no gate noise.
-- Gate duration is one number per arity, not per gate type or qubit.
+- Gate duration is per qubit (one-qubit gates) and per pair (two-qubit gates), not per gate type: every one-qubit gate takes the same time.
 - Thermal excitation (a nonzero-temperature T1 channel) is not modelled; the
   qubit relaxes towards |0> only.

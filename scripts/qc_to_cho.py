@@ -64,7 +64,7 @@ def convert(name):
     # The noise parameters live in the sampler's slice, exactly as when `qsim` interprets the
     # circuit, so a compiled circuit calls the same functions. The after-gate calls are emitted only
     # for a circuit that sets a gate-noise parameter somewhere.
-    gate_noise = any(l[0] in ("model1", "model2", "gate1err", "gate2err", "time1", "time2") for l in lines[1:])
+    gate_noise = any(l[0] in ("model1", "model2", "gate1err", "gate2err", "time1", "time2", "dur1", "dur2") for l in lines[1:])
 
     for op in lines[1:]:
         k, a = op[0], [int(x) for x in op[1:]]
@@ -106,6 +106,10 @@ def convert(name):
             body.append(f"profile.set_coh(rng, {a[0]}, {a[1]}, {a[2]});")
         elif k in ("time1", "time2"):
             body.append(f"profile.set_time(rng, {968 if k == 'time1' else 969}, {a[0]});")
+        elif k == "dur1":
+            body.append(f"profile.set_dur1(rng, {a[0]}, {a[1]});")
+        elif k == "dur2":
+            body.append(f"profile.set_dur2(rng, {a[0]}, {a[1]}, {a[2]});")
         elif k == "wait":
             body.append(f"noise.relax(st, {n}, {a[0]}, {a[1]}, rng);")
         elif k == "trig":

@@ -72,6 +72,7 @@ class NoiseState:
         self.ro = self.m1 = self.m2 = 0.0
         self.g1, self.g2, self.rop = {}, {}, {}
         self.coh, self.gt1, self.gt2 = {}, 0, 0
+        self.dur1, self.dur2 = {}, {}
 
     def set(self, name, a):
         frac = lambda x, y: x / y if x else 0.0
@@ -93,6 +94,17 @@ class NoiseState:
             self.gt1 = a[0]
         elif name == "time2":
             self.gt2 = a[0]
+        elif name == "dur1":
+            self.dur1[a[0]] = a[1]
+        elif name == "dur2":
+            self.dur2[frozenset((a[0], a[1]))] = a[2]
+
+    def t1q(self, q):
+        return self.dur1[q] if self.dur1.get(q, 0) > 0 else self.gt1
+
+    def t2q(self, a, b):
+        v = self.dur2.get(frozenset((a, b)), 0)
+        return v if v > 0 else self.gt2
 
     def relax_params(self, q, ns):
         """(gamma, flip probability) for qubit q idling ns nanoseconds, or None without a `coher`."""
@@ -113,7 +125,7 @@ class NoiseState:
         return self.rop[q][bit] if q in self.rop else self.ro
 
 
-NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2")
+NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "dur1", "dur2")
 
 
 def pauli_pair(sv, a, b, m):
@@ -249,10 +261,10 @@ def reference(n, ops):
             if u < p2:
                 sv = pauli_pair(sv, args[0], args[1], min(int(u / p2 * 15.0), 14) + 1)
         if name in ONE_Q:
-            sv = traj_relax(sv, rng, ns, args[0], ns.gt1)
+            sv = traj_relax(sv, rng, ns, args[0], ns.t1q(args[0]))
         if name in TWO_Q:
-            sv = traj_relax(sv, rng, ns, args[0], ns.gt2)
-            sv = traj_relax(sv, rng, ns, args[1], ns.gt2)
+            sv = traj_relax(sv, rng, ns, args[0], ns.t2q(args[0], args[1]))
+            sv = traj_relax(sv, rng, ns, args[1], ns.t2q(args[0], args[1]))
     for i, a in enumerate(sv.data):
         if a != 0:
             lines.append(f"amp {i} {float(a.real)!r} {float(a.imag)!r}")
@@ -340,10 +352,10 @@ def reference_dm(n, ops):
         if name in TWO_Q and ns.g2p(a[0], a[1]) > 0.0:
             rho = rho.evolve(Kraus(depol2_kraus(ns.g2p(a[0], a[1]))), qargs=[a[0], a[1]])
         if name in ONE_Q:
-            rho = dm_relax(rho, ns, a[0], ns.gt1)
+            rho = dm_relax(rho, ns, a[0], ns.t1q(a[0]))
         if name in TWO_Q:
-            rho = dm_relax(rho, ns, a[0], ns.gt2)
-            rho = dm_relax(rho, ns, a[1], ns.gt2)
+            rho = dm_relax(rho, ns, a[0], ns.t2q(a[0], a[1]))
+            rho = dm_relax(rho, ns, a[1], ns.t2q(a[0], a[1]))
     if not quiet:
         for i in range(2**n):
             for j in range(2**n):
@@ -474,7 +486,7 @@ def density_circuits():
     c["dm_readout"] = (2, [("seed", 3), ("readout", 1, 4), ("h", 0), ("cx", 0, 1), ("m", 0), ("m", 1), ("purity",)])
     c["dm_profile"] = (3, [("seed", 9)] + PROFILE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3), ("rz", 1, 1, 5), ("cx", 2, 0),
                                                   ("m", 0), ("m", 1), ("purity",), ("probs",)])
-    IDLE = [("coher", 0, 50000, 70000), ("coher", 1, 30000, 20000), ("coher", 2, 40000, 80000), ("time1", 35), ("time2", 300)]
+    IDLE = [("coher", 0, 50000, 70000), ("coher", 1, 30000, 20000), ("coher", 2, 40000, 80000), ("time1", 35), ("time2", 300), ("dur2", 0, 1, 520), ("dur1", 2, 50)]
     c["dm_idle_t1"] = (1, [("coher", 0, 50000, 70000), ("x", 0), ("wait", 0, 20000), ("probs",), ("purity",)])
     c["dm_idle_ramsey"] = (1, [("coher", 0, 50000, 70000), ("h", 0), ("wait", 0, 30000), ("h", 0), ("probs",)])
     c["dm_idle_t2max"] = (1, [("coher", 0, 40000, 80000), ("h", 0), ("wait", 0, 40000), ("purity",)])

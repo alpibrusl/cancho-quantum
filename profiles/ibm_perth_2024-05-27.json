@@ -1,0 +1,157 @@
+{
+ "name": "ibm_perth-2024-05-27",
+ "note": "Converted from a published calibration snapshot by scripts/calibration_import.py (see its docstring for every conversion). Not measured by this project.",
+ "source": {
+  "backend": "ibm_perth",
+  "snapshot": "2024-05-27T15:17:50-03:00",
+  "origin": "IBM's published backend properties, as shipped in qiskit-ibm-runtime's fake backend"
+ },
+ "qubits": 7,
+ "gate1": {
+  "per_qubit": {
+   "0": 1.1869447682511834e-05,
+   "1": 0.00012244005283259935,
+   "2": 0.0002406556096914595,
+   "3": 0.0003765596658532803,
+   "4": 0.0001607561670319167,
+   "5": 0.0005582554370713892,
+   "6": 0.000454959488094543
+  },
+  "time_ns": {
+   "per_qubit": {
+    "0": 36,
+    "1": 36,
+    "2": 36,
+    "3": 36,
+    "4": 36,
+    "5": 36,
+    "6": 36
+   }
+  }
+ },
+ "gate2": {
+  "per_pair": {
+   "0-1": 0.0,
+   "1-2": 0.0,
+   "1-3": 0.0006034765216783589,
+   "3-5": 0.007693002310579268,
+   "4-5": 0.008888612033581995,
+   "5-6": 0.009720464028503475
+  },
+  "time_ns": {
+   "per_pair": {
+    "0-1": 409,
+    "1-2": 622,
+    "1-3": 352,
+    "3-5": 302,
+    "4-5": 608,
+    "5-6": 622
+   }
+  }
+ },
+ "readout": {
+  "per_qubit": {
+   "0": [
+    0.0256,
+    0.03180000000000005
+   ],
+   "1": [
+    0.0256,
+    0.0252
+   ],
+   "2": [
+    0.0318,
+    0.033399999999999985
+   ],
+   "3": [
+    0.02939999999999998,
+    0.0286
+   ],
+   "4": [
+    0.02839999999999998,
+    0.0332
+   ],
+   "5": [
+    0.0416,
+    0.04459999999999997
+   ],
+   "6": [
+    0.0154,
+    0.023599999999999954
+   ]
+  }
+ },
+ "coherence": {
+  "per_qubit": {
+   "0": [
+    55929,
+    95067
+   ],
+   "1": [
+    123019,
+    49931
+   ],
+   "2": [
+    195383,
+    57132
+   ],
+   "3": [
+    160716,
+    271224
+   ],
+   "4": [
+    51433,
+    56561
+   ],
+   "5": [
+    93484,
+    123552
+   ],
+   "6": [
+    154414,
+    213502
+   ]
+  }
+ },
+ "conversion": {
+  "t2_clipped_to_2_t1": [],
+  "two_qubit": [
+   {
+    "pair": "0-1",
+    "published_error": 0.006927341010582289,
+    "relaxation_part": 0.007083904623013004,
+    "directions_differ": true
+   },
+   {
+    "pair": "1-2",
+    "published_error": 0.007924757918494285,
+    "relaxation_part": 0.010894385390028738,
+    "directions_differ": true
+   },
+   {
+    "pair": "1-3",
+    "published_error": 0.0048165171356507885,
+    "relaxation_part": 0.0043337359183081015,
+    "directions_differ": true
+   },
+   {
+    "pair": "3-5",
+    "published_error": 0.008596726182629216,
+    "relaxation_part": 0.002442324334165802,
+    "directions_differ": true
+   },
+   {
+    "pair": "4-5",
+    "published_error": 0.016971063289400706,
+    "relaxation_part": 0.00986017366253511,
+    "directions_differ": true
+   },
+   {
+    "pair": "5-6",
+    "published_error": 0.013072650096350225,
+    "relaxation_part": 0.005296278873547444,
+    "directions_differ": true
+   }
+  ]
+ }
+}

@@ -1,0 +1,24 @@
+{
+  "backend": "ibm_perth",
+  "snapshot": "2024-05-27T15:17:50-03:00",
+  "numbers_rederived": 54,
+  "provenance_worst": 8.326672684688674e-16,
+  "circuits": [
+    {
+      "circuit": "a chain of 13 native gates",
+      "gates": 13,
+      "cancho_vs_aer": 0.0009282459259616221,
+      "noise_vs_ideal": 0.07920889701487943,
+      "control_no_idle": 0.05356119367480215,
+      "control_naive": 0.025919326722788974
+    },
+    {
+      "circuit": "GHZ-like, then undone",
+      "gates": 11,
+      "cancho_vs_aer": 0.0009586718777558842,
+      "noise_vs_ideal": 0.06911204948362601,
+      "control_no_idle": 0.036564179583979964,
+      "control_naive": 0.0228594175705853
+    }
+  ]
+}

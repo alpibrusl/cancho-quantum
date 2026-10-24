@@ -36,7 +36,7 @@ CIRCUITS = {
     "all four channels on 3 qubits": (3, [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("depol", 0, 1, 6), ("ampdamp", 1, 1, 4),
                                           ("phaseflip", 2, 1, 5), ("bitflip", 1, 1, 7), ("ry", 2, 1, 4), ("depol", 2, 1, 3)]),
     "idle noise: T1/T2 on a GHZ state, gate times and a wait": (3, [("coher", 0, 50000, 70000), ("coher", 1, 30000, 20000), ("coher", 2, 40000, 80000),
-                                                                 ("time1", 3500), ("time2", 30000), ("h", 0), ("cx", 0, 1), ("cx", 1, 2),
+                                                                 ("time1", 3500), ("time2", 30000), ("dur2", 1, 2, 9000), ("dur1", 0, 800), ("h", 0), ("cx", 0, 1), ("cx", 1, 2),
                                                                  ("wait", 0, 15000), ("ry", 2, 1, 3), ("wait", 2, 9000), ("cx", 2, 0)]),
 }
 

@@ -5,6 +5,8 @@ coher 1 30000 20000
 coher 2 40000 80000
 time1 35
 time2 300
+dur2 0 1 520
+dur1 2 50
 h 0
 cx 0 1
 cx 1 2

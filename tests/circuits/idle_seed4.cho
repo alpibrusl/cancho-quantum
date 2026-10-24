@@ -16,6 +16,8 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     profile.set_coh(rng, 2, 40000, 80000);
     profile.set_time(rng, 968, 35);
     profile.set_time(rng, 969, 300);
+    profile.set_dur2(rng, 0, 1, 520);
+    profile.set_dur1(rng, 2, 50);
     gates.h(st, 3, 0);
     noise.after1(st, 3, 0, rng);
     gates.cx(st, 3, 0, 1);

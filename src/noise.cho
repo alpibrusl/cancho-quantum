@@ -155,14 +155,14 @@ pub fn relax[&s, &r](st: &!s [float], n: int, q: int, ns: int, rng: &!r [int]) -
 
 // The gate-noise model: after a one-qubit gate, `depol`; after a two-qubit gate,
 // `depol2`; with the probability `profile` gives for that qubit or pair (its own, if set,
-// else the `model1` / `model2` default). Then each gate qubit relaxes for the gate's duration (`time1`, `time2`) if it has a `coher`.
+// else the `model1` / `model2` default). Then each gate qubit relaxes for the gate's duration (`time1`, `time2`, or the `dur1` / `dur2` of that qubit or pair) if it has a `coher`.
 // Not after Toffoli, measurement or a noise operation.
 pub fn after1[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
     let p = profile.g1_p(rng, q);
     if p > 0.0 {
         depol(st, n, q, p, rng);
     }
-    relax(st, n, q, rng[968], rng);
+    relax(st, n, q, profile.dur1(rng, q), rng);
     return 0;
 }
 
@@ -171,7 +171,7 @@ pub fn after2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -
     if p > 0.0 {
         depol2(st, n, a, b, p, rng);
     }
-    relax(st, n, a, rng[969], rng);
-    relax(st, n, b, rng[969], rng);
+    relax(st, n, a, profile.dur2(rng, a, b), rng);
+    relax(st, n, b, profile.dur2(rng, a, b), rng);
     return 0;
 }

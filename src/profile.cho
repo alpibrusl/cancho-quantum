@@ -18,12 +18,14 @@ import std.math;
 //   rng[928 + q]      qubit q's T1, in nanoseconds (`coher`); 0: no idle noise on that qubit
 //   rng[948 + q]      qubit q's T2, in nanoseconds
 //   rng[968], rng[969] how long a one-qubit and a two-qubit gate take, in nanoseconds (`time1`, `time2`)
+//   rng[970 + 20a + b] the pair (a, b)'s own two-qubit gate time (`dur2`), stored for both orders; 0: use rng[969]
+//   rng[1370 + q]     qubit q's own one-qubit gate time (`dur1`); 0: use rng[968]
 //
 // A denominator of 0 in an override slot means "not set": the default above applies. An
 // override with numerator 0 and a real denominator is set, and means probability 0.
 
 pub fn size() -> [] int {
-    return 970;
+    return 1390;
 }
 
 pub fn prob(num: int, den: int) -> [] float {
@@ -138,4 +140,31 @@ pub fn relax_flip[&r](rng: &r [int], q: int, ns: int) -> [] float {
         return 0.0;
     }
     return 0.5 * (1.0 - math.exp(0.0 - float_of(ns) * rate));
+}
+
+pub fn set_dur1[&r](rng: &!r [int], q: int, ns: int) -> [] int {
+    rng[1370 + q] = ns;
+    return 0;
+}
+
+pub fn set_dur2[&r](rng: &!r [int], a: int, b: int, ns: int) -> [] int {
+    rng[970 + 20 * a + b] = ns;
+    rng[970 + 20 * b + a] = ns;
+    return 0;
+}
+
+// How long a one-qubit gate on `q` takes, and a two-qubit gate on (a, b): the override if set, else
+// `time1` / `time2`.
+pub fn dur1[&r](rng: &r [int], q: int) -> [] int {
+    if rng[1370 + q] > 0 {
+        return rng[1370 + q];
+    }
+    return rng[968];
+}
+
+pub fn dur2[&r](rng: &r [int], a: int, b: int) -> [] int {
+    if rng[970 + 20 * a + b] > 0 {
+        return rng[970 + 20 * a + b];
+    }
+    return rng[969];
 }

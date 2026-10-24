@@ -277,6 +277,25 @@ def build(cancho):
         f'      {svgs.curve_chart(ic["population"], "Chance a qubit prepared in 1 is still 1 against waiting time, with T1 of 50 microseconds: a falling exponential that cancho and Qiskit Aer share", "waiting time (microseconds)", "P(still 1)", y0=0.0, y1=1.0, label_est="cancho (exact)", label_exact="exp(-t/T1)", errbars=False, xmax=100, xname="t")}\n'
         f'      {svgs.curve_chart(ic["coherence"], "Coherence of a qubit prepared in plus against waiting time, with T2 of 70 microseconds", "waiting time (microseconds)", "coherence |rho01|", y0=0.0, y1=0.5, label_est="cancho (exact)", label_exact="exp(-t/T2) / 2", errbars=False, xmax=100, xname="t")}\n'
         + links(("Source", blob("src/noise.cho")), ("Curve", blob("scripts/idle_curve.py")), ("Check", blob("scripts/check_noise.py")), ("Design", blob("docs/idle-noise.md")))))
+    cal = json.load(open(os.path.join(ROOT, "profiles", "ibm_perth_2024-05-27.json")))
+    cc = json.load(open(os.path.join(DOCS, "data", "calibration_check.json")))
+    rows_q = ["q   T1   T2   1q p  r01   r10"]
+    for q in range(cal["qubits"]):
+        t1, t2 = cal["coherence"]["per_qubit"][str(q)]
+        ro = cal["readout"]["per_qubit"][str(q)]
+        rows_q.append(f"{q}  {t1 / 1000:4.0f} {t2 / 1000:4.0f}  {cal['gate1']['per_qubit'][str(q)] * 1e4:4.1f}e-4 {ro[0]:.3f} {ro[1]:.3f}")
+    rows_p = ["pair  ns   cx error > p"]
+    pub = {r["pair"]: r for r in cal["conversion"]["two_qubit"]}
+    for key in cal["gate2"]["per_pair"]:
+        rows_p.append(f"{key:>4} {cal['gate2']['time_ns']['per_pair'][key]:4}  {pub[key]['published_error']:.4f} > {cal['gate2']['per_pair'][key]:.4f}")
+    worst_ok = max(r["cancho_vs_aer"] for r in cc["circuits"])
+    n_decay_only = sum(1 for r in cal["conversion"]["two_qubit"] if r["relaxation_part"] > r["published_error"])
+    ctrl = [r[k] / r["cancho_vs_aer"] for r in cc["circuits"] for k in ("control_no_idle", "control_naive")]
+    moved = [r["noise_vs_ideal"] for r in cc["circuits"]]
+    sup.append(tile("A real device's calibration",
+        f"The calibration <b>{esc(cc['backend'])}</b> published on {esc(cc['snapshot'][:10])} (the snapshot that ships with qiskit-ibm-runtime; no account, no live machine) is read into a profile by <code>scripts/calibration_import.py</code> (below: T1 and T2 in &micro;s, the depolarizing probability p kept for one-qubit gates, readout error 0&rarr;1 and 1&rarr;0; cx time and error). Its T1, T2, gate times, readout and gate errors are all there. One conversion matters: IBM&rsquo;s gate error already contains the decay during the gate, and the simulator adds that decay itself, so it is taken out first (for {n_decay_only} of {len(cal['conversion']['two_qubit'])} pairs the T1/T2 decay alone exceeds the published error, so they get no extra depolarizing noise). {cc['numbers_rederived']} numbers were re-derived from the raw file by another route. Two circuits of native gates run through the profile on 7 qubits land within <b>{worst_ok:.0e}</b> (trace distance) of Qiskit Aer&rsquo;s noise model built from the same snapshot, while the noise itself moves the state by {min(moved):.2f}&ndash;{max(moved):.2f}; leaving the idle decay out, or using the published error as is, is {min(ctrl):.0f}&ndash;{max(ctrl):.0f} times worse.",
+        '      <pre class="code small">' + esc("\n".join(rows_q + [""] + rows_p)) + '</pre>\n'
+        + links(("Profile", blob("profiles/ibm_perth_2024-05-27.json")), ("Importer", blob("scripts/calibration_import.py")), ("Check", blob("scripts/check_calibration.py")), ("Notes", blob("docs/calibration.md")))))
     qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
     sup.append(tile("OpenQASM 2.0 in",
         f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
@@ -317,8 +336,8 @@ def build(cancho):
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
         ("Scheduled noise and crosstalk", "Idle noise (T1, T2) exists, but only for the qubits a gate touches and an explicit <code>wait</code>: there is no scheduler, so a qubit that waits while others work does not decay. Noise that depends on the gate type, crosstalk and non-Pauli two-qubit noise are not built.", "Planned", [("Idle noise", blob("docs/idle-noise.md"))]),
-        ("A real device's calibration", "Reading a real machine's published error rates into a profile. The example profile is invented; no real calibration data has been used.", "Planned", []),
         ("Density matrices past 10 qubits", "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.", "Later", []),
+        ("More devices, live calibration", "One snapshot of one 7-qubit machine (2024) is used, taken from a file. Fetching a current calibration from a service, other devices, and reading the pulse-level durations are not built.", "Planned", [("Importer", blob("scripts/calibration_import.py"))]),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
         ("A cloud quantum service", "Submit a circuit over HTTPS. The authority report will be coarser here, because host-set bounds are design-only in cancho.", "Later", []),
@@ -335,7 +354,7 @@ def build(cancho):
     three_q = [("ccx", "Toffoli", "ccx 0 1 2")]
     chans = [("bitflip", "bit flip", "bitflip 0 1 3"), ("phaseflip", "phase flip", "phaseflip 0 1 3"), ("depol", "depolarizing", "depol 0 1 3"), ("ampdamp", "amplitude damping", "ampdamp 0 1 3"), ("depol2", "two-qubit depolarizing", "depol2 0 1 1 3")]
     extras_ops = [("readout error", "readout 1 4"), ("a gate-noise model", "model1 1 20"), ("a two-qubit gate-noise model", "model2 1 20"),
-                  ("per-qubit gate error", "gate1err 0 1 20"), ("per-pair gate error", "gate2err 0 1 1 20"), ("asymmetric readout error", "readerr 0 1 20 1 10"), ("idle noise (T1, T2)", "coher 0 50000 70000"), ("gate durations", "time2 300"), ("waiting", "coher 0 50000 70000\nwait 0 1000")]
+                  ("per-qubit gate error", "gate1err 0 1 20"), ("per-pair gate error", "gate2err 0 1 1 20"), ("asymmetric readout error", "readerr 0 1 20 1 10"), ("idle noise (T1, T2)", "coher 0 50000 70000"), ("gate durations", "time2 300\ndur2 0 1 400\ndur1 0 36"), ("waiting", "coher 0 50000 70000\nwait 0 1000")]
     for _, nm, op in one_q + two_q + three_q + chans + [("", e, o) for e, o in extras_ops]:
         for header in ("n 3", "dm 3"):
             r = subprocess.run([t.qsim], input=f"{header}\n{op}\nquiet\n", capture_output=True, text=True)
@@ -356,7 +375,7 @@ def build(cancho):
     P["CAPABILITIES"] = "\n".join([
         card(f"{n_gates} gates", f"One qubit: {names(one_q)}. Two: {names(two_q)}. Three: {names(three_q)}. Angles are exact fractions of &pi;."),
         card("Pure states, measured or sampled", "Up to 20 qubits (16 MiB at 20). Seeded measurement with collapse, and <code>sample N</code> to draw outcomes without collapsing. The same seed gives the same bits on every build."),
-        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file; idle decay (T1, T2) while a qubit waits or a gate runs. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
+        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file or a real device&rsquo;s published calibration; idle decay (T1, T2) while a qubit waits or a gate runs. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
         card("Two input formats", f"A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; {n_qasm} circuits cross-checked with Qiskit&rsquo;s own parser)."),
         card("Algorithms", "Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer."),
         card("A type checker for qubits", f"A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. {n_reject} refusal fixtures, and {n_traps + 1} pinned cases the checker still misses."),
@@ -373,7 +392,7 @@ def build(cancho):
         ("The typed qubit layer", "The same circuits written with <code>Qubit</code> values the compiler tracks.",
          ["Bell pair, 200 shots, typed", "Teleportation", "Toffoli, typed"]),
         ("Noise", "Two ways to simulate it: sampled runs, and the exact density matrix.",
-         ["Noise, checked against the exact answer", "Exact noise: the density matrix", "A device-style noise profile", "Idle noise: T1 and T2"]),
+         ["Noise, checked against the exact answer", "Exact noise: the density matrix", "A device-style noise profile", "Idle noise: T1 and T2", "A real device's calibration"]),
         ("Input formats", "A plain-text circuit format and OpenQASM 2.0.", ["OpenQASM 2.0 in"]),
         ("Reproducibility", "The same bytes on every build.", ["The same bytes, six ways"]),
     ]

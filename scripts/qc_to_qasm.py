@@ -33,7 +33,7 @@ def convert(name):
     out = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{n}];", f"creg c[{n}];"]
     for op in lines[1:]:
         k, a = op[0], [int(x) for x in op[1:]]
-        if k in ("seed", "sample", "trig", "quiet", "bitflip", "phaseflip", "depol", "ampdamp", "depol2", "readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "wait"):
+        if k in ("seed", "sample", "trig", "quiet", "bitflip", "phaseflip", "depol", "ampdamp", "depol2", "readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "dur1", "dur2", "wait"):
             return None
         if k in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             out.append(f"{k} q[{a[0]}];")

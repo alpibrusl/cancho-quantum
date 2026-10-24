@@ -50,6 +50,7 @@ def exact_rho(n, ops):
     m1 = m2 = 0.0
     g1, g2 = {}, {}
     coh, gt = {}, {1: 0, 2: 0}
+    d1, d2 = {}, {}
 
     def relax(rho, q, ns):
         # Qiskit Aer's thermal-relaxation channel, independent of src/profile.cho's formula.
@@ -82,6 +83,10 @@ def exact_rho(n, ops):
             coh[a[0]] = (a[1], a[2])
         elif name in ("time1", "time2"):
             gt[int(name[-1])] = a[0]
+        elif name == "dur1":
+            d1[a[0]] = a[1]
+        elif name == "dur2":
+            d2[frozenset((a[0], a[1]))] = a[2]
         elif name == "wait":
             rho = relax(rho, a[0], a[1])
         else:
@@ -94,10 +99,11 @@ def exact_rho(n, ops):
         if name in TWO_Q and p2 > 0.0:
             rho = rho.evolve(Kraus(depol2_kraus(p2)), qargs=[a[0], a[1]])
         if name in ONE_Q:
-            rho = relax(rho, a[0], gt[1])
+            rho = relax(rho, a[0], d1.get(a[0]) or gt[1])
         if name in TWO_Q:
-            rho = relax(rho, a[0], gt[2])
-            rho = relax(rho, a[1], gt[2])
+            t = d2.get(frozenset((a[0], a[1]))) or gt[2]
+            rho = relax(rho, a[0], t)
+            rho = relax(rho, a[1], t)
     return rho.data
 
 

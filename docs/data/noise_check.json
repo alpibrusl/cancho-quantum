@@ -38,8 +38,8 @@
     },
     {
       "circuit": "idle noise: T1/T2 on a GHZ state, gate times and a wait",
-      "max_z": 3.06,
-      "trace_distance": 0.0126
+      "max_z": 2.62,
+      "trace_distance": 0.0114
     }
   ],
   "wrong_probability_z": 28.0,
