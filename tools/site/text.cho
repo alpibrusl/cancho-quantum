@@ -49,10 +49,7 @@ pub fn put_esc[&h, &s](heap: &!h Heap, buf: buffer.Buffer, text: &s [byte]) -> [
 // The directives of `tf`, after a `%`:
 //   i0..i5   an integer, in decimal              r0..r5   a float as Python prints it (`str(x)`)
 //   d0..d5   a float to one decimal (`:.1f`)     e0, e1   a text, HTML-escaped        s0, s1   a text, as it is
-pub fn tf[&h, &a, &b](heap: &!h Heap, buf: buffer.Buffer, tmpl: &static [byte],
-                      i0: int, i1: int, i2: int, i3: int, i4: int, i5: int,
-                      r0: float, r1: float, r2: float, r3: float, r4: float, r5: float,
-                      t0: &a [byte], t1: &b [byte]) -> [heap] buffer.Buffer {
+pub fn tf[&h, &a, &b](heap: &!h Heap, buf: buffer.Buffer, tmpl: &static [byte], i0: int, i1: int, i2: int, i3: int, i4: int, i5: int, r0: float, r1: float, r2: float, r3: float, r4: float, r5: float, t0: &a [byte], t1: &b [byte]) -> [heap] buffer.Buffer {
     var out = buf;
     var k = 0;
     while k < len(tmpl) {
@@ -98,12 +95,10 @@ pub fn tf[&h, &a, &b](heap: &!h Heap, buf: buffer.Buffer, tmpl: &static [byte],
                 } else {
                     out = put_esc(heap, out, t1);
                 }
+            } else if ix == 0 {
+                out = buffer.append(heap, out, t0);
             } else {
-                if ix == 0 {
-                    out = buffer.append(heap, out, t0);
-                } else {
-                    out = buffer.append(heap, out, t1);
-                }
+                out = buffer.append(heap, out, t1);
             }
             k = k + 3;
         } else {
@@ -230,7 +225,7 @@ fn put_u4[&h](heap: &!h Heap, buf: buffer.Buffer, v: int) -> [heap] buffer.Buffe
     var out = buffer.append(heap, buf, "\\u");
     var shift = 12;
     while shift >= 0 {
-        let d = (v >> shift) & 15;
+        let d = v >> shift & 15;
         if d < 10 {
             out = buffer.push(heap, out, byte_of('0' + d));
         } else {

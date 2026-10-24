@@ -442,7 +442,7 @@ pub fn put_bin[&h](heap: &!h Heap, buf: buffer.Buffer, n: int, width: int) -> [h
     var out = buf;
     var k = width;
     while k > 0 {
-        out = put_char(heap, out, '0' + (n >> (k - 1)) % 2);
+        out = put_char(heap, out, '0' + (n >> k - 1) % 2);
         k = k - 1;
     }
     return out;

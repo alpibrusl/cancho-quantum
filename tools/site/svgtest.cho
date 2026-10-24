@@ -10,7 +10,6 @@ fn str_of[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] &s [byte] {
     return json.string_view(src, tape, i);
 }
 
-
 fn one[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [int]) -> [heap, io_write] int {
     var out = buffer.empty(heap, 1024);
     if json.string_equals(src, tape, json.get(src, tape, 0, "fn"), "circuit") {

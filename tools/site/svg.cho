@@ -474,8 +474,7 @@ pub fn line_chart[&h, &n, &x, &y, &l, &a, &b](heap: &!h Heap, buf: buffer.Buffer
 }
 
 // Linear axes: an exact line and estimates with error bars; row k is (p[k], exact[k], estimate[k], stderr[k]).
-pub fn curve_chart[&h, &p, &q, &r, &s, &l, &a, &b, &c, &d](heap: &!h Heap, buf: buffer.Buffer, px: &p [float], exact: &q [float], estimate: &r [float], stderr: &s [float],
-                                                           label: &l [byte], xlab: &a [byte], ylab: &b [byte], y0: float, y1: float, label_est: &c [byte], label_exact: &d [byte], errbars: bool, xmax: float, xname: &static [byte]) -> [heap] buffer.Buffer {
+pub fn curve_chart[&h, &p, &q, &r, &s, &l, &a, &b, &c, &d](heap: &!h Heap, buf: buffer.Buffer, px: &p [float], exact: &q [float], estimate: &r [float], stderr: &s [float], label: &l [byte], xlab: &a [byte], ylab: &b [byte], y0: float, y1: float, label_est: &c [byte], label_exact: &d [byte], errbars: bool, xmax: float, xname: &static [byte]) -> [heap] buffer.Buffer {
     var out = buf;
     let w = 520;
     let height = 230;
@@ -525,8 +524,8 @@ pub fn curve_chart[&h, &p, &q, &r, &s, &l, &a, &b, &c, &d](heap: &!h Heap, buf: 
         let xx = float_of(l0) + px[k] / xmax * float_of(w - l0 - r0);
         let yy = float_of(t0) + (1.0 - (estimate[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
         if errbars {
-            let ylo = float_of(t0) + (1.0 - ((estimate[k] - 2.0 * stderr[k]) - y0) / (y1 - y0)) * float_of(height - t0 - b0);
-            let yhi = float_of(t0) + (1.0 - ((estimate[k] + 2.0 * stderr[k]) - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+            let ylo = float_of(t0) + (1.0 - (estimate[k] - 2.0 * stderr[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
+            let yhi = float_of(t0) + (1.0 - (estimate[k] + 2.0 * stderr[k] - y0) / (y1 - y0)) * float_of(height - t0 - b0);
             out = text.tr(heap, out, "<line x1=\"%d0\" y1=\"%d1\" x2=\"%d0\" y2=\"%d2\" class=\"err\"/>", 0, 0, 0, 0, xx, ylo, yhi, 0.0);
         }
         out = text.tr(heap, out, "<circle cx=\"%d0\" cy=\"%d1\" r=\"3\" class=\"pt s0\"><title>", 0, 0, 0, 0, xx, yy, 0.0, 0.0);
