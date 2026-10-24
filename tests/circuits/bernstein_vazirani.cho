@@ -24,6 +24,7 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     gates.h(st, 5, 2);
     gates.h(st, 5, 3);
     rng[0] = 7;
+    noise.barrier(st, 5, rng);
     dump.samples(io, st, 5, rng, 200);
     return 0;
 }

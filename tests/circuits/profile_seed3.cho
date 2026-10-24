@@ -21,19 +21,24 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     profile.set_slot(rng, 2, 1, 25);
     gates.h(st, 3, 0);
     noise.after1(st, 3, 0, rng);
+    noise.before2(st, 3, 0, 1, rng);
     gates.cx(st, 3, 0, 1);
     noise.after2(st, 3, 0, 1, rng);
+    noise.before2(st, 3, 1, 2, rng);
     gates.cx(st, 3, 1, 2);
     noise.after2(st, 3, 1, 2, rng);
     gates.ry(st, 3, 2, gates.angle(1, 3));
     noise.after1(st, 3, 2, rng);
     gates.rz(st, 3, 1, gates.angle(1, 5));
     noise.after1(st, 3, 1, rng);
+    noise.before2(st, 3, 2, 0, rng);
     gates.cx(st, 3, 2, 0);
     noise.after2(st, 3, 2, 0, rng);
     dump.measurement(io, 0, noise.readout(measure.measure(st, 3, 0, rng), 0, rng));
     dump.measurement(io, 1, noise.readout(measure.measure(st, 3, 1, rng), 1, rng));
+    noise.barrier(st, 3, rng);
     dump.samples(io, st, 3, rng, 300);
+    noise.barrier(st, 3, rng);
     return 0;
 }
 

@@ -12,7 +12,22 @@ duration.
 | `time1 ns`, `time2 ns` | a one-qubit and a two-qubit gate take `ns` nanoseconds. After each gate (and after its depolarizing noise, if any) each qubit the gate touched idles for that long. |
 | `dur1 q ns`, `dur2 a b ns` | one qubit's, or one pair's (either order), own gate time, replacing `time1` / `time2` for it. Added for real-device profiles, where `cx` times differ several-fold between pairs (`calibration.md`). |
 
+| `sched` | start every gate as soon as its qubits are free (ASAP); see below. |
+| `barrier` | every qubit idles until the last one is free. |
+
 Works in `n` mode (trajectories) and `dm` mode (exact). Not in OpenQASM input.
+
+## Scheduling
+
+Without `sched`, only a gate's own duration decays its qubits. With it, each qubit
+has a clock (nanoseconds). A two-qubit gate starts when both of its qubits are free;
+the one that was free earlier idles for the difference first (relax, then the gate,
+its depolarizing noise, and its duration). A one-qubit gate starts when its qubit is
+free, so it needs no wait. `wait` advances the clock. Idling is applied just before the
+gate that ends it, which is the same state as idling all along, because a channel on
+one qubit commutes with gates on others. A `barrier`, a `sample` and the end of the
+circuit (the amplitudes or the matrix printed, `purity`, `probs`) idle every qubit to
+the end of the longest one. Measurement `m`, noise operations and Toffoli take no time.
 
 ## The channel
 
@@ -47,10 +62,21 @@ on a qubit without `coher` moves no later draw.
 
 ## Not modelled
 
-- **No scheduler.** Only the qubits a gate touches idle for its duration. A qubit
-  that waits while others work does not decay unless the circuit says `wait`.
-  A real device's idle error depends on the schedule.
+- **ASAP only.** `sched` is as-soon-as-possible with no gate reordering, no dynamical
+  decoupling and no ALAP; a mid-circuit `m` takes no time and does not synchronise.
 - Toffoli has no duration (it is not a native gate), as it has no gate noise.
 - Gate duration is per qubit (one-qubit gates) and per pair (two-qubit gates), not per gate type: every one-qubit gate takes the same time.
 - Thermal excitation (a nonzero-temperature T1 channel) is not modelled; the
   qubit relaxes towards |0> only.
+
+## Scheduling: what was measured
+
+`scripts/check_schedule.py`: 6 random 14-gate circuits on 4 qubits (different T1, T2 per
+qubit, a pair and a qubit with their own gate times), with start times from Qiskit's
+`ASAPScheduleAnalysis` and decay from Aer's channel on Qiskit's DensityMatrix, against
+`qsim`'s density matrix under `sched`: trace distance 1.6e-15 to 8.6e-15. Without `sched`
+the same circuits are 6e-3 to 6e-2 away. A qubit left as |1> while a chain of `cx` runs
+elsewhere follows exp(-t/T1) to 2e-16 (`docs/data/schedule_curve.json`). 6 `dm_sched_*` /
+`sched_seed*` circuits in `tests/diff` pass against the Python reference (worst amplitude error
+over 86 circuits 1.2e-14), and a sampled 3-qubit scheduled circuit matches the exact density matrix
+within statistics (`check_noise.py`).

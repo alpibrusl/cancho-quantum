@@ -40,6 +40,11 @@
       "circuit": "idle noise: T1/T2 on a GHZ state, gate times and a wait",
       "max_z": 2.62,
       "trace_distance": 0.0114
+    },
+    {
+      "circuit": "scheduled idle noise: a qubit that waits for others decays too",
+      "max_z": 1.81,
+      "trace_distance": 0.0057
     }
   ],
   "wrong_probability_z": 28.0,

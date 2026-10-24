@@ -73,6 +73,7 @@ class NoiseState:
         self.g1, self.g2, self.rop = {}, {}, {}
         self.coh, self.gt1, self.gt2 = {}, 0, 0
         self.dur1, self.dur2 = {}, {}
+        self.sched, self.clock = False, {}
 
     def set(self, name, a):
         frac = lambda x, y: x / y if x else 0.0
@@ -98,6 +99,30 @@ class NoiseState:
             self.dur1[a[0]] = a[1]
         elif name == "dur2":
             self.dur2[frozenset((a[0], a[1]))] = a[2]
+        elif name == "sched":
+            self.sched = True
+
+    def before2(self, state, a, b, relax):
+        """Scheduling: the qubit that is free earlier idles until the other is; both are busy from then."""
+        if self.sched:
+            ca, cb = self.clock.get(a, 0), self.clock.get(b, 0)
+            start = max(ca, cb)
+            state = relax(state, a, start - ca)
+            state = relax(state, b, start - cb)
+            self.clock[a] = self.clock[b] = start
+        return state
+
+    def barrier(self, state, n, relax):
+        if self.sched:
+            end = max([self.clock.get(q, 0) for q in range(n)] + [0])
+            for q in range(n):
+                state = relax(state, q, end - self.clock.get(q, 0))
+                self.clock[q] = end
+        return state
+
+    def advance(self, qubits, ns):
+        for q in qubits:
+            self.clock[q] = self.clock.get(q, 0) + ns
 
     def t1q(self, q):
         return self.dur1[q] if self.dur1.get(q, 0) > 0 else self.gt1
@@ -125,7 +150,7 @@ class NoiseState:
         return self.rop[q][bit] if q in self.rop else self.ro
 
 
-NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "dur1", "dur2")
+NOISE_SET = ("readout", "model1", "model2", "gate1err", "gate2err", "readerr", "coher", "time1", "time2", "dur1", "dur2", "sched")
 
 
 def pauli_pair(sv, a, b, m):
@@ -164,8 +189,11 @@ def reference(n, ops):
     rng = Rng()
     lines = []
     ns = NoiseState()
+    relax_t = lambda state, q, t: traj_relax(state, rng, ns, q, t)
     for op in ops:
         name, args = op[0], op[1:]
+        if name in TWO_Q:
+            sv = ns.before2(sv, args[0], args[1], relax_t)
         if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             gate = {"h": HGate, "x": XGate, "y": YGate, "z": ZGate, "s": SGate, "t": TGate, "sdg": SdgGate, "tdg": TdgGate}[name]()
             sv = sv.evolve(gate, qargs=[args[0]])
@@ -202,7 +230,11 @@ def reference(n, ops):
             ns.set(name, args)
         elif name == "wait":
             sv = traj_relax(sv, rng, ns, args[0], args[1])
+            ns.advance([args[0]], args[1])
+        elif name == "barrier":
+            sv = ns.barrier(sv, n, relax_t)
         elif name == "sample":
+            sv = ns.barrier(sv, n, relax_t)
             # An independent method: a cumulative sum and a binary search, where
             # the simulator adds up probabilities one state at a time.
             probs = np.abs(np.array(sv.data)) ** 2
@@ -262,9 +294,12 @@ def reference(n, ops):
                 sv = pauli_pair(sv, args[0], args[1], min(int(u / p2 * 15.0), 14) + 1)
         if name in ONE_Q:
             sv = traj_relax(sv, rng, ns, args[0], ns.t1q(args[0]))
+            ns.advance([args[0]], ns.t1q(args[0]))
         if name in TWO_Q:
             sv = traj_relax(sv, rng, ns, args[0], ns.t2q(args[0], args[1]))
             sv = traj_relax(sv, rng, ns, args[1], ns.t2q(args[0], args[1]))
+            ns.advance([args[0], args[1]], ns.t2q(args[0], args[1]))
+    sv = ns.barrier(sv, n, relax_t)
     for i, a in enumerate(sv.data):
         if a != 0:
             lines.append(f"amp {i} {float(a.real)!r} {float(a.imag)!r}")
@@ -298,7 +333,12 @@ def reference_dm(n, ops):
             ks.append(math.sqrt(p / 15) * np.kron(P[m % 4], P[m // 4]))   # qargs [a, b]: b is the high factor
         return ks
 
+    relax_d = lambda state, q, t: dm_relax(state, ns, q, t)
     for name, *a in ops:
+        if name in TWO_Q:
+            rho = ns.before2(rho, a[0], a[1], relax_d)
+        if name in ("purity", "probs"):
+            rho = ns.barrier(rho, n, relax_d)
         if name in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             gate = {"h": HGate, "x": XGate, "y": YGate, "z": ZGate, "s": SGate, "t": TGate, "sdg": SdgGate, "tdg": TdgGate}[name]()
             rho = rho.evolve(Operator(gate), qargs=[a[0]])
@@ -335,6 +375,9 @@ def reference_dm(n, ops):
             lines.append(f"m {q} {reported}")
         elif name == "wait":
             rho = dm_relax(rho, ns, a[0], a[1])
+            ns.advance([a[0]], a[1])
+        elif name == "barrier":
+            rho = ns.barrier(rho, n, relax_d)
         elif name == "purity":
             lines.append(f"purity {float(np.real(np.trace(rho.data @ rho.data)))!r}")
         elif name == "trace":
@@ -353,9 +396,12 @@ def reference_dm(n, ops):
             rho = rho.evolve(Kraus(depol2_kraus(ns.g2p(a[0], a[1]))), qargs=[a[0], a[1]])
         if name in ONE_Q:
             rho = dm_relax(rho, ns, a[0], ns.t1q(a[0]))
+            ns.advance([a[0]], ns.t1q(a[0]))
         if name in TWO_Q:
             rho = dm_relax(rho, ns, a[0], ns.t2q(a[0], a[1]))
             rho = dm_relax(rho, ns, a[1], ns.t2q(a[0], a[1]))
+            ns.advance([a[0], a[1]], ns.t2q(a[0], a[1]))
+    rho = ns.barrier(rho, n, relax_d)
     if not quiet:
         for i in range(2**n):
             for j in range(2**n):
@@ -497,6 +543,13 @@ def density_circuits():
     for k in range(1, 5):
         c[f"idle_seed{k}"] = (3, [("seed", k)] + IDLE + [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("wait", 0, 15000), ("wait", 2, 9000),
                                                         ("ry", 2, 1, 3), ("cx", 2, 0), ("m", 0), ("m", 1), ("sample", 50)])
+    SCHED = IDLE + [("sched",)]
+    CHAIN = [("h", 2), ("h", 0), ("cx", 0, 1), ("cx", 0, 1), ("cx", 1, 0), ("ry", 0, 1, 5), ("cx", 1, 2), ("barrier",), ("cx", 0, 2)]
+    c["dm_sched_chain"] = (3, SCHED + CHAIN + [("purity",), ("probs",)])
+    c["dm_sched_off"] = (3, IDLE + CHAIN[:-2] + [("purity",), ("probs",)])
+    c["dm_sched_wait"] = (2, SCHED + [("h", 0), ("wait", 0, 7000), ("cx", 0, 1), ("purity",)])
+    for k in range(1, 4):
+        c[f"sched_seed{k}"] = (3, [("seed", k)] + SCHED + CHAIN + [("m", 1), ("sample", 40)])
     c["dm_p0"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 0, 1), ("bitflip", 1, 0, 1), ("phaseflip", 0, 0, 1), ("ampdamp", 1, 0, 1), ("purity",)])
     c["dm_p1"] = (2, [("h", 0), ("cx", 0, 1), ("depol", 0, 1, 1), ("bitflip", 1, 1, 1), ("phaseflip", 0, 1, 1), ("ampdamp", 1, 1, 1), ("purity",), ("probs",)])
     return c

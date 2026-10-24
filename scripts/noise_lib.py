@@ -51,6 +51,27 @@ def exact_rho(n, ops):
     g1, g2 = {}, {}
     coh, gt = {}, {1: 0, 2: 0}
     d1, d2 = {}, {}
+    sched, clock = [False], {}
+    n_q = n
+
+    def barrier(rho):
+        if sched[0]:
+            end = max([clock.get(q, 0) for q in range(n_q)] + [0])
+            for q in range(n_q):
+                rho = relax(rho, q, end - clock.get(q, 0))
+                clock[q] = end
+        return rho
+
+    def before(rho, a, b):
+        if sched[0]:
+            start = max(clock.get(a, 0), clock.get(b, 0))
+            rho = relax(relax(rho, a, start - clock.get(a, 0)), b, start - clock.get(b, 0))
+            clock[a] = clock[b] = start
+        return rho
+
+    def adv(qs, t):
+        for q in qs:
+            clock[q] = clock.get(q, 0) + t
 
     def relax(rho, q, ns):
         # Qiskit Aer's thermal-relaxation channel, independent of src/profile.cho's formula.
@@ -59,6 +80,8 @@ def exact_rho(n, ops):
         return rho
 
     for name, *a in ops:
+        if name in TWO_Q:
+            rho = before(rho, a[0], a[1])
         if name in ("h", "x", "y", "z"):
             rho = rho.evolve(Operator({"h": HGate, "x": XGate, "y": YGate, "z": ZGate}[name]()), qargs=[a[0]])
         elif name == "cx":
@@ -89,6 +112,11 @@ def exact_rho(n, ops):
             d2[frozenset((a[0], a[1]))] = a[2]
         elif name == "wait":
             rho = relax(rho, a[0], a[1])
+            adv([a[0]], a[1])
+        elif name == "sched":
+            sched[0] = True
+        elif name == "barrier":
+            rho = barrier(rho)
         else:
             raise ValueError(name)
         # The gate-noise model acts after each gate, never after a noise operation.
@@ -100,10 +128,13 @@ def exact_rho(n, ops):
             rho = rho.evolve(Kraus(depol2_kraus(p2)), qargs=[a[0], a[1]])
         if name in ONE_Q:
             rho = relax(rho, a[0], d1.get(a[0]) or gt[1])
+            adv([a[0]], d1.get(a[0]) or gt[1])
         if name in TWO_Q:
             t = d2.get(frozenset((a[0], a[1]))) or gt[2]
             rho = relax(rho, a[0], t)
             rho = relax(rho, a[1], t)
+            adv([a[0], a[1]], t)
+    rho = barrier(rho)
     return rho.data
 
 

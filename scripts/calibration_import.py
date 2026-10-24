@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Read a real device's published calibration into a noise profile.
+"""REFERENCE IMPLEMENTATION of `tools/qcalib.cho` (the tool is cancho; this is the independent oracle it is
+differentially tested against by `scripts/check_tools.py`, on every fake backend of at most 20 qubits).
+
+Read a real device's published calibration into a noise profile.
 
     python3 scripts/calibration_import.py perth            # a snapshot shipped with qiskit-ibm-runtime
     python3 scripts/calibration_import.py --props props.json --name my_device -o profiles/my_device.json

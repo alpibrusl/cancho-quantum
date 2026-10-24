@@ -3,7 +3,7 @@
 
     CANCHO=path/to/cancho python3 scripts/check_profile.py [--exe qsim]
 
-1. `noise_profile.py` turns profiles/example_5q.json and tests/profile/ghz5.qc into the checked-in
+1. `tools/qprofile.cho` turns profiles/example_5q.json and tests/profile/ghz5.qc into the checked-in
    tests/profile/ghz5_example_5q.qc, byte for byte.
 2. `qsim` runs that circuit on the density matrix, and its probabilities and purity match a
    calculation made *from the JSON file directly* with Qiskit (it never reads the converter's
@@ -26,11 +26,11 @@ from qiskit.quantum_info import DensityMatrix, Kraus, Operator
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check_diff import ROOT, build, parse  # noqa: E402
 from noise_lib import depol2_kraus, kraus  # noqa: E402
-import noise_profile  # noqa: E402
+import tools_lib  # noqa: E402
 
 
 def micro(p):
-    return round(p * noise_profile.DEN) / noise_profile.DEN
+    return round(p * tools_lib.DEN) / tools_lib.DEN
 
 
 def independent(profile, n):
@@ -63,7 +63,7 @@ def main():
     prof_path = os.path.join(ROOT, "profiles", "example_5q.json")
     profile = json.load(open(prof_path))
     circuit = open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read()
-    made = noise_profile.apply(profile, circuit)
+    made = tools_lib.apply(profile, circuit)
     want = open(os.path.join(ROOT, "tests", "profile", "ghz5_example_5q.qc")).read()
     report(made == want, "the converter's output equals tests/profile/ghz5_example_5q.qc")
 
@@ -82,7 +82,7 @@ def main():
         bad = json.loads(json.dumps(profile))
         mutate(bad)
         try:
-            noise_profile.apply(bad, circuit_text)
+            tools_lib.apply(bad, circuit_text)
         except (ValueError, KeyError):
             return True
         return False

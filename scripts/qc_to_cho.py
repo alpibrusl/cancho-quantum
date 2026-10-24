@@ -64,10 +64,14 @@ def convert(name):
     # The noise parameters live in the sampler's slice, exactly as when `qsim` interprets the
     # circuit, so a compiled circuit calls the same functions. The after-gate calls are emitted only
     # for a circuit that sets a gate-noise parameter somewhere.
-    gate_noise = any(l[0] in ("model1", "model2", "gate1err", "gate2err", "time1", "time2", "dur1", "dur2") for l in lines[1:])
+    gate_noise = any(l[0] in ("model1", "model2", "gate1err", "gate2err", "time1", "time2", "dur1", "dur2", "sched") for l in lines[1:])
 
     for op in lines[1:]:
         k, a = op[0], [int(x) for x in op[1:]]
+        if gate_noise and k in ("cx", "cz", "cp", "swap"):
+            body.append(f"noise.before2(st, {n}, {a[0]}, {a[1]}, rng);")
+        if k == "sample":
+            body.append(f"noise.barrier(st, {n}, rng);")
         if k in ("h", "x", "y", "z", "s", "t", "sdg", "tdg"):
             body.append(f"gates.{k}(st, {n}, {a[0]});")
         elif k in ("cx", "cz"):
@@ -112,6 +116,11 @@ def convert(name):
             body.append(f"profile.set_dur2(rng, {a[0]}, {a[1]}, {a[2]});")
         elif k == "wait":
             body.append(f"noise.relax(st, {n}, {a[0]}, {a[1]}, rng);")
+            body.append(f"profile.set_clock(rng, {a[0]}, profile.clock(rng, {a[0]}) + {a[1]});")
+        elif k == "sched":
+            body.append("rng[1410] = 1;")
+        elif k == "barrier":
+            body.append(f"noise.barrier(st, {n}, rng);")
         elif k == "trig":
             prints = True
             body.append(f"dump.trig(io, scratch, {a[0]}, {a[1]});")
@@ -137,6 +146,7 @@ def convert(name):
         f"fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch: &!b [byte]) -> {row} int {{",
     ]
     out += ["    " + b for b in body]
+    out += [f"    noise.barrier(st, {n}, rng);"] if gate_noise else []
     out += ["    return 0;", "}"]
     text = "\n".join(out) + "\n" + DRIVER % {"n": n, "args": "io, st, rng, scratch"}
     return text
