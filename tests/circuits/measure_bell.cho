@@ -12,8 +12,8 @@ fn circuit[&i, &s, &r, &b](io: &!i Io, st: &!s [float], rng: &!r [int], scratch:
     rng[0] = 7;
     gates.h(st, 2, 0);
     gates.cx(st, 2, 0, 1);
-    dump.measurement(io, 0, measure.measure(st, 2, 0, rng));
-    dump.measurement(io, 1, measure.measure(st, 2, 1, rng));
+    dump.measurement(io, 0, noise.readout(measure.measure(st, 2, 0, rng), 0.0, rng));
+    dump.measurement(io, 1, noise.readout(measure.measure(st, 2, 1, rng), 0.0, rng));
     return 0;
 }
 

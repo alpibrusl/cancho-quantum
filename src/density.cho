@@ -88,6 +88,55 @@ fn channel[&s, &t, &c](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: i
     return 0;
 }
 
+// A Pauli (0 identity, 1 X, 2 Y, 3 Z) on qubit `q` of the rows and its conjugate on
+// the columns. The conjugate of Y is minus Y.
+fn pauli_both[&s](st: &!s [float], n: int, q: int, k: int) -> [] int {
+    let m = 2 * n;
+    if k == 1 {
+        gates.x(st, m, q);
+        gates.x(st, m, q + n);
+    } else if k == 2 {
+        gates.y(st, m, q);
+        gates.unitary(st, m, q + n, complex.zero(), complex.make(0.0, 1.0), complex.make(0.0, 0.0 - 1.0), complex.zero());
+    } else if k == 3 {
+        gates.z(st, m, q);
+        gates.z(st, m, q + n);
+    }
+    return 0;
+}
+
+// Two-qubit depolarizing: rho -> (1 - p) rho + (p / 15) * sum over the 15 non-identity
+// Pauli pairs of (P x Q) rho (P x Q).
+fn channel2[&s, &t, &c](st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, a: int, b: int, p: float) -> [] int {
+    var i = 0;
+    while i < len(acc) {
+        acc[i] = (1.0 - p) * st[i];
+        i = i + 1;
+    }
+    var m = 1;
+    while m < 16 {
+        i = 0;
+        while i < len(st) {
+            tmp[i] = st[i];
+            i = i + 1;
+        }
+        pauli_both(tmp, n, a, m / 4);
+        pauli_both(tmp, n, b, m % 4);
+        i = 0;
+        while i < len(st) {
+            acc[i] = acc[i] + p / 15.0 * tmp[i];
+            i = i + 1;
+        }
+        m = m + 1;
+    }
+    i = 0;
+    while i < len(st) {
+        st[i] = acc[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
 // One-qubit unitaries by word: the gate on the rows, its conjugate on the columns.
 fn gate1[&s](st: &!s [float], n: int, w: int, q: int, theta: float) -> [] int {
     gates.in_range(n, q);
@@ -235,31 +284,43 @@ fn print_probs[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [byt
 pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [float], acc: &!c [float], n: int, rng: &!r [int], scratch: &!b [byte], quiet: &!q [int]) -> [io_read, io_write] int {
     var w = reader.read_word(io);
     while w >= 0 {
+        var post1 = 0 - 1;
+        var post2a = 0 - 1;
+        var post2b = 0 - 1;
         if w == 104 || w == 120 || w == 121 || w == 122 || w == 115 || w == 116 || w == 7562343 || w == 7627879 {
-            gate1(st, n, w, reader.read_int(io), 0.0);
+            let q = reader.read_int(io);
+            gate1(st, n, w, q, 0.0);
+            post1 = q;
         } else if w == 29304 || w == 29305 || w == 29306 || w == 112 {
             let a = reader.read_int(io);
             let num = reader.read_int(io);
             let den = reader.read_int(io);
             gate1(st, n, w, a, gates.angle(num, den));
+            post1 = a;
         } else if w == 25464 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
             gates.cx(st, 2 * n, a, b);
             gates.cx(st, 2 * n, a + n, b + n);
+            post2a = a;
+            post2b = b;
         } else if w == 25466 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
             gates.cz(st, 2 * n, a, b);
             gates.cz(st, 2 * n, a + n, b + n);
+            post2a = a;
+            post2b = b;
         } else if w == 1937203568 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
             gates.distinct(n, a, b);
             gates.swap(st, 2 * n, a, b);
             gates.swap(st, 2 * n, a + n, b + n);
+            post2a = a;
+            post2b = b;
         } else if w == 6513528 {
             let a = reader.read_int(io);
             let b = reader.read_int(io);
@@ -277,18 +338,42 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             gates.distinct(n, a, b);
             gates.cp(st, 2 * n, a, b, gates.angle(num, den));
             gates.cp(st, 2 * n, a + n, b + n, 0.0 - gates.angle(num, den));
+            post2a = a;
+            post2b = b;
         } else if w == 27700496373148016 || w == 31639965148735084 || w == 431198596972 || w == 27423402228804976 {
             let a = reader.read_int(io);
             let num = reader.read_int(io);
             let den = reader.read_int(io);
             gates.in_range(n, a);
             channel(st, tmp, acc, n, a, w, noise.prob(num, den));
+        } else if w == 110386840824882 {
+            let a = reader.read_int(io);
+            let b = reader.read_int(io);
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            gates.distinct(n, a, b);
+            channel2(st, tmp, acc, n, a, b, noise.prob(num, den));
+        } else if w == 32199616316274036 || w == 120325193165873 || w == 120325193165874 {
+            let num = reader.read_int(io);
+            let den = reader.read_int(io);
+            if den < 1 || num < 0 || num > den {
+                return 2;
+            }
+            var slot = 2;
+            if w == 120325193165873 {
+                slot = 4;
+            } else if w == 120325193165874 {
+                slot = 6;
+            }
+            rng[slot] = num;
+            rng[slot + 1] = den;
         } else if w == 1936024932 {
             rng[0] = reader.read_int(io);
         } else if w == 109 {
             let a = reader.read_int(io);
             gates.in_range(n, a);
-            dump.measurement(io, a, measure_q(st, n, a, rng));
+            let bit = measure_q(st, n, a, rng);
+            dump.measurement(io, a, noise.readout(bit, noise.readout_p(rng), rng));
         } else if w == 123649732998265 {
             var total = 0.0;
             var k = 0;
@@ -315,6 +400,12 @@ pub fn run[&i, &s, &t, &c, &r, &b, &q](io: &!i Io, st: &!s [float], tmp: &!t [fl
             quiet[0] = 1;
         } else {
             return 2;
+        }
+        if post1 >= 0 && rng[4] != 0 {
+            channel(st, tmp, acc, n, post1, 431198596972, noise.prob(rng[4], rng[5]));
+        }
+        if post2a >= 0 && rng[6] != 0 {
+            channel2(st, tmp, acc, n, post2a, post2b, noise.prob(rng[6], rng[7]));
         }
         w = reader.read_word(io);
     }

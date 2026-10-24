@@ -13,7 +13,7 @@ Install cancho-quantum and try it on one small circuit. Work in a new empty dire
    cd cancho-quantum
 
 4. Run the checks that need no network after the clone:
-   python3 scripts/check_types.py          # every line must say ok; ends "23 of 23 fixtures behave as stated"
+   python3 scripts/check_types.py          # every line must say ok; ends "24 of 24 fixtures behave as stated"
    Then, only if you may install Python packages into a virtual environment (python3 -m venv .venv && . .venv/bin/activate && pip install qiskit numpy):
    python3 scripts/check_diff.py           # amplitudes against Qiskit; ends with the worst error, which must be under 1e-12
    python3 scripts/check_qasm.py           # OpenQASM files read by Qiskit's parser and by qsim agree

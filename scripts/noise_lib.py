@@ -33,9 +33,20 @@ def kraus(name, p):
     raise ValueError(name)
 
 
+def depol2_kraus(p):
+    """Two-qubit depolarizing: (1 - p) I and p / 15 on each of the 15 other Pauli pairs. qargs [a, b]: b is the high factor."""
+    P = [I2, X, Y, Z]
+    return [math.sqrt(1 - p) * np.eye(4, dtype=complex)] + [math.sqrt(p / 15) * np.kron(P[m % 4], P[m // 4]) for m in range(1, 16)]
+
+
+ONE_Q = ("h", "x", "y", "z", "ry")
+TWO_Q = ("cx",)
+
+
 def exact_rho(n, ops):
     """The density matrix after `ops` (tuples as in the .qc format, noise included)."""
     rho = DensityMatrix.from_int(0, 2 ** n)
+    m1 = m2 = 0.0
     for name, *a in ops:
         if name in ("h", "x", "y", "z"):
             rho = rho.evolve(Operator({"h": HGate, "x": XGate, "y": YGate, "z": ZGate}[name]()), qargs=[a[0]])
@@ -45,8 +56,21 @@ def exact_rho(n, ops):
             rho = rho.evolve(Operator(RYGate(math.pi * a[1] / a[2])), qargs=[a[0]])
         elif name in ("bitflip", "phaseflip", "depol", "ampdamp"):
             rho = rho.evolve(Kraus(kraus(name, a[1] / a[2])), qargs=[a[0]])
+        elif name == "depol2":
+            rho = rho.evolve(Kraus(depol2_kraus(a[2] / a[3])), qargs=[a[0], a[1]])
+        elif name in ("model1", "model2"):
+            val = a[0] / a[1] if a[0] else 0.0
+            if name == "model1":
+                m1 = val
+            else:
+                m2 = val
         else:
             raise ValueError(name)
+        # The gate-noise model acts after each gate, never after a noise operation.
+        if name in ONE_Q and m1:
+            rho = rho.evolve(Kraus(kraus("depol", m1)), qargs=[a[0]])
+        if name in TWO_Q and m2:
+            rho = rho.evolve(Kraus(depol2_kraus(m2)), qargs=[a[0], a[1]])
     return rho.data
 
 

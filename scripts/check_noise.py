@@ -28,6 +28,8 @@ CIRCUITS = {
     "depolarized Bell pair": (2, [("h", 0), ("cx", 0, 1), ("depol", 1, 1, 4)]),
     "bit and phase flips on a rotated qubit": (2, [("ry", 0, 1, 3), ("bitflip", 0, 1, 5), ("phaseflip", 0, 1, 3), ("cx", 0, 1), ("bitflip", 1, 1, 4)]),
     "amplitude damping of |+> and a Bell pair": (2, [("h", 0), ("ampdamp", 0, 1, 3), ("cx", 0, 1), ("ampdamp", 1, 1, 2)]),
+    "two-qubit depolarizing on a Bell pair and a chain": (3, [("h", 0), ("cx", 0, 1), ("depol2", 0, 1, 1, 4), ("cx", 1, 2), ("depol2", 1, 2, 1, 3)]),
+    "a gate-noise model on a GHZ state": (3, [("model1", 1, 12), ("model2", 1, 8), ("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("ry", 2, 1, 3)]),
     "all four channels on 3 qubits": (3, [("h", 0), ("cx", 0, 1), ("cx", 1, 2), ("depol", 0, 1, 6), ("ampdamp", 1, 1, 4),
                                           ("phaseflip", 2, 1, 5), ("bitflip", 1, 1, 7), ("ry", 2, 1, 4), ("depol", 2, 1, 3)]),
 }
@@ -65,6 +67,31 @@ def main():
         results.append({"circuit": name, "max_z": round(worst, 2), "trace_distance": round(td, 4)})
         if bad:
             failed.append(name)
+    # Readout error is classical: it flips the reported bit, not the state. Each reported
+    # bit is a coin, so the counts are binomial and a z-score says how far off they are.
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    def run(text):
+        return subprocess.run([exe], input=text, capture_output=True, text=True, check=True).stdout
+
+    def reported(seed):
+        out = run(f"n 2\nseed {seed}\nx 0\nreadout 1 4\nm 0\nm 1\nquiet\n")
+        return [int(l.split()[2]) for l in out.splitlines() if l.startswith("m ")]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(reported, range(1, args.shots + 1)))
+    ones0 = sum(r[0] for r in rows)       # true 1, flipped to 0 with probability 1/4
+    ones1 = sum(r[1] for r in rows)       # true 0, flipped to 1 with probability 1/4
+    sd = (args.shots * 0.75 * 0.25) ** 0.5
+    z_ro = max(abs(ones0 - 0.75 * args.shots), abs(ones1 - 0.25 * args.shots)) / sd
+    out = run("n 1\nseed 5\nx 0\nreadout 1 4\nsample 4000\nquiet\n")
+    hits = sum(int(l.split()[2]) for l in out.splitlines() if l.startswith("sample 1 "))
+    z_sample = abs(hits - 3000) / (4000 * 0.75 * 0.25) ** 0.5
+    ok_ro = max(z_ro, z_sample) < 4.5
+    print(("ok   " if ok_ro else "FAIL ") + f"readout error 1/4: measured bits z {z_ro:.2f}, 4000 samples z {z_sample:.2f}")
+    if not ok_ro:
+        failed.append("readout")
     # The test must be able to fail: a wrong channel (twice the probability) is caught.
     n, ops = CIRCUITS["depolarized Bell pair"]
     wrong = [(o[0], o[1], 2 * o[2], o[3]) if o[0] == "depol" else o for o in ops]
@@ -77,7 +104,8 @@ def main():
         failed.append("sensitivity")
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "data", "noise_check.json")
     with open(out, "w") as f:
-        json.dump({"shots": args.shots, "circuits": results, "wrong_probability_z": round(float(z), 1)}, f, indent=2)
+        json.dump({"shots": args.shots, "circuits": results, "wrong_probability_z": round(float(z), 1),
+                   "readout": {"measured_z": round(float(z_ro), 2), "sample_z": round(float(z_sample), 2)}}, f, indent=2)
         f.write("\n")
     sys.exit(1 if failed else 0)
 

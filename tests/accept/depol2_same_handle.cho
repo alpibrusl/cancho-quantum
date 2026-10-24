@@ -1,0 +1,44 @@
+// Two-qubit depolarizing noise with one qubit as both operands. `depol2` takes two `&!`,
+// and `&!` is `val`, so the same borrow passed twice type-checks; `noise.depol2` traps
+// at run time (`docs/qubit-types.md` section 4.1; `cancho#610` tracks the check-time rule).
+//~ TRAPS
+
+import qc.qubit;
+import qc.state;
+
+fn same[&s, &r](st: &!s [float], rng: &!r [int]) -> [] int {
+    let q = qubit.fresh(2, 0);
+    borrow mut q as &!x in {
+        qubit.depol2(x, x, st, rng, 1, 4);
+    }
+    return qubit.measure(q, st, rng);
+}
+
+fn run[&h](heap: &!h Heap) -> [heap] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    var out = 0;
+    region r {
+        let rng = alloc_slice[r](1, 7);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            state.start(st);
+            out = same(st, rng);
+        }
+    }
+    unbox_slice(heap, amp);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    var out = 0;
+    borrow mut heap as &!h in {
+        out = run(h);
+    }
+    release(heap);
+    return out;
+}

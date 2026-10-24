@@ -245,7 +245,7 @@ def build(cancho):
     dev = max(abs(r["estimate"] - r["exact"]) / r["stderr"] for r in nc["rows"] if r["stderr"] > 1e-9)
     zs = ", ".join(f"{c['max_z']:.1f}" for c in nk["circuits"])
     sup.append(tile("Noise, checked against the exact answer",
-        f"Four channels (bit flip, phase flip, depolarizing, amplitude damping), each run as one random operator per run. One run is one noisy outcome; the <em>average</em> of many is the density matrix. Here a Bell pair through depolarizing noise on one qubit: {nc['shots']} seeded runs per point against the exact curve (1 &minus; p). The largest gap is {dev:.1f} standard errors. Four noisy circuits (up to 3 qubits) were compared to a density-matrix calculation over {nk['shots']} runs each: worst z-scores {zs}; doubling a probability on purpose is caught at z = {nk['wrong_probability_z']}.",
+        f"Five channels (bit flip, phase flip, depolarizing, amplitude damping, two-qubit depolarizing), readout error and a gate-noise model, each run as one random operator per run. One run is one noisy outcome; the <em>average</em> of many is the density matrix. Here a Bell pair through depolarizing noise on one qubit: {nc['shots']} seeded runs per point against the exact curve (1 &minus; p). The largest gap is {dev:.1f} standard errors. {len(nk['circuits'])} noisy circuits (up to 3 qubits) were compared to a density-matrix calculation over {nk['shots']} runs each: worst z-scores {zs}. Readout error, which flips the reported bit and not the state, is checked as a binomial (z = {nk['readout']['measured_z']:.1f} on measured bits, {nk['readout']['sample_z']:.1f} on samples). Doubling a probability on purpose is caught at z = {nk['wrong_probability_z']}.",
         f'      {svgs.curve_chart(nc["rows"], "Fidelity of a Bell pair against the depolarizing probability: runs follow the exact straight line 1 minus p", "depolarizing probability p", "fidelity")}\n'
         + links(("Channels", blob("src/noise.cho")), ("Check", blob("scripts/check_noise.py")), ("Results", blob("docs/noise-results.md")))))
     pc = json.load(open(os.path.join(DOCS, "data", "purity_curve.json")))
@@ -295,8 +295,7 @@ def build(cancho):
         ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
-        ("Noise after every gate", "Noise is an operation you place; a noise model that attaches channels to gates automatically is not built.", "Planned", []),
-        ("Two-qubit and readout noise", "Every channel here acts on one qubit. Correlated noise, two-qubit depolarizing and measurement (readout) error are not built.", "Planned", []),
+        ("A richer noise model", "The gate-noise model is one probability for all one-qubit gates and one for all two-qubit gates. Per-qubit and per-gate rates, idle noise, asymmetric readout error and non-Pauli two-qubit noise are not built.", "Planned", []),
         ("Density matrices past 10 qubits", "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.", "Later", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
         ("Real arm64 hardware", "The aarch64 result is emulation. A run on a real arm64 machine is still owed.", "Planned", [("Results", blob("docs/m3-results.md"))]),
@@ -312,8 +311,9 @@ def build(cancho):
              ("t", "T", "t 0"), ("tdg", "T†", "tdg 0"), ("rx", "Rx", "rx 0 1 3"), ("ry", "Ry", "ry 0 1 3"), ("rz", "Rz", "rz 0 1 3"), ("p", "P", "p 0 1 3")]
     two_q = [("cx", "CNOT", "cx 0 1"), ("cz", "CZ", "cz 0 1"), ("cp", "controlled phase", "cp 0 1 1 4"), ("swap", "SWAP", "swap 0 1")]
     three_q = [("ccx", "Toffoli", "ccx 0 1 2")]
-    chans = [("bitflip", "bit flip", "bitflip 0 1 3"), ("phaseflip", "phase flip", "phaseflip 0 1 3"), ("depol", "depolarizing", "depol 0 1 3"), ("ampdamp", "amplitude damping", "ampdamp 0 1 3")]
-    for _, nm, op in one_q + two_q + three_q + chans:
+    chans = [("bitflip", "bit flip", "bitflip 0 1 3"), ("phaseflip", "phase flip", "phaseflip 0 1 3"), ("depol", "depolarizing", "depol 0 1 3"), ("ampdamp", "amplitude damping", "ampdamp 0 1 3"), ("depol2", "two-qubit depolarizing", "depol2 0 1 1 3")]
+    extras_ops = [("readout error", "readout 1 4"), ("a gate-noise model", "model1 1 20"), ("a two-qubit gate-noise model", "model2 1 20")]
+    for _, nm, op in one_q + two_q + three_q + chans + [("", e, o) for e, o in extras_ops]:
         for header in ("n 3", "dm 3"):
             r = subprocess.run([t.qsim], input=f"{header}\n{op}\nquiet\n", capture_output=True, text=True)
             if r.returncode != 0:
@@ -333,7 +333,7 @@ def build(cancho):
     P["CAPABILITIES"] = "\n".join([
         card(f"{n_gates} gates", f"One qubit: {names(one_q)}. Two: {names(two_q)}. Three: {names(three_q)}. Angles are exact fractions of &pi;."),
         card("Pure states, measured or sampled", "Up to 20 qubits (16 MiB at 20). Seeded measurement with collapse, and <code>sample N</code> to draw outcomes without collapsing. The same seed gives the same bits on every build."),
-        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
+        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}; readout error; and a model that adds depolarizing noise after every gate. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
         card("Two input formats", f"A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; {n_qasm} circuits cross-checked with Qiskit&rsquo;s own parser)."),
         card("Algorithms", "Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer."),
         card("A type checker for qubits", f"A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. {n_reject} refusal fixtures, and {n_traps + 1} pinned cases the checker still misses."),
