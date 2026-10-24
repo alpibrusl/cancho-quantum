@@ -158,18 +158,18 @@ def line_chart(series, xs, label, xlab, ylab):
     return "".join(o)
 
 
-def curve_chart(rows, label, xlab, ylab, y0=0.4, y1=1.05, label_est="runs, with two standard errors", label_exact="exact", errbars=True):
+def curve_chart(rows, label, xlab, ylab, y0=0.4, y1=1.05, label_est="runs, with two standard errors", label_exact="exact", errbars=True, xmax=0.5, xname="p"):
     """Linear axes: an exact line and estimates with error bars. rows = [{p, exact, estimate, stderr}]."""
     w, h, l, r, t, b = 520, 230, 46, 14, 12, 38
     def X(v):
-        return l + v / 0.5 * (w - l - r)
+        return l + v / xmax * (w - l - r)
     def Y(v):
         return t + (1 - (v - y0) / (y1 - y0)) * (h - t - b)
     o = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(label)}" class="chart">']
     ticks = [round(y0 + 0.1 * k, 1) for k in range(1, int((y1 - y0) / 0.1) + 1) if y0 + 0.1 * k <= y1 + 1e-9]
     for yv in ticks:
         o.append(f'<line x1="{l}" y1="{Y(yv):.1f}" x2="{w - r}" y2="{Y(yv):.1f}" class="grid"/><text x="{l - 5}" y="{Y(yv) + 3:.1f}" text-anchor="end" class="tick">{yv:.1f}</text>')
-    for xv in (0, 0.1, 0.2, 0.3, 0.4, 0.5):
+    for xv in [xmax * k / 5 for k in range(6)]:
         o.append(f'<text x="{X(xv):.1f}" y="{h - b + 14}" text-anchor="middle" class="tick">{xv:g}</text>')
     pts = " ".join(f"{X(rw['p']):.1f},{Y(rw['exact']):.1f}" for rw in rows)
     o.append(f'<polyline points="{pts}" class="line s1"/>')
@@ -178,7 +178,7 @@ def curve_chart(rows, label, xlab, ylab, y0=0.4, y1=1.05, label_est="runs, with 
         if errbars:
             lo, hi = Y(rw["estimate"] - 2 * rw["stderr"]), Y(rw["estimate"] + 2 * rw["stderr"])
             o.append(f'<line x1="{x:.1f}" y1="{lo:.1f}" x2="{x:.1f}" y2="{hi:.1f}" class="err"/>')
-        o.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" class="pt s0"><title>p={rw["p"]}: runs {rw["estimate"]:.4f} (+/- {2 * rw["stderr"]:.4f}), exact {rw["exact"]:.4f}</title></circle>')
+        o.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" class="pt s0"><title>{xname}={rw["p"]:g}: runs {rw["estimate"]:.4f} (+/- {2 * rw["stderr"]:.4f}), exact {rw["exact"]:.4f}</title></circle>')
     o.append(f'<text x="{w - r - 4}" y="{Y(rows[-1]["exact"]) - 8:.1f}" text-anchor="end" class="ltext s1">{esc(label_exact)}</text>')
     o.append(f'<text x="{l + 6}" y="{t + 10}" class="ltext s0">{esc(label_est)}</text>')
     o.append(f'<text x="{(l + w - r) / 2}" y="{h - 4}" text-anchor="middle" class="tick">{esc(xlab)}</text>')

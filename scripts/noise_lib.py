@@ -12,6 +12,7 @@ import subprocess
 import numpy as np
 from qiskit.circuit.library import CXGate, CZGate, HGate, RYGate, RZGate, XGate, YGate, ZGate
 from qiskit.quantum_info import DensityMatrix, Kraus, Operator
+from qiskit_aer.noise import thermal_relaxation_error
 
 I2 = np.eye(2, dtype=complex)
 X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -48,6 +49,14 @@ def exact_rho(n, ops):
     rho = DensityMatrix.from_int(0, 2 ** n)
     m1 = m2 = 0.0
     g1, g2 = {}, {}
+    coh, gt = {}, {1: 0, 2: 0}
+
+    def relax(rho, q, ns):
+        # Qiskit Aer's thermal-relaxation channel, independent of src/profile.cho's formula.
+        if ns > 0 and q in coh:
+            rho = rho.evolve(Kraus(thermal_relaxation_error(coh[q][0], coh[q][1], ns)), qargs=[q])
+        return rho
+
     for name, *a in ops:
         if name in ("h", "x", "y", "z"):
             rho = rho.evolve(Operator({"h": HGate, "x": XGate, "y": YGate, "z": ZGate}[name]()), qargs=[a[0]])
@@ -69,6 +78,12 @@ def exact_rho(n, ops):
             g1[a[0]] = a[1] / a[2] if a[1] else 0.0
         elif name == "gate2err":
             g2[frozenset((a[0], a[1]))] = a[2] / a[3] if a[2] else 0.0
+        elif name == "coher":
+            coh[a[0]] = (a[1], a[2])
+        elif name in ("time1", "time2"):
+            gt[int(name[-1])] = a[0]
+        elif name == "wait":
+            rho = relax(rho, a[0], a[1])
         else:
             raise ValueError(name)
         # The gate-noise model acts after each gate, never after a noise operation.
@@ -78,6 +93,11 @@ def exact_rho(n, ops):
         p2 = g2[frozenset((a[0], a[1]))] if (name in TWO_Q and frozenset((a[0], a[1])) in g2) else m2
         if name in TWO_Q and p2 > 0.0:
             rho = rho.evolve(Kraus(depol2_kraus(p2)), qargs=[a[0], a[1]])
+        if name in ONE_Q:
+            rho = relax(rho, a[0], gt[1])
+        if name in TWO_Q:
+            rho = relax(rho, a[0], gt[2])
+            rho = relax(rho, a[1], gt[2])
     return rho.data
 
 

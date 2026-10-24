@@ -35,6 +35,11 @@
       "circuit": "all four channels on 3 qubits",
       "max_z": 1.43,
       "trace_distance": 0.0097
+    },
+    {
+      "circuit": "idle noise: T1/T2 on a GHZ state, gate times and a wait",
+      "max_z": 3.06,
+      "trace_distance": 0.0126
     }
   ],
   "wrong_probability_z": 28.0,

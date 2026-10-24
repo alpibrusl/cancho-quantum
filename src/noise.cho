@@ -142,14 +142,27 @@ pub fn readout[&r](bit: int, q: int, rng: &!r [int]) -> [] int {
     return bit;
 }
 
+// Idle noise: qubit `q` waits `ns` nanoseconds and relaxes (T1 amplitude damping, then
+// T2 dephasing; `profile.relax_gamma`). It does nothing, and draws nothing, for a qubit with
+// no `coher`; otherwise it draws exactly twice (damping, then the phase flip).
+pub fn relax[&s, &r](st: &!s [float], n: int, q: int, ns: int, rng: &!r [int]) -> [] int {
+    if ns > 0 && profile.has_coh(rng, q) {
+        ampdamp(st, n, q, profile.relax_gamma(rng, q, ns), rng);
+        phaseflip(st, n, q, profile.relax_flip(rng, q, ns), rng);
+    }
+    return 0;
+}
+
 // The gate-noise model: after a one-qubit gate, `depol`; after a two-qubit gate,
 // `depol2`; with the probability `profile` gives for that qubit or pair (its own, if set,
-// else the `model1` / `model2` default). Not after Toffoli, measurement or a noise operation.
+// else the `model1` / `model2` default). Then each gate qubit relaxes for the gate's duration (`time1`, `time2`) if it has a `coher`.
+// Not after Toffoli, measurement or a noise operation.
 pub fn after1[&s, &r](st: &!s [float], n: int, q: int, rng: &!r [int]) -> [] int {
     let p = profile.g1_p(rng, q);
     if p > 0.0 {
         depol(st, n, q, p, rng);
     }
+    relax(st, n, q, rng[968], rng);
     return 0;
 }
 
@@ -158,5 +171,7 @@ pub fn after2[&s, &r](st: &!s [float], n: int, a: int, b: int, rng: &!r [int]) -
     if p > 0.0 {
         depol2(st, n, a, b, p, rng);
     }
+    relax(st, n, a, rng[969], rng);
+    relax(st, n, b, rng[969], rng);
     return 0;
 }

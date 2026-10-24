@@ -270,6 +270,13 @@ def build(cancho):
         f"A JSON file describes a device: a depolarizing rate per qubit for one-qubit gates, per pair for two-qubit gates, and asymmetric readout error per qubit (a true 1 is misread more often than a true 0). <code>scripts/noise_profile.py</code> turns it into {n_ops} operations and puts them in front of a circuit; <code>qsim</code> still reads only standard input. Below, a 5-qubit GHZ state through <b>example-5q</b> (<em>invented</em> numbers of a realistic size, not a real machine) on the density matrix: fidelity <b>{pr_fid:.4f}</b>, purity <b>{pr_purity:.4f}</b>. The bars are the exact outcome probabilities (readout error acts on top, when measuring). It matches a Qiskit calculation made from the JSON to 1e-12.",
         f'      {bars_svg(5, pr_amps, "Exact probability of each of the 32 outcomes of a five-qubit GHZ state under the example noise profile: the all-zeros and all-ones outcomes dominate, with small leakage into neighbours")}\n'
         + links(("Profile", blob("profiles/example_5q.json")), ("Converter", blob("scripts/noise_profile.py")), ("Check", blob("scripts/check_profile.py")), ("Format", blob("docs/noise-profile.md")))))
+    ic = json.load(open(os.path.join(DOCS, "data", "idle_curve.json")))
+    n_idle = len([f for f in os.listdir(os.path.join(ROOT, "tests", "diff")) if "idle" in f and f.endswith(".qc")])
+    sup.append(tile("Idle noise: T1 and T2",
+        f"A qubit that waits decays. <code>coher q T1 T2</code> gives it coherence times in nanoseconds; <code>wait q ns</code> idles it, and <code>time1</code> / <code>time2</code> make every gate take time, during which its qubits relax too. The channel is amplitude damping plus dephasing, sampled by trajectories or exact on the density matrix. Below, T1 = {ic['t1_ns'] // 1000} &micro;s and T2 = {ic['t2_ns'] // 1000} &micro;s: the chance a qubit is still 1, and the coherence of |+&rang;, against waiting time. cancho, <b>Qiskit Aer&rsquo;s own thermal-relaxation channel</b> and the formulas agree to {ic['worst_difference']:.0e}. {n_idle} idle-noise circuits match Qiskit; a sampled GHZ circuit with gate times matches the exact density matrix within statistics. Only the gate&rsquo;s own qubits relax: there is no schedule, so a qubit that waits for others does not decay.",
+        f'      {svgs.curve_chart(ic["population"], "Chance a qubit prepared in 1 is still 1 against waiting time, with T1 of 50 microseconds: a falling exponential that cancho and Qiskit Aer share", "waiting time (microseconds)", "P(still 1)", y0=0.0, y1=1.0, label_est="cancho (exact)", label_exact="exp(-t/T1)", errbars=False, xmax=100, xname="t")}\n'
+        f'      {svgs.curve_chart(ic["coherence"], "Coherence of a qubit prepared in plus against waiting time, with T2 of 70 microseconds", "waiting time (microseconds)", "coherence |rho01|", y0=0.0, y1=0.5, label_est="cancho (exact)", label_exact="exp(-t/T2) / 2", errbars=False, xmax=100, xname="t")}\n'
+        + links(("Source", blob("src/noise.cho")), ("Curve", blob("scripts/idle_curve.py")), ("Check", blob("scripts/check_noise.py")), ("Design", blob("docs/idle-noise.md")))))
     qr = json.load(open(os.path.join(ROOT, "tests", "qasm", "results.json")))
     sup.append(tile("OpenQASM 2.0 in",
         f"<code>qsim</code> reads the OpenQASM a circuit is usually written in. All {qr['files']} circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, {qr['qiskit_written_run']} of the files <em>Qiskit</em> wrote run; {qr['qiskit_written_refused_decimal']} were refused because they carry a decimal angle (only multiples of &pi; are supported, on purpose).",
@@ -309,7 +316,7 @@ def build(cancho):
         ("Refuse CNOT(q, q) at check time", "A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.", "Needs the compiler", [("Tracked in cancho#610", "https://github.com/alpibrusl/cancho/issues/610"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("Private constructors", "So that only the simulator can mint a qubit. A proposed opt-in <code>opaque</code> struct; written, not built.", "Needs the compiler", [("Tracked in cancho#611", "https://github.com/alpibrusl/cancho/issues/611"), ("Design PR #608", "https://github.com/alpibrusl/cancho/pull/608")]),
         ("The rest of OpenQASM", "Decimal angles (their digits are rounded, so they are refused today), <code>gate</code> definitions, <code>u3</code>, <code>if</code>, and writing QASM from cancho itself (a Python script writes it now).", "Planned", [("Reader", blob("src/qasm.cho"))]),
-        ("Time-dependent noise", "Idle noise and decoherence (T1, T2), noise that depends on the gate type or its duration, crosstalk and non-Pauli two-qubit noise are not built; the model is depolarizing noise after a gate, at a rate per qubit or pair.", "Planned", []),
+        ("Scheduled noise and crosstalk", "Idle noise (T1, T2) exists, but only for the qubits a gate touches and an explicit <code>wait</code>: there is no scheduler, so a qubit that waits while others work does not decay. Noise that depends on the gate type, crosstalk and non-Pauli two-qubit noise are not built.", "Planned", [("Idle noise", blob("docs/idle-noise.md"))]),
         ("A real device's calibration", "Reading a real machine's published error rates into a profile. The example profile is invented; no real calibration data has been used.", "Planned", []),
         ("Density matrices past 10 qubits", "The density matrix is stored as a state of 2n qubits, so the 20-qubit limit means 10. Larger needs a different representation.", "Later", []),
         ("A second reference, Cirq", "Qiskit is the only reference so far. A second one would catch a convention both share.", "Planned", []),
@@ -328,7 +335,7 @@ def build(cancho):
     three_q = [("ccx", "Toffoli", "ccx 0 1 2")]
     chans = [("bitflip", "bit flip", "bitflip 0 1 3"), ("phaseflip", "phase flip", "phaseflip 0 1 3"), ("depol", "depolarizing", "depol 0 1 3"), ("ampdamp", "amplitude damping", "ampdamp 0 1 3"), ("depol2", "two-qubit depolarizing", "depol2 0 1 1 3")]
     extras_ops = [("readout error", "readout 1 4"), ("a gate-noise model", "model1 1 20"), ("a two-qubit gate-noise model", "model2 1 20"),
-                  ("per-qubit gate error", "gate1err 0 1 20"), ("per-pair gate error", "gate2err 0 1 1 20"), ("asymmetric readout error", "readerr 0 1 20 1 10")]
+                  ("per-qubit gate error", "gate1err 0 1 20"), ("per-pair gate error", "gate2err 0 1 1 20"), ("asymmetric readout error", "readerr 0 1 20 1 10"), ("idle noise (T1, T2)", "coher 0 50000 70000"), ("gate durations", "time2 300"), ("waiting", "coher 0 50000 70000\nwait 0 1000")]
     for _, nm, op in one_q + two_q + three_q + chans + [("", e, o) for e, o in extras_ops]:
         for header in ("n 3", "dm 3"):
             r = subprocess.run([t.qsim], input=f"{header}\n{op}\nquiet\n", capture_output=True, text=True)
@@ -349,7 +356,7 @@ def build(cancho):
     P["CAPABILITIES"] = "\n".join([
         card(f"{n_gates} gates", f"One qubit: {names(one_q)}. Two: {names(two_q)}. Three: {names(three_q)}. Angles are exact fractions of &pi;."),
         card("Pure states, measured or sampled", "Up to 20 qubits (16 MiB at 20). Seeded measurement with collapse, and <code>sample N</code> to draw outcomes without collapsing. The same seed gives the same bits on every build."),
-        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
+        card("Noise, two ways", f"{len(chans)} channels: {names(chans)}; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file; idle decay (T1, T2) while a qubit waits or a gate runs. Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits)."),
         card("Two input formats", f"A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; {n_qasm} circuits cross-checked with Qiskit&rsquo;s own parser)."),
         card("Algorithms", "Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer."),
         card("A type checker for qubits", f"A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. {n_reject} refusal fixtures, and {n_traps + 1} pinned cases the checker still misses."),
@@ -366,7 +373,7 @@ def build(cancho):
         ("The typed qubit layer", "The same circuits written with <code>Qubit</code> values the compiler tracks.",
          ["Bell pair, 200 shots, typed", "Teleportation", "Toffoli, typed"]),
         ("Noise", "Two ways to simulate it: sampled runs, and the exact density matrix.",
-         ["Noise, checked against the exact answer", "Exact noise: the density matrix", "A device-style noise profile"]),
+         ["Noise, checked against the exact answer", "Exact noise: the density matrix", "A device-style noise profile", "Idle noise: T1 and T2"]),
         ("Input formats", "A plain-text circuit format and OpenQASM 2.0.", ["OpenQASM 2.0 in"]),
         ("Reproducibility", "The same bytes on every build.", ["The same bytes, six ways"]),
     ]
