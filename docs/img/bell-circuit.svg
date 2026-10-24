@@ -16,6 +16,9 @@
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .axis { stroke: var(--muted); stroke-width: 1; }
 .chart .bar { fill: var(--accent); }
+.chart .bar.b1 { fill: var(--muted); }
+.chart .bar.b2 { fill: var(--good); }
+.chart .bar.b3 { fill: var(--fg); opacity: .6; }
 .chart .band { fill: var(--accent); opacity: .14; }
 .chart .gateline { stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 4 3; }
 .chart .gtext { fill: var(--bad); font: 10px var(--mono); }

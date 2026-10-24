@@ -185,3 +185,35 @@ def curve_chart(rows, label, xlab, ylab, y0=0.4, y1=1.05, label_est="runs, with 
     o.append(f'<text x="10" y="{(t + h - b) / 2}" class="tick" transform="rotate(-90 10 {(t + h - b) / 2})" text-anchor="middle">{esc(ylab)}</text>')
     o.append("</svg>")
     return "".join(o)
+
+
+def bench_chart(groups, series, label, lo=0.01, hi=10.0):
+    """Grouped horizontal bars on a log time axis. groups = [(name, {series_key: seconds})]; series = [(key, name)]."""
+    w, left, right, top = 520, 128, 56, 22
+    bar, gap = 9, 12
+    gh = bar * len(series) + gap
+    h = top + gh * len(groups) + 34
+    span = math.log10(hi) - math.log10(lo)
+
+    def X(v):
+        return left + (math.log10(max(v, lo)) - math.log10(lo)) / span * (w - left - right)
+    o = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(label)}" class="chart">']
+    t = lo
+    while t <= hi * 1.0001:
+        o.append(f'<line x1="{X(t):.1f}" y1="{top - 6}" x2="{X(t):.1f}" y2="{h - 28}" class="grid"/>'
+                 f'<text x="{X(t):.1f}" y="{h - 16}" text-anchor="middle" class="tick">{t:g} s</text>')
+        t *= 10
+    for gi, (name, vals) in enumerate(groups):
+        y0 = top + gi * gh
+        o.append(f'<text x="{left - 8}" y="{y0 + bar * len(series) / 2 + 3:.1f}" text-anchor="end" class="tick">{esc(name)}</text>')
+        for si, (key, sname) in enumerate(series):
+            v = vals[key]
+            y = y0 + si * bar
+            o.append(f'<rect x="{left}" y="{y}" width="{X(v) - left:.1f}" height="{bar - 2}" class="bar b{si}"><title>{esc(sname)}: {v:.3f} s</title></rect>'
+                     f'<text x="{X(v) + 4:.1f}" y="{y + bar - 2}" class="tick">{v:.2f}</text>')
+    lx = left
+    for si, (key, sname) in enumerate(series):
+        o.append(f'<rect x="{lx}" y="{h - 10}" width="8" height="8" class="bar b{si}"/><text x="{lx + 11}" y="{h - 2}" class="tick">{esc(sname)}</text>')
+        lx += 11 + 6.2 * len(sname) + 12
+    o.append("</svg>")
+    return "".join(o)

@@ -257,6 +257,17 @@ def build(cancho):
         f"<code>dm 2</code> keeps the whole density matrix, so one run is the exact answer, not a sample. The same Bell pair through depolarizing noise (p = 1/4) has purity <b>{float(dm_out[1]):.6f}</b> and trace <b>{float(dm_out[3]):.6f}</b>; the formula (1&minus;p)&sup2; + p&sup2;/3 gives {(0.75) ** 2 + 0.25 ** 2 / 3:.6f}. The curve is the purity against p: cancho, Qiskit and the formula agree to {pc['worst_difference']:.0e}. {n_dm} density-matrix circuits (all channels, every gate, measurement) match Qiskit&rsquo;s DensityMatrix. Up to 10 qubits: the matrix is stored as a state of twice as many.",
         f'      {svgs.curve_chart(pc["rows"], "Purity of a Bell pair against the depolarizing probability: cancho, Qiskit and the formula coincide", "depolarizing probability p", "purity", y0=0.3, y1=1.0, label_est="cancho (exact)", label_exact="formula", errbars=False)}\n'
         + links(("Source", blob("src/density.cho")), ("Circuits", blob("tests/diff")), ("Results", blob("docs/density-results.md")))))
+    bm = json.load(open(os.path.join(DOCS, "data", "benchmark.json")))
+    bn = str(bm["sizes"][-1])
+    names = {"h_layer": "H layer", "cx_chain": "CX chain", "rz_layer": "Rz layer", "random": "random, depth 20", "qft": "QFT"}
+    groups = [(names[k], {"q_l": v[bn]["qsim_llvm"], "q_c": v[bn]["qsim_cranelift"], "a1": v[bn]["aer_1thread"], "a4": v[bn]["aer_4threads"]}) for k, v in bm["workloads"].items()]
+    ratio = [v[bn]["aer_1thread"] / v[bn]["qsim_llvm"] for v in bm["workloads"].values()]
+    ratio4 = [v[bn]["aer_4threads"] / v[bn]["qsim_llvm"] for v in bm["workloads"].values()]
+    dm8 = bm["noisy"]["density_matrix"]["8"]
+    sup.append(tile("Speed: against Qiskit Aer",
+        f"The same circuits on {bn} qubits, whole process for <code>qsim</code> (start, parse, run) against Aer&rsquo;s <code>run</code> alone. Built with LLVM, <code>qsim</code> runs at {min(ratio):.1f}&ndash;{max(ratio):.1f}&times; the speed of Aer on one core, and at {min(ratio4):.1f}&ndash;{max(ratio4):.1f}&times; the speed of Aer on all four (1 is level; Aer&rsquo;s time divided by ours). Cranelift, the default backend, is 3&ndash;6&times; slower than LLVM, so use <code>--backend llvm</code> for large circuits. A {bn}-qubit state takes {bm['memory_mib']['qsim']:.0f} MiB of {bm['memory_mib']['state_vector_mib']:.0f}. The exact density matrix is the weak spot: at 8 qubits it is {dm8['qsim_llvm'] / dm8['aer_density_matrix_1thread']:.0f}&times; slower than Aer&rsquo;s. Minimum of 3&ndash;5 runs on {esc(bm['machine'])}, Qiskit {esc(bm['versions']['qiskit'])}, Aer {esc(bm['versions']['qiskit_aer'])}.",
+        f'      {svgs.bench_chart(groups, [("q_l", "qsim LLVM"), ("q_c", "qsim Cranelift"), ("a1", "Aer 1 thread"), ("a4", "Aer 4 threads")], f"Time to run five circuits on {bn} qubits, qsim built with LLVM and Cranelift against Qiskit Aer on one and four threads, on a log axis")}\n'
+        + links(("Method and results", blob("docs/benchmark.md")), ("Script", blob("scripts/bench_compare.py")), ("Data", blob("docs/data/benchmark.json")))))
     prof_json = json.load(open(os.path.join(ROOT, "profiles", "example_5q.json")))
     prof_circuit = tools_lib.apply(prof_json, open(os.path.join(ROOT, "tests", "profile", "ghz5.qc")).read())
     pr_out = subprocess.run([t.qsim], input=prof_circuit, capture_output=True, text=True).stdout.splitlines()
@@ -399,6 +410,7 @@ def build(cancho):
         ("Noise", "Two ways to simulate it: sampled runs, and the exact density matrix.",
          ["Noise, checked against the exact answer", "Exact noise: the density matrix", "A device-style noise profile", "Idle noise: T1 and T2", "Scheduling: a waiting qubit decays", "A real device's calibration"]),
         ("Input formats", "A plain-text circuit format and OpenQASM 2.0.", ["OpenQASM 2.0 in"]),
+        ("Speed", "Timed against Qiskit Aer on the same circuits.", ["Speed: against Qiskit Aer"]),
         ("Reproducibility", "The same bytes on every build.", ["The same bytes, six ways"]),
     ]
     by_title = {}
@@ -449,6 +461,9 @@ SVG_CSS = """
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .axis { stroke: var(--muted); stroke-width: 1; }
 .chart .bar { fill: var(--accent); }
+.chart .bar.b1 { fill: var(--muted); }
+.chart .bar.b2 { fill: var(--good); }
+.chart .bar.b3 { fill: var(--fg); opacity: .6; }
 .chart .band { fill: var(--accent); opacity: .14; }
 .chart .gateline { stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 4 3; }
 .chart .gtext { fill: var(--bad); font: 10px var(--mono); }

@@ -16,6 +16,7 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/m2-results.md`: M2 results (linear `Qubit`, the must-reject list)
 - `docs/features-results.md`: Y, RX, RY, P, SWAP, Toffoli, controlled phase; `sample`; OpenQASM 2.0 input; QFT, Grover, Bernstein-Vazirani, Deutsch-Jozsa
 - `docs/density-results.md`: the exact density matrix (`dm N`, up to 10 qubits), checked against Qiskit's DensityMatrix
+- `docs/benchmark.md`: where `qsim` stands against Qiskit Aer and Statevector (speed, memory, the density matrix); build with `--backend llvm` for large circuits, it is 3 to 6 times faster than the default
 - `docs/idle-noise.md`: T1/T2 decay while a qubit waits, a gate runs, or it waits for a partner (`coher`, `wait`, `time1`, `time2`, `sched`), checked against Qiskit Aer's thermal-relaxation channel
 - `docs/calibration.md`: a real device's published calibration (`ibm_perth`, 2024-05-27) read into a profile, checked against Qiskit Aer's noise model built from the same snapshot (`scripts/calibration_import.py`, `check_calibration.py`)
 - `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`tools/qprofile.cho`; `profiles/example_5q.json` has invented numbers)
