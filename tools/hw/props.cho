@@ -1,0 +1,203 @@
+edition 7;
+
+module hw.props;
+
+import hw.files;
+import std.buffer;
+import std.io;
+import std.json;
+
+// A device's calibration (`hw_model.py fetch` writes it as `<job>-props.json`, qiskit's `BackendProperties.to_dict()`) read into two flat slices.
+//
+//   dev (floats, `dev_size()`): for qubit q at 4q: T1, T2 (microseconds; -1 if the qubit has none), `prob_meas1_prep0`, `prob_meas0_prep1`;
+//        at 640 + 4q: the `sx` error and length (ns), the `x` error and length (-1 where the gate is missing);
+//        at 1280 + 2k: the error and length of the k-th `cz`.
+//   czp (ints): czp[0] is how many `cz` there are, czp[1 + 2k] and czp[2 + 2k] its two qubits.
+//
+// `T2` is as published; a model uses min(T2, 2 T1) (`t2_effective`).
+
+pub fn max_qubits() -> [] int {
+    return 160;
+}
+
+pub fn max_cz() -> [] int {
+    return 640;
+}
+
+pub fn dev_size() -> [] int {
+    return 8 * 160 + 2 * 640;
+}
+
+pub fn t1(q: int) -> [] int {
+    return 4 * q;
+}
+
+pub fn t2(q: int) -> [] int {
+    return 4 * q + 1;
+}
+
+pub fn p01(q: int) -> [] int {
+    return 4 * q + 2;
+}
+
+pub fn p10(q: int) -> [] int {
+    return 4 * q + 3;
+}
+
+// the base of the one-qubit gates' entries: sx at +0 (error) and +1 (length), x at +2 and +3
+pub fn gate1(q: int) -> [] int {
+    return 640 + 4 * q;
+}
+
+pub fn cz_entry(k: int) -> [] int {
+    return 1280 + 2 * k;
+}
+
+pub fn t2_effective[&d](dev: &d [float], q: int) -> [] float {
+    let a = dev[t2(q)];
+    let b = 2.0 * dev[t1(q)];
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// The index k of the `cz` between a and b (in either order), or -1.
+pub fn find_cz[&d, &c](dev: &d [float], czp: &c [int], a: int, b: int) -> [] int {
+    var k = 0;
+    while k < czp[0] {
+        let x = czp[1 + 2 * k];
+        let y = czp[2 + 2 * k];
+        if x == a && y == b || x == b && y == a {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+fn value_of[&s, &t](src: &s [byte], tape: &t [int], item: int) -> [] float {
+    let v = json.get(src, tape, item, "value");
+    if v < 0 || !json.is_number(tape, v) {
+        return 0.0 - 1.0;
+    }
+    return json.to_float(src, tape, v);
+}
+
+// Read the file at `path` into `dev` and `czp` (both given zeroed or not: they are filled from scratch). 0, or 2 after a refusal.
+pub fn load[&h, &i, &f, &p, &d, &c](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte], dev: &!d [float], czp: &!c [int]) -> [heap, fs_read(""), err_write] int {
+    var k = 0;
+    while k < len(dev) {
+        dev[k] = 0.0 - 1.0;
+        k = k + 1;
+    }
+    var q0 = 0;
+    while q0 < max_qubits() {
+        dev[p01(q0)] = 0.0;
+        dev[p10(q0)] = 0.0;
+        q0 = q0 + 1;
+    }
+    var z = 0;
+    while z < len(czp) {
+        czp[z] = 0;
+        z = z + 1;
+    }
+    let (src, tape, status0) = files.load_json(heap, io, fs, path);
+    var status = status0;
+    if status == 0 {
+        borrow src as &sr in {
+            borrow mut tape as &!tw in {
+                let s = buffer.bytes(sr);
+                let t = contents(tw);
+                let qs = json.get(s, t, 0, "qubits");
+                let gs = json.get(s, t, 0, "gates");
+                if qs < 0 || !json.is_array(t, qs) || gs < 0 || !json.is_array(t, gs) {
+                    status = files.refuse_with(io, "no `qubits` and `gates` in", path);
+                } else if json.count(t, qs) > max_qubits() {
+                    status = files.refuse_with(io, "more qubits than 160 in", path);
+                } else {
+                    var q = 0;
+                    while q < json.count(t, qs) {
+                        let items = json.at(t, qs, q);
+                        var j = 0;
+                        while j < json.count(t, items) {
+                            let item = json.at(t, items, j);
+                            let name = json.string_view(s, t, json.get(s, t, item, "name"));
+                            let v = value_of(s, t, item);
+                            if bytes_eq(name, "T1") {
+                                dev[t1(q)] = v;
+                            } else if bytes_eq(name, "T2") {
+                                dev[t2(q)] = v;
+                            } else if bytes_eq(name, "prob_meas1_prep0") {
+                                dev[p01(q)] = v;
+                            } else if bytes_eq(name, "prob_meas0_prep1") {
+                                dev[p10(q)] = v;
+                            }
+                            j = j + 1;
+                        }
+                        q = q + 1;
+                    }
+                    var g = 0;
+                    while g < json.count(t, gs) && status == 0 {
+                        let gate = json.at(t, gs, g);
+                        let name = json.string_view(s, t, json.get(s, t, gate, "gate"));
+                        let on = json.get(s, t, gate, "qubits");
+                        let ps = json.get(s, t, gate, "parameters");
+                        var err = 0.0 - 1.0;
+                        var length = 0.0 - 1.0;
+                        var j = 0;
+                        while j < json.count(t, ps) {
+                            let item = json.at(t, ps, j);
+                            let pname = json.string_view(s, t, json.get(s, t, item, "name"));
+                            if bytes_eq(pname, "gate_error") {
+                                err = value_of(s, t, item);
+                            } else if bytes_eq(pname, "gate_length") {
+                                length = value_of(s, t, item);
+                            }
+                            j = j + 1;
+                        }
+                        if (bytes_eq(name, "sx") || bytes_eq(name, "x")) && json.count(t, on) == 1 {
+                            let a = json.to_int(s, t, json.at(t, on, 0));
+                            if a >= 0 && a < max_qubits() {
+                                var base = gate1(a);
+                                if bytes_eq(name, "x") {
+                                    base = base + 2;
+                                }
+                                dev[base] = err;
+                                dev[base + 1] = length;
+                            }
+                        } else if bytes_eq(name, "cz") && json.count(t, on) == 2 {
+                            let n = czp[0];
+                            if n >= max_cz() {
+                                status = files.refuse_with(io, "more cz gates than 640 in", path);
+                            } else {
+                                czp[1 + 2 * n] = json.to_int(s, t, json.at(t, on, 0));
+                                czp[2 + 2 * n] = json.to_int(s, t, json.at(t, on, 1));
+                                dev[cz_entry(n)] = err;
+                                dev[cz_entry(n) + 1] = length;
+                                czp[0] = n + 1;
+                            }
+                        }
+                        g = g + 1;
+                    }
+                }
+            }
+        }
+    }
+    files.unload_json(heap, src, tape);
+    return status;
+}
+
+fn bytes_eq[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var k = 0;
+    while k < len(x) {
+        if int_of(x[k]) != int_of(y[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}

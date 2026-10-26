@@ -1,0 +1,408 @@
+edition 7;
+
+// `hw` — what `scripts/hw_*.py` does with the files of a hardware run, in cancho.
+//
+//     hw model JOB.json [--qsim PATH]        the calibration-fitted model on every circuit of a job: writes JOB-qsim.json (`hw_model.py run`)
+//
+// The job is a `hw_spike.py run` file; `hw_model.py fetch` has saved the circuits the device ran and the calibration beside it (`JOB-circuits.json`, `JOB-props.json`: they need
+// Qiskit and an IBM key, and are the one thing here that stays Python). `--qsim` is the `qsim` to run the circuits in (default `qsim`, found on PATH).
+// The Python scripts remain as the reference implementations: `scripts/check_hw.py` runs both on the committed runs and compares the numbers.
+
+import hw.files;
+import hw.model;
+import hw.props;
+import hw.qasm3;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+// The string at `node` decoded into a new buffer.
+fn text_of[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
+    let need = json.string_length(src, tape, node);
+    let raw = box_slice(heap, need + 1, byte_of(0));
+    var out = buffer.empty(heap, 16);
+    borrow mut raw as &!rw in {
+        let r = contents(rw);
+        let got = json.string_into(src, tape, node, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, raw);
+    return out;
+}
+
+// An object of bitstring: number read into `out` (index = the bits, qubit 0 lowest), as they are (`normalize` false: probabilities) or divided by their sum (counts).
+fn read_dist[&s, &t, &o](src: &s [byte], tape: &t [int], obj: int, n: int, normalize: bool, out: &!o [float]) -> [] int {
+    var z = 0;
+    while z < len(out) {
+        out[z] = 0.0;
+        z = z + 1;
+    }
+    if obj < 0 || !json.is_object(tape, obj) {
+        return 0;
+    }
+    var total = 0.0;
+    var j = obj + 1;
+    var left = json.count(tape, obj);
+    while left > 0 {
+        let key = json.string_view(src, tape, j);
+        var idx = 0;
+        var b = 0;
+        var width = 0;
+        while b < len(key) {
+            if int_of(key[b]) == '0' || int_of(key[b]) == '1' {
+                idx = idx * 2 + (int_of(key[b]) - '0');
+                width = width + 1;
+            }
+            b = b + 1;
+        }
+        let v = json.to_float(src, tape, j + 1);
+        if idx < len(out) && width == n {
+            out[idx] = out[idx] + v;
+            total = total + v;
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    if normalize && total > 0.0 {
+        var k = 0;
+        while k < len(out) {
+            out[k] = out[k] / total;
+            k = k + 1;
+        }
+    }
+    return 0;
+}
+
+fn put_bits[&h](heap: &!h Heap, w: json.Writer, idx: int, n: int) -> [heap] json.Writer {
+    var out = w;
+    region r {
+        let name = alloc_slice[r](n + 1, byte_of(0));
+        var b = 0;
+        while b < n {
+            var bit = 48;
+            if idx >> n - 1 - b & 1 == 1 {
+                bit = 49;
+            }
+            name[b] = byte_of(bit);
+            b = b + 1;
+        }
+        out = json.put_key(heap, out, name[0..n]);
+    }
+    return out;
+}
+
+// One circuit of the job as a JSON object (`hw_model.py run`'s row): the model's distribution against the device's counts and Aer's.
+fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], js: &a [byte], jt: &b [int], row: int, cs: &d [byte], ct: &z [int], crow: int, dev: &r [float], czp: &u [int], w: json.Writer) -> [heap, err_write, exec(""), clock, poll] (json.Writer, int) {
+    var out = w;
+    var status = 0;
+    let n = json.to_int(js, jt, json.get(js, jt, row, "qubits"));
+    let qasm = text_of(heap, cs, ct, json.get(cs, ct, crow, "qasm3"));
+    var lines = 1;
+    borrow qasm as &qr in {
+        lines = qasm3.lines_in(buffer.bytes(qr));
+    }
+    let ops = box_slice(heap, 1 + 5 * lines, 0);
+    let phys = box_slice(heap, model.phys_size(), 0);
+    let measured = box_slice(heap, model.measured_size(), 0);
+    let model_dist = box_slice(heap, 1024, 0.0);
+    let shown = box_slice(heap, 1024, 0.0);
+    let ideal = box_slice(heap, 1024, 0.0);
+    let device = box_slice(heap, 1024, 0.0);
+    let aer = box_slice(heap, 1024, 0.0);
+    if n < 1 || n > 10 {
+        status = files.refuse(io, "a circuit must have 1 to 10 classical bits");
+    }
+    borrow mut ops as &!ow in {
+        borrow qasm as &qr2 in {
+            if status == 0 {
+                status = qasm3.parse(io, buffer.bytes(qr2), contents(ow));
+            }
+        }
+    }
+    borrow ops as &or in {
+        borrow mut phys as &!pw in {
+            borrow mut measured as &!mw in {
+                if status == 0 {
+                    let (text, st) = model.build(heap, io, contents(or), dev, czp, contents(pw), contents(mw));
+                    status = st;
+                    if status == 0 {
+                        borrow mut model_dist as &!dw in {
+                            borrow text as &tr in {
+                                status = model.simulate(heap, io, exec, clock, qsim, buffer.bytes(tr), contents(pw)[0], contents(dw));
+                            }
+                        }
+                    }
+                    buffer.drop(heap, text);
+                }
+                if status == 0 {
+                    borrow model_dist as &dr in {
+                        borrow mut shown as &!sw in {
+                            status = model.confuse(io, contents(dr), contents(pw)[0], dev, contents(pw), contents(mw), contents(sw));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    borrow mut ideal as &!iw in {
+        borrow mut device as &!vw in {
+            borrow mut aer as &!aw in {
+                let _i = read_dist(js, jt, json.get(js, jt, row, "ideal"), n, false, contents(iw));
+                let _d = read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(vw));
+                let _a = read_dist(js, jt, json.get(js, jt, row, "aer_noise"), n, true, contents(aw));
+            }
+        }
+    }
+    if status == 0 {
+        borrow ideal as &ir in {
+            borrow device as &vr in {
+                borrow aer as &ar in {
+                    borrow shown as &sr in {
+                        borrow phys as &pr in {
+                            let size = 1 << n;
+                            out = json.begin_object(heap, out);
+                            out = json.put_key(heap, out, "circuit");
+                            borrow mut ops as &!o2 in {
+                                out = json.put_string(heap, out, json.string_view(js, jt, json.get(js, jt, row, "circuit")));
+                            }
+                            out = json.put_key(heap, out, "qubits");
+                            out = json.put_int(heap, out, n);
+                            out = json.put_key(heap, out, "physical_qubits");
+                            out = json.begin_array(heap, out);
+                            var k = 0;
+                            while k < contents(pr)[0] {
+                                out = json.put_int(heap, out, contents(pr)[1 + k]);
+                                k = k + 1;
+                            }
+                            out = json.end_array(heap, out);
+                            out = json.put_key(heap, out, "tvd_device");
+                            out = json.put_float(heap, out, model.tvd(contents(ir), contents(vr), size));
+                            out = json.put_key(heap, out, "tvd_aer");
+                            out = json.put_float(heap, out, model.tvd(contents(ir), contents(ar), size));
+                            out = json.put_key(heap, out, "tvd_qsim");
+                            out = json.put_float(heap, out, model.tvd(contents(ir), contents(sr), size));
+                            out = json.put_key(heap, out, "qsim_vs_device");
+                            out = json.put_float(heap, out, model.tvd(contents(sr), contents(vr), size));
+                            out = json.put_key(heap, out, "qsim_vs_aer");
+                            out = json.put_float(heap, out, model.tvd(contents(sr), contents(ar), size));
+                            out = json.put_key(heap, out, "qsim");
+                            out = json.begin_object(heap, out);
+                            var e = 0;
+                            while e < size {
+                                if contents(sr)[e] > 0.000000000001 {
+                                    out = put_bits(heap, out, e, n);
+                                    out = json.put_float(heap, out, contents(sr)[e]);
+                                }
+                                e = e + 1;
+                            }
+                            out = json.end_object(heap, out);
+                            out = json.end_object(heap, out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, qasm);
+    unbox_slice(heap, ops);
+    unbox_slice(heap, phys);
+    unbox_slice(heap, measured);
+    unbox_slice(heap, model_dist);
+    unbox_slice(heap, shown);
+    unbox_slice(heap, ideal);
+    unbox_slice(heap, device);
+    unbox_slice(heap, aer);
+    return (out, status);
+}
+
+// The whole `-qsim.json` of a job; consumes the six documents.
+fn write_model[&h, &i, &f, &x, &c, &q, &d, &u, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], js: buffer.Buffer, jt: Box[[int]], cs: buffer.Buffer, ct: Box[[int]], ps: buffer.Buffer, pt: Box[[int]], dev: &d [float], czp: &u [int], out_path: &o [byte]) -> [heap, err_write, fs_write(""), exec(""), clock, poll] int {
+    var status = 0;
+    borrow js as &jsr in {
+        borrow mut jt as &!jtw in {
+            borrow cs as &csr in {
+                borrow mut ct as &!ctw in {
+                    borrow ps as &psr in {
+                        borrow mut pt as &!ptw in {
+                            let a = buffer.bytes(jsr);
+                            let b = contents(jtw);
+                            let c2 = buffer.bytes(csr);
+                            let d2 = contents(ctw);
+                            let e = buffer.bytes(psr);
+                            let g = contents(ptw);
+                            let rows = json.get(a, b, 0, "circuits");
+                            let crows = json.get(c2, d2, 0, "circuits");
+                            if rows < 0 || !json.is_array(b, rows) || crows < 0 || json.count(d2, crows) != json.count(b, rows) {
+                                status = files.refuse(io, "the job and its -circuits.json do not list the same circuits");
+                            } else {
+                                var w = json.writer(heap, 65536);
+                                w = json.begin_object(heap, w);
+                                w = json.put_key(heap, w, "device");
+                                w = json.put_string(heap, w, json.string_view(a, b, json.get(a, b, 0, "device")));
+                                w = json.put_key(heap, w, "date");
+                                w = json.put_string(heap, w, json.string_view(a, b, json.get(a, b, 0, "date")));
+                                w = json.put_key(heap, w, "calibration");
+                                let stamp = json.get(e, g, 0, "last_update_date");
+                                if stamp >= 0 && json.is_string(g, stamp) {
+                                    w = json.put_string(heap, w, json.string_view(e, g, stamp));
+                                } else {
+                                    w = json.put_null(heap, w);
+                                }
+                                w = json.put_key(heap, w, "rows");
+                                w = json.begin_array(heap, w);
+                                var k = 0;
+                                while k < json.count(b, rows) && status == 0 {
+                                    let (w2, st) = row_json(heap, io, exec, clock, qsim, a, b, json.at(b, rows, k), c2, d2, json.at(d2, crows, k), dev, czp, w);
+                                    w = w2;
+                                    status = st;
+                                    k = k + 1;
+                                }
+                                w = json.end_array(heap, w);
+                                w = json.end_object(heap, w);
+                                let text = buffer.push(heap, json.finish(w), byte_of(10));
+                                if status == 0 {
+                                    borrow text as &tr in {
+                                        if fs_write(fs, out_path, buffer.bytes(tr)) < 0 {
+                                            status = files.refuse(io, "cannot write the result");
+                                        }
+                                    }
+                                }
+                                buffer.drop(heap, text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, js);
+    unbox_slice(heap, jt);
+    buffer.drop(heap, cs);
+    unbox_slice(heap, ct);
+    buffer.drop(heap, ps);
+    unbox_slice(heap, pt);
+    return status;
+}
+
+fn model_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), exec(""), clock, poll, args] int {
+    if arg_count(args) < 3 {
+        return files.refuse(io, "hw model JOB.json [--qsim PATH]");
+    }
+    let job_path = arg(args, 2);
+    var qsim = flag_value(args, "--qsim");
+    if len(qsim) == 0 {
+        qsim = "qsim";
+    }
+    let cut = files.stem_len(job_path);
+    let circuits_path = files.joined(heap, job_path[0..cut], "-circuits.json");
+    let props_path = files.joined(heap, job_path[0..cut], "-props.json");
+    let out_path = files.joined(heap, job_path[0..cut], "-qsim.json");
+    var status = 0;
+    let dev = box_slice(heap, props.dev_size(), 0.0);
+    let czp = box_slice(heap, 2 * props.max_cz() + 1, 0);
+    borrow props_path as &pp in {
+        borrow mut dev as &!dw in {
+            borrow mut czp as &!cw in {
+                status = props.load(heap, io, fs, buffer.bytes(pp), contents(dw), contents(cw));
+            }
+        }
+    }
+    if status == 0 {
+        let (js, jt, s1) = files.load_json(heap, io, fs, job_path);
+        var cs = buffer.empty(heap, 16);
+        var ct = box_slice(heap, 8, 0);
+        var ps = buffer.empty(heap, 16);
+        var pt = box_slice(heap, 8, 0);
+        status = s1;
+        if status == 0 {
+            borrow circuits_path as &cp in {
+                let (cs2, ct2, s2) = files.load_json(heap, io, fs, buffer.bytes(cp));
+                buffer.drop(heap, cs);
+                unbox_slice(heap, ct);
+                cs = cs2;
+                ct = ct2;
+                status = s2;
+            }
+        }
+        if status == 0 {
+            borrow props_path as &pp2 in {
+                let (ps2, pt2, s3) = files.load_json(heap, io, fs, buffer.bytes(pp2));
+                buffer.drop(heap, ps);
+                unbox_slice(heap, pt);
+                ps = ps2;
+                pt = pt2;
+                status = s3;
+            }
+        }
+        if status == 0 {
+            borrow dev as &dr in {
+                borrow czp as &cr in {
+                    borrow out_path as &op in {
+                        status = write_model(heap, io, fs, exec, clock, qsim, js, jt, cs, ct, ps, pt, contents(dr), contents(cr), buffer.bytes(op));
+                        if status == 0 {
+                            io.write_all(io, "wrote ");
+                            io.write_all(io, buffer.bytes(op));
+                            io.newline(io);
+                        }
+                    }
+                }
+            }
+        } else {
+            files.unload_json(heap, js, jt);
+            files.unload_json(heap, cs, ct);
+            files.unload_json(heap, ps, pt);
+        }
+    }
+    unbox_slice(heap, dev);
+    unbox_slice(heap, czp);
+    buffer.drop(heap, circuits_path);
+    buffer.drop(heap, props_path);
+    buffer.drop(heap, out_path);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow fs as &f in {
+        borrow args as &g in {
+            borrow exec as &x in {
+                borrow clock as &c in {
+                    borrow mut heap as &!h in {
+                        borrow mut io as &!i in {
+                            if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "model") {
+                                status = model_command(h, i, f, x, c, g);
+                            } else {
+                                status = files.refuse(i, "the commands are: model");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(exec);
+    release(clock);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -1,0 +1,187 @@
+edition 7;
+
+module hw.files;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+import std.process;
+
+// What every `hw` command needs: a file read whole, a file written, a JSON file parsed, a program run with the output captured, and a few
+// small numbers helpers. The commands' own refusals go through `refuse`: `hw: <what>` on standard error and status 2.
+
+pub fn refuse[&i, &s](io: &!i Io, what: &s [byte]) -> [err_write] int {
+    io.error_all(io, "hw: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+// `refuse` with a name after the reason (a path, usually).
+pub fn refuse_with[&i, &s, &t](io: &!i Io, what: &s [byte], name: &t [byte]) -> [err_write] int {
+    io.error_all(io, "hw: ");
+    io.error_all(io, what);
+    io.error_all(io, " ");
+    io.error_all(io, name);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+// The file at `path`, at most `limit` bytes, and how many it had (-1: it could not be read).
+pub fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], limit: int) -> [heap, fs_read("")] (buffer.Buffer, int) {
+    let room = box_slice(heap, limit, byte_of(0));
+    var out = buffer.empty(heap, 16);
+    var got = 0 - 1;
+    borrow mut room as &!rw in {
+        let r = contents(rw);
+        got = fs_read(fs, path, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, room);
+    return (out, got);
+}
+
+// A JSON file read and parsed: the text and the tape, and 0 (or 2 after a refusal, in which case both are empty).
+pub fn load_json[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), err_write] (buffer.Buffer, Box[[int]], int) {
+    let (src, got) = read_all(heap, fs, path, 67108864);
+    var status = 0;
+    var parsed = box_slice(heap, 8, 0);
+    if got <= 0 {
+        status = refuse_with(io, "cannot read", path);
+    } else {
+        borrow src as &sr in {
+            unbox_slice(heap, parsed);
+            parsed = box_slice(heap, json.tape_len(buffer.bytes(sr)), 0);
+            borrow mut parsed as &!pw in {
+                if json.parse(buffer.bytes(sr), contents(pw)) <= 0 {
+                    status = refuse_with(io, "not JSON:", path);
+                }
+            }
+        }
+    }
+    return (src, parsed, status);
+}
+
+pub fn unload_json[&h](heap: &!h Heap, src: buffer.Buffer, tape: Box[[int]]) -> [heap] int {
+    buffer.drop(heap, src);
+    unbox_slice(heap, tape);
+    return 0;
+}
+
+// `text` with its trailing `.json` removed (the stem of a job file's neighbours: `-circuits.json`, `-props.json`, `-qsim.json`).
+pub fn stem[&h, &s](heap: &!h Heap, path: &s [byte]) -> [heap] buffer.Buffer {
+    var n = len(path);
+    if bytes.ends_with(path, ".json") {
+        n = n - 5;
+    }
+    return buffer.append(heap, buffer.empty(heap, n + 16), path[0..n]);
+}
+
+// The length of `path` without a trailing `.json`.
+pub fn stem_len[&s](path: &s [byte]) -> [] int {
+    if bytes.ends_with(path, ".json") {
+        return len(path) - 5;
+    }
+    return len(path);
+}
+
+pub fn joined[&h, &a, &b](heap: &!h Heap, first: &a [byte], second: &b [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(first) + len(second) + 1), first), second);
+}
+
+// round half to even, for x >= 0
+pub fn round_even(x: float) -> [] int {
+    let f = truncate(x);
+    let d = x - float_of(f);
+    if d > 0.5 {
+        return f + 1;
+    }
+    if d < 0.5 {
+        return f;
+    }
+    if f % 2 == 0 {
+        return f;
+    }
+    return f + 1;
+}
+
+pub fn max_float(a: float, b: float) -> [] float {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+pub fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+// The Linux number of a signal `Ran::Signaled` names, as the site builder maps it; only the status matters here.
+fn status_of(ran: process.Ran) -> [] int {
+    match ran {
+        process.Ran::Code(n) => {
+            return n;
+        }
+        process.Ran::Signaled(s) => {
+            return 0 - 4;
+        }
+        process.Ran::TimedOut => {
+            return 255;
+        }
+        process.Ran::TooMuch => {
+            return 255;
+        }
+        process.Ran::Failed(e) => {
+            return 255;
+        }
+    }
+}
+
+// The program `exe` started with `argv` (each entry followed by a NUL, not including its own name) and `input` on its standard input; its status
+// (255 when it could not be run), standard output and standard error.
+pub fn run[&h, &i, &x, &c, &p, &a, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], argv: &a [byte], input: &n [byte]) -> [heap, err_write, exec(""), clock, poll] (int, buffer.Buffer, buffer.Buffer) {
+    var out = buffer.empty(heap, 0);
+    var err = buffer.empty(heap, 0);
+    var rc = 255;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e) => {
+            io.error_all(io, "hw: cannot make the pipes to run a program with\n");
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            match exec_spawn(exec, exe, argv, "PATH=/usr/local/bin:/usr/bin:/bin\0HOME=/tmp\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                Spawned::Failed(e) => {
+                    process.close(to_child, from_child);
+                    pipe_close(from_errors);
+                    io.error_all(io, "hw: cannot start ");
+                    io.error_all(io, exe);
+                    io.error_all(io, "\n");
+                }
+                Spawned::Ok(child) => {
+                    let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 268435456, 268435456, 3600000);
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                    out = got;
+                    err = errors;
+                    rc = status_of(ran);
+                }
+            }
+        }
+    }
+    return (rc, out, err);
+}
