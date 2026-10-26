@@ -209,3 +209,32 @@ of it (readout error 0.6%, T1 250 us). The first job on it was lost to the fault
 
 The numbers the landing page quotes from these runs are in `docs/data/hardware_summary.json`, computed from the files
 by `scripts/hw_summary.py` (`--check` fails when they are stale).
+
+## Read-out error mitigation (`tools/qmitigate.cho`)
+
+The device's read-out error is the largest single part of the error in the shortest circuits, and it is the one part that can be
+measured and undone without a better model. `tools/qmitigate.cho` takes the counts and each qubit's `[p01, p10]` and inverts the
+per-qubit confusion matrices (independent qubits); `scripts/mitigate.py` is its reference, `scripts/check_mitigate.py` compares them
+(400 random inputs to 1e-12, 18 refused inputs, and known distributions pushed through known errors and recovered to 1e-6;
+a deliberate sign error in the tool makes three of the four checks fail). `scripts/hw_mitigate.py` applies it to a hardware file.
+
+Applied to the 2026-10-26 runs, with the errors taken from the device's published calibration (not fitted to these counts), the
+distance from the ideal output fell on every circuit of every file (31 of 31):
+
+| file | circuits improved | example (before -> after) | most clipped mass |
+|---|---|---|---|
+| fez, first spike set (Bell, GHZ, Toffoli, QFT, random) | 7 of 7 | bell 0.095 -> 0.051, ghz5 0.165 -> 0.105 | 0.03 |
+| kingston, mirror, from 60, two rounds | 12 of 12 | ghzm7 0.146 -> 0.092, rmir5_d2 0.058 -> 0.031 | 0.03 |
+| fez, mirror, from 60, second round | 6 of 6 | ghzm3 0.250 -> 0.192 | 0.06 |
+| fez, mirror, from 60, third round (after a recalibration) | 6 of 6 | ghzm3 0.159 -> 0.034 | **0.20** |
+
+Read the last row with care. The "clipped" column is the negative probability the inversion produced and the tool removed. It is
+near 0 when the errors it was given are about right and large when they overstate the real ones: the correction overshoots, some
+outcomes go negative, and the result is no longer a trustworthy estimate even where its distance to the ideal looks good. That is
+the fez calibration of the third round, which is also the one that made Aer over-predict the device (above). So `clipped` is a
+second, cheap check on whether a published calibration is in line with the device at that moment. The errors measured by
+`hw_spike.py check` just before a run (`hw_mitigate.py --readout FILE`) are the better input, and are the next hardware test.
+
+Not shown: the distance after mitigation is not the model's error (the model includes read-out error itself, so it is
+compared before correction); mitigation helps the circuits whose ideal output is concentrated, as mirror circuits' is, more than
+spread-out ones; and it does nothing for gate error. 2000 shots, one day, two devices.

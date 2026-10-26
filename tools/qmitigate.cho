@@ -1,0 +1,266 @@
+// `qmitigate` — correct measured counts for read-out error.
+//
+//     qmitigate < run.json
+//
+// Standard input only, JSON: the device's read-out errors in the form of a noise profile (`docs/noise-profile.md`),
+// `"readout": {"per_qubit": {"0": [p01, p10], ...}}` (p01 is the chance a qubit prepared in 0 reads 1, p10 the chance
+// one prepared in 1 reads 0), and the counts, `"counts": {"010": 1523, ...}`, the keys written as Qiskit writes them
+// (qubit 0 is the rightmost character). Standard output is JSON:
+//
+//     {"shots": N, "clipped": X, "probabilities": {"000": 0.4931, ...}}
+//
+// What it does: the counts become a distribution, and each qubit's 2 x 2 confusion matrix [[1-p01, p10], [p01, 1-p10]]
+// is inverted along that qubit (the errors are taken to be independent between qubits, which is what a per-qubit
+// calibration says). The inverse can leave small negative entries; they are set to 0 and the rest scaled to sum to 1,
+// and `clipped` is the total negative mass that was removed (0 when none was). That is a simple repair, not the
+// closest valid distribution in any norm. Only the outcomes with a positive probability are written, in increasing order.
+//
+// A qubit with no entry has no error. A refusal prints `qmitigate: <what>` on standard error, exits 2 and prints nothing
+// on standard output. At most 16 qubits (65,536 outcomes). Reference implementation:
+// `scripts/mitigate.py`, which `scripts/check_tools.py` compares this with.
+
+import std.buffer;
+import std.io;
+import std.json;
+
+fn refuse[&i](io: &!i Io, what: &static [byte]) -> [err_write] int {
+    io.error_all(io, "qmitigate: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+// the digits of a plain decimal number, or -1
+fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 6 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+// The index of an outcome written as bits (qubit 0 rightmost), or -1 if it holds anything else.
+fn outcome[&s](text: &s [byte]) -> [] int {
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c != '0' && c != '1' {
+            return 0 - 1;
+        }
+        v = v * 2 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+// Invert qubit `q`'s confusion matrix along that axis of `p` (a distribution over 2^n outcomes).
+fn unmix[&p](dist: &!p [float], n: int, q: int, e0: float, e1: float) -> [] int {
+    let det = 1.0 - e0 - e1;
+    let bit = 1 << q;
+    var i = 0;
+    while i < 1 << n {
+        if i & bit == 0 {
+            let a = dist[i];
+            let b = dist[i | bit];
+            dist[i] = ((1.0 - e1) * a - e1 * b) / det;
+            dist[i | bit] = (0.0 - e0 * a + (1.0 - e0) * b) / det;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write, err_write] int {
+    var input = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    borrow input as &ir in {
+        let src = buffer.bytes(ir);
+        let tape = box_slice(heap, json.tape_len(src), 0);
+        borrow mut tape as &!tw in {
+            let t = contents(tw);
+            if json.parse(src, t) <= 0 || !json.is_object(t, 0) {
+                status = refuse(io, "the input is not a JSON object");
+            } else {
+                let counts = json.get(src, t, 0, "counts");
+                if counts < 0 || !json.is_object(t, counts) || json.count(t, counts) == 0 {
+                    status = refuse(io, "`counts` must be a non-empty object of outcome: count");
+                } else {
+                    // the width, from the first key
+                    let n = len(json.string_view(src, t, counts + 1));
+                    if n < 1 || n > 16 {
+                        status = refuse(io, "the outcomes must be 1 to 16 bits wide");
+                    } else {
+                        status = mitigate(heap, io, src, t, counts, n);
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, input);
+    return status;
+}
+
+fn mitigate[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], t: &t [int], counts: int, n: int) -> [heap, io_write, err_write] int {
+    let dist = box_slice(heap, 1 << n, 0.0);
+    var status = 0;
+    var shots = 0;
+    borrow mut dist as &!dw in {
+        let d = contents(dw);
+        var j = counts + 1;
+        var left = json.count(t, counts);
+        while left > 0 && status == 0 {
+            let key = json.string_view(src, t, j);
+            let node = j + 1;
+            let at = outcome(key);
+            if len(key) != n || at < 0 {
+                status = refuse(io, "an outcome is not a string of 0 and 1 of the same width as the others");
+            } else if !json.is_int(t, node) || json.to_int(src, t, node) < 0 {
+                status = refuse(io, "a count is not a non-negative integer");
+            } else {
+                let k = json.to_int(src, t, node);
+                d[at] = d[at] + float_of(k);
+                shots = shots + k;
+            }
+            j = json.skip(t, node);
+            left = left - 1;
+        }
+        if status == 0 && shots == 0 {
+            status = refuse(io, "the counts add up to 0");
+        }
+        if status == 0 {
+            var x = 0;
+            while x < 1 << n {
+                d[x] = d[x] / float_of(shots);
+                x = x + 1;
+            }
+            status = apply_readout(io, src, t, d, n);
+        }
+        if status == 0 {
+            var clipped = 0.0;
+            var total = 0.0;
+            var y = 0;
+            while y < 1 << n {
+                if d[y] < 0.0 {
+                    clipped = clipped - d[y];
+                    d[y] = 0.0;
+                }
+                total = total + d[y];
+                y = y + 1;
+            }
+            if !(total > 0.0) {
+                status = refuse(io, "the correction left no positive probability");
+            } else {
+                var w = json.writer(heap, 4096);
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "shots");
+                w = json.put_int(heap, w, shots);
+                w = json.put_key(heap, w, "clipped");
+                w = json.put_float(heap, w, clipped);
+                w = json.put_key(heap, w, "probabilities");
+                w = json.begin_object(heap, w);
+                region r {
+                    let name = alloc_slice[r](n + 1, byte_of(0));
+                    var z = 0;
+                    while z < 1 << n {
+                        if d[z] > 0.0 {
+                            var b = 0;
+                            while b < n {
+                                var bitval = 48;
+                                if z >> n - 1 - b & 1 == 1 {
+                                    bitval = 49;
+                                }
+                                name[b] = byte_of(bitval);
+                                b = b + 1;
+                            }
+                            w = json.put_key(heap, w, name[0..n]);
+                            w = json.put_float(heap, w, d[z] / total);
+                        }
+                        z = z + 1;
+                    }
+                }
+                w = json.end_object(heap, w);
+                w = json.end_object(heap, w);
+                let out = buffer.push(heap, json.finish(w), byte_of(10));
+                borrow out as &or in {
+                    buffer.write(io, or);
+                }
+                buffer.drop(heap, out);
+            }
+        }
+    }
+    unbox_slice(heap, dist);
+    return status;
+}
+
+// Each qubit's inverse, from `readout.per_qubit`; 0, or 2 after a refusal.
+fn apply_readout[&i, &s, &t, &p](io: &!i Io, src: &s [byte], t: &t [int], d: &!p [float], n: int) -> [err_write] int {
+    let ro = json.get(src, t, 0, "readout");
+    if ro < 0 {
+        return 0;
+    }
+    let per = json.get(src, t, ro, "per_qubit");
+    if per < 0 || !json.is_object(t, per) {
+        return refuse(io, "`readout` needs a `per_qubit` object");
+    }
+    var j = per + 1;
+    var left = json.count(t, per);
+    while left > 0 {
+        let q = digits(json.string_view(src, t, j));
+        let pair = j + 1;
+        if q < 0 || q >= n {
+            return refuse(io, "a read-out qubit is not a number below the width of the outcomes");
+        }
+        if !json.is_array(t, pair) || json.count(t, pair) != 2 {
+            return refuse(io, "a read-out entry must be [p01, p10]");
+        }
+        let a = json.at(t, pair, 0);
+        let b = json.at(t, pair, 1);
+        if !json.is_number(t, a) || !json.is_number(t, b) {
+            return refuse(io, "a read-out probability is not a number");
+        }
+        let e0 = json.to_float(src, t, a);
+        let e1 = json.to_float(src, t, b);
+        if !(e0 >= 0.0 && e0 <= 1.0 && e1 >= 0.0 && e1 <= 1.0) {
+            return refuse(io, "a read-out probability is outside [0, 1]");
+        }
+        if !(1.0 - e0 - e1 > 0.0) {
+            return refuse(io, "a qubit's read-out errors add up to 1 or more, so they cannot be undone");
+        }
+        unmix(d, n, q, e0, e1);
+        j = json.skip(t, pair);
+        left = left - 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
