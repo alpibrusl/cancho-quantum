@@ -188,7 +188,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
     <div class="card"><h3>Noise, two ways</h3><p>5 channels: bit flip, phase flip, depolarizing, amplitude damping, two-qubit depolarizing; asymmetric readout error; a model that adds depolarizing noise after every gate, with its own rate per qubit and per pair, or read from a device-style profile file or a real device&rsquo;s published calibration; idle decay (T1, T2) while a qubit waits, while a gate runs, or while it waits for a partner (a scheduler). Sampled runs (any size; the average is the physics) or the exact density matrix (up to 10 qubits).</p></div>
     <div class="card"><h3>Two input formats</h3><p>A plain-text circuit format, and OpenQASM 2.0 (angles that are multiples of &pi;; 20 circuits cross-checked with Qiskit&rsquo;s own parser).</p></div>
     <div class="card"><h3>Algorithms</h3><p>Bell and GHZ states, teleportation, the quantum Fourier transform, Grover search, Bernstein&ndash;Vazirani and Deutsch&ndash;Jozsa, all as circuits with a known answer.</p></div>
-    <div class="card"><h3>A type checker for qubits</h3><p>A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. 12 refusal fixtures, and 7 pinned cases the checker still misses.</p></div>
+    <div class="card"><h3>A type checker for qubits</h3><p>A <code>Qubit</code> cannot be copied or dropped; only <code>measure</code> ends one. 14 refusal fixtures, and 7 pinned cases the checker still misses.</p></div>
   </div>
 </div></section>
 
@@ -561,8 +561,8 @@ library  81ff953cae0be924...</pre>
   <p class="lead">Not built, and not promised for any date. Each tile says what is missing.</p>
 <ul class="gallery">
   <li class="gtile soon"><h4>A Qpu capability <span class="badge">Needs the compiler</span></h4>
-      <p>Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. Needs compiler work; shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.</p>
-      <p class="glinks"><a href="https://github.com/alpibrusl/cancho/issues/612">Tracked in cancho#612</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Plan</a></p>
+      <p>Which backend a program can reach and how many shots it may spend, readable from the program text before it runs. A first slice exists as a library (<code>src/qpu.cho</code>: a linear counter that refuses what exceeds it, narrowing that never raises a budget), tested; the compiler does not know it, so nothing is refused at check time and <code>cancho authority</code> prints no bound. Shot budgets are only decidable for constant counts, so the honest claim is a declared bound a supervisor enforces.</p>
+      <p class="glinks"><a href="https://github.com/alpibrusl/cancho/issues/612">Tracked in cancho#612</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qpu.md">First slice</a> <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/qubit-types.md">Plan</a></p>
 </li>
   <li class="gtile soon"><h4>Refuse CNOT(q, q) at check time <span class="badge">Needs the compiler</span></h4>
       <p>A same-place-twice rule would close at least one of the three ways; its design predicts a second, which is not measured, and says the third needs a different fix. Written, not built.</p>
@@ -613,7 +613,7 @@ library  81ff953cae0be924...</pre>
   <div class="nums">
     <div class="num"><b>1.210e-14</b><span>worst amplitude error against Qiskit over 86 circuits (gate: 1e-12)</span></div>
     <div class="num"><b>1 ulp</b><span>worst distance of <code>sin</code>/<code>cos</code> from the C library on the angles tested</span></div>
-    <div class="num"><b>24 / 24</b><span>accept and reject fixtures behave as stated</span></div>
+    <div class="num"><b>28 / 28</b><span>accept and reject fixtures behave as stated</span></div>
     <div class="num"><b>1.2e-14</b><span>worst error of the 23 density-matrix circuits against Qiskit&rsquo;s DensityMatrix</span></div>
     <div class="num"><b>z &le; 2.6</b><span>worst z-score of sampled noise, averaged over thousands of runs, against the exact density matrix</span></div>
     <div class="num"><b>86</b><span>circuits whose output is byte-identical on every build (six builds each; three for density matrices)</span></div>

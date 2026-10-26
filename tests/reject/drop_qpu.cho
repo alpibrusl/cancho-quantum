@@ -1,0 +1,31 @@
+//~ RULE linear-value-unconsumed
+
+// A counted backend cannot be dropped (`src/qpu.cho`): the capability is a `res`, so a function that is given one and does not hand it back or `close` it
+// does not compile, as a qubit that is never measured does not. A program therefore always ends a budget by saying what it spent.
+
+import qc.qpu;
+
+fn forget[&s, &r, &c](q: qpu.Qpu, st: &s [float], rng: &!r [int], counts: &!c [int]) -> [] int {
+    var shots = 0;
+    borrow mut q as &!b in {
+        match qpu.run(b, st, 2, rng, counts, 10) {
+            qpu.Ran::Ok(done) => {
+                shots = done;
+            }
+            qpu.Ran::Exhausted(left) => {
+                shots = left;
+            }
+        }
+    }
+    return shots;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

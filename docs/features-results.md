@@ -74,4 +74,4 @@
   billion-amplitude register is out of range anyway (the limit is 20 qubits).
 - Speed of the new gates was not measured (the timing graph on the page is for H).
 - Still one reference implementation: Cirq is not used.
-- The authority capability (M4) is not started; `cancho#612` tracks its design.
+- The authority capability (M4): the compiler has none (`cancho#612` tracks its design); a first slice of its semantics is a library, `src/qpu.cho`, with its limits stated in `docs/qpu.md` (no check-time refusal, no `limit` in `cancho authority`).
