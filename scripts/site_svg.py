@@ -81,7 +81,9 @@ def _target(o, x, y):
 
 def phase_color(re, im):
     ang = math.atan2(im, re)
-    return PHASE.format(h=(ang / (2 * math.pi)) % 1.0 * 360, l=48)
+    # + 1e-7: a phase that is an exact multiple of 22.5 degrees lands on a rounding tie, and one ulp of atan2 (glibc here,
+    # fdlibm in tools/site) must not decide which way it goes
+    return PHASE.format(h=(ang / (2 * math.pi)) % 1.0 * 360 + 1e-7, l=48)
 
 
 def hbar_chart(rows, label, gate=None, unit=""):

@@ -1,0 +1,31 @@
+
+.circ .wire { stroke: var(--muted); stroke-width: 1; }
+.circ .qlab, .circ .sub, .chart .tick { fill: var(--muted); font: 10px var(--mono); }
+.circ .box { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+.circ .meas { stroke: var(--muted); }
+.circ .glab { fill: var(--fg); font: 600 11px var(--mono); }
+.circ .dot { fill: var(--accent); }
+.circ .tgt { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+.circ .link, .circ .arc { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.circ .op.active .box { fill: var(--accent); }
+.circ .op.active .glab { fill: var(--accent-fg); }
+.circ .op.active .link, .circ .op.active .arc { stroke-width: 2.5; }
+.circ .op.active .dot { r: 5.5px; }
+.circ .op { transition: opacity .3s; }
+.circ .op.later { opacity: .35; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { stroke: var(--muted); stroke-width: 1; }
+.chart .bar { fill: var(--accent); }
+.chart .bar.b1 { fill: var(--muted); }
+.chart .bar.b2 { fill: var(--good); }
+.chart .bar.b3 { fill: var(--fg); opacity: .6; }
+.chart .band { fill: var(--accent); opacity: .14; }
+.chart .gateline { stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.chart .gtext { fill: var(--bad); font: 10px var(--mono); }
+.chart .line { fill: none; stroke-width: 2; }
+.chart .line.s0, .chart .pt.s0 { stroke: var(--accent); }
+.chart .line.s1, .chart .pt.s1 { stroke: var(--good); }
+.chart .pt { fill: var(--surface); stroke-width: 1.5; }
+.chart .err { stroke: var(--accent); stroke-width: 1.5; }
+.chart .ltext.s0 { fill: var(--accent); font: 600 10px var(--mono); }
+.chart .ltext.s1 { fill: var(--good); font: 600 10px var(--mono); }

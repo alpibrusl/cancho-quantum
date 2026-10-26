@@ -1,0 +1,256 @@
+// `site` — build the landing page, docs/index.html, from docs/index.template.html and the real tools.
+//
+//     site [--live [--compiler CANCHO] [--tmp PREFIX]] [--transcript T.json] [--dump D.json] [--check]
+//
+// A port of scripts/build_site.py (kept as its reference implementation: `scripts/check_site.py` builds the page with
+// both and compares them byte for byte). With `--transcript` every command the builder would run is answered from a
+// transcript the Python builder recorded; with `--live` the commands are run (see live.cho) and the page is built from
+// what they print.
+
+edition 7;
+
+import site.facts;
+import site.files;
+import site.live;
+import site.page1;
+import site.page2;
+import site.page3;
+import site.page4;
+import site.page5;
+import site.page6;
+import site.page7;
+import site.page8;
+import site.page9;
+import site.page10;
+import site.assemble;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The value of `--flag VALUE` among the arguments, or an empty slice.
+fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+fn has_flag[&g](args: &g Args, flag: &static [byte]) -> [args] bool {
+    var k = 1;
+    while k < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), args] int {
+    let tr_path = flag_value(args, "--transcript");
+    let dump_path = flag_value(args, "--dump");
+    let (tr_buf, got) = files.read_all(heap, fs, tr_path, 33554432);
+    var status = 0;
+    if got <= 0 {
+        io.error_all(io, "site: cannot read the transcript (--transcript FILE)\n");
+        status = 2;
+    }
+    borrow tr_buf as &trr in {
+        let tr_src = buffer.bytes(trr);
+        let tr_tape = box_slice(heap, json.tape_len(tr_src), 0);
+        borrow mut tr_tape as &!trw in {
+            let tt = contents(trw);
+            if status == 0 && json.parse(tr_src, tt) <= 0 {
+                io.error_all(io, "site: the transcript is not JSON\n");
+                status = 2;
+            }
+            if status == 0 {
+                let (spb, spbox) = files.load(heap, io, fs, "docs/page/spec.json");
+                borrow spb as &spr in {
+                    borrow mut spbox as &!spw in {
+                        let sp_src = buffer.bytes(spr);
+                        let spt = contents(spw);
+                        let names = box_slice(heap, facts.names_size(), byte_of(0));
+                        let ints = box_slice(heap, facts.ints_size(), 0);
+                        let texts = box_slice(heap, facts.texts_size(), byte_of(0));
+                        let floats = box_slice(heap, facts.floats_size(), 0.0);
+                        borrow mut names as &!nw in {
+                            borrow mut ints as &!iw in {
+                                borrow mut texts as &!xw in {
+                                    borrow mut floats as &!fw in {
+                                        let n = contents(nw);
+                                        let it = contents(iw);
+                                        let x = contents(xw);
+                                        let fl = contents(fw);
+                                        page1.terminal(heap, io, tr_src, tt, n, it, x);
+                                        page1.checks(heap, io, fs, n, it, x);
+                                        page2.tiles_states(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page3.tiles_circuits(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page4.tiles_algorithms(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page5.tiles_noise(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page6.tile_speed(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                        page6.tiles_devices(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page7.tiles_curves(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                        page7.tile_calibration(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                        page7.tile_hardware(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                        page8.tiles_static(heap, io, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page9.capabilities(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
+                                        page9.groups(heap, io, sp_src, spt, n, it, x);
+                                        page10.simple_figures(heap, io, fs, tr_src, tt, n, it, x);
+                                        page10.diagrams(heap, io, fs, n, it, x);
+                                        page10.sampled_figures(heap, io, tr_src, tt, n, it, x);
+                                        page10.numeric_figures(heap, io, fs, tr_src, tt, n, it, x);
+                                        page10.timing_figure(heap, io, fs, n, it, x);
+                                        page10.stepper(heap, io, fs, tr_src, tt, n, it, x);
+                                        if len(flag_value(args, "--out")) > 0 || has_flag(args, "--check") || len(dump_path) == 0 {
+                                            status = assemble.finish(heap, io, fs, n, it, x, fl, has_flag(args, "--check"));
+                                        }
+                                        if len(dump_path) > 0 {
+                                            status = dump(heap, io, fs, dump_path, n, it, x);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        unbox_slice(heap, names);
+                        unbox_slice(heap, ints);
+                        unbox_slice(heap, texts);
+                        unbox_slice(heap, floats);
+                    }
+                }
+                files.unload(heap, spb, spbox);
+            }
+        }
+        unbox_slice(heap, tr_tape);
+    }
+    buffer.drop(heap, tr_buf);
+    return status;
+}
+
+// Every placeholder (a fact named in capitals) as a JSON object, for comparing with the Python builder's.
+fn dump[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &static [byte], names: &n [byte], ints: &q [int], texts: &x [byte]) -> [heap, fs_write(""), err_write] int {
+    var w = json.writer(heap, 65536);
+    w = json.begin_object(heap, w);
+    var k = 0;
+    while k < ints[0] {
+        let start = ints[8 + 4 * k + 1];
+        var e = start;
+        while int_of(names[e]) != 10 {
+            e = e + 1;
+        }
+        let first = int_of(names[start]);
+        if (first >= 'A' && first <= 'Z' || first == 't' && int_of(names[start + 1]) == 'i') && ints[8 + 4 * k] == 3 {
+            w = json.put_key(heap, w, names[start..e]);
+            w = json.put_string(heap, w, texts[ints[8 + 4 * k + 2]..ints[8 + 4 * k + 3]]);
+        }
+        k = k + 1;
+    }
+    w = json.end_object(heap, w);
+    let out = json.finish(w);
+    var status = 0;
+    borrow out as &or in {
+        if fs_write(fs, path, buffer.bytes(or)) < 0 {
+            io.error_all(io, "site: cannot write the dump\n");
+            status = 2;
+        }
+    }
+    buffer.drop(heap, out);
+    return status;
+}
+
+// `--live`: the page, with the commands it needs run by this program (`live.drive`).
+fn live_main[&h, &i, &x, &c, &f, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), args: &g Args) -> [heap, io_write, err_write, exec(""), clock, poll, fs_read(""), fs_write(""), args] int {
+    var compiler = flag_value(args, "--compiler");
+    if len(compiler) == 0 {
+        compiler = "cancho";
+    }
+    var tmp = flag_value(args, "--tmp");
+    if len(tmp) == 0 {
+        tmp = "/tmp/cancho-site-";
+    }
+    // this program: a name with no directory is in the current one
+    var me = buffer.empty(heap, 64);
+    var slash = false;
+    var k = 0;
+    while k < len(arg(args, 0)) {
+        if int_of(arg(args, 0)[k]) == '/' {
+            slash = true;
+        }
+        k = k + 1;
+    }
+    if !slash {
+        me = buffer.append(heap, me, "./");
+    }
+    me = buffer.append(heap, me, arg(args, 0));
+    // what the last run is given as well: every argument but the ones this mode takes
+    var forward = buffer.empty(heap, 64);
+    k = 1;
+    while k < arg_count(args) {
+        if bytes.equal(arg(args, k), "--live") {
+            k = k + 1;
+        } else if bytes.equal(arg(args, k), "--compiler") || bytes.equal(arg(args, k), "--tmp") || bytes.equal(arg(args, k), "--transcript") {
+            k = k + 2;
+        } else {
+            forward = buffer.push(heap, buffer.append(heap, forward, arg(args, k)), byte_of(0));
+            k = k + 1;
+        }
+    }
+    var transcript = buffer.append(heap, buffer.empty(heap, 64), tmp);
+    transcript = buffer.append(heap, transcript, "transcript.json");
+    var dump = buffer.append(heap, buffer.empty(heap, 64), tmp);
+    dump = buffer.append(heap, dump, "dump.json");
+    var status = 0;
+    borrow me as &mr in {
+        borrow forward as &fr in {
+            borrow transcript as &tr in {
+                borrow dump as &dr in {
+                    status = live.drive(heap, io, exec, clock, fs, compiler, tmp, buffer.bytes(mr), buffer.bytes(fr), buffer.bytes(tr), buffer.bytes(dr));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, me);
+    buffer.drop(heap, forward);
+    buffer.drop(heap, transcript);
+    buffer.drop(heap, dump);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow fs as &f in {
+        borrow args as &g in {
+            borrow exec as &x in {
+                borrow clock as &c in {
+                    borrow mut heap as &!h in {
+                        borrow mut io as &!i in {
+                            if has_flag(g, "--live") {
+                                status = live_main(h, i, x, c, f, g);
+                            } else {
+                                status = build(h, i, f, g);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(exec);
+    release(clock);
+    release(heap);
+    release(io);
+    return status;
+}

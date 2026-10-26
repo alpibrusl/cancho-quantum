@@ -1,0 +1,275 @@
+module site.page6;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.page4;
+import site.page5;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part six: the speed, profile, idle-noise, scheduling, calibration and OpenQASM tiles.
+
+fn jf[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] float {
+    return json.to_float(src, tape, node);
+}
+
+fn display_name[&s](key: &s [byte]) -> [] &static [byte] {
+    if bytes.equal(key, "h_layer") {
+        return "H layer";
+    } else if bytes.equal(key, "cx_chain") {
+        return "CX chain";
+    } else if bytes.equal(key, "rz_layer") {
+        return "Rz layer";
+    } else if bytes.equal(key, "random") {
+        return "random, depth 20";
+    }
+    return "QFT";
+}
+
+pub fn tile_speed[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    let (bs, bt) = files.load(heap, io, fs, "docs/data/benchmark.json");
+    let (ks, kt) = files.load(heap, io, fs, "docs/data/benchmark_kernels.json");
+    borrow bs as &bsr in {
+        borrow mut bt as &!btw in {
+            borrow ks as &ksr in {
+                borrow mut kt as &!ktw in {
+                    let a = buffer.bytes(bsr);
+                    let at = contents(btw);
+                    let b = buffer.bytes(ksr);
+                    let bt2 = contents(ktw);
+                    let sizes = json.get(a, at, 0, "sizes");
+                    let bn_int = json.to_int(a, at, json.at(at, sizes, json.count(at, sizes) - 1));
+                    let bn = buffer.push_nat(heap, buffer.empty(heap, 8), bn_int);
+                    let wl = json.get(a, at, 0, "workloads");
+                    let ng = json.count(at, wl);
+                    let vals = box_slice(heap, 4 * ng + 1, 0.0);
+                    var groups = buffer.empty(heap, 64);
+                    var rmin = 0.0;
+                    var rmax = 0.0;
+                    var r4min = 0.0;
+                    var r4max = 0.0;
+                    borrow bn as &bnr in {
+                        borrow mut vals as &!vw in {
+                            let w = contents(vw);
+                            var j = wl + 1;
+                            var g = 0;
+                            while g < ng {
+                                let key = json.string_view(a, at, j);
+                                let row = json.get(a, at, j + 1, buffer.bytes(bnr));
+                                if g > 0 {
+                                    groups = text.put(heap, groups, "\n");
+                                }
+                                groups = text.put(heap, groups, display_name(key));
+                                let ql = jf(a, at, json.get(a, at, row, "qsim_llvm"));
+                                w[4 * g] = ql;
+                                w[4 * g + 1] = jf(a, at, json.get(a, at, row, "qsim_cranelift"));
+                                w[4 * g + 2] = jf(a, at, json.get(a, at, row, "aer_1thread"));
+                                w[4 * g + 3] = jf(a, at, json.get(a, at, row, "aer_4threads"));
+                                let r1 = w[4 * g + 2] / ql;
+                                let r4 = w[4 * g + 3] / ql;
+                                if g == 0 || r1 < rmin {
+                                    rmin = r1;
+                                }
+                                if g == 0 || r1 > rmax {
+                                    rmax = r1;
+                                }
+                                if g == 0 || r4 < r4min {
+                                    r4min = r4;
+                                }
+                                if g == 0 || r4 > r4max {
+                                    r4max = r4;
+                                }
+                                j = json.skip(at, j + 1);
+                                g = g + 1;
+                            }
+                        }
+                    }
+                    borrow bn as &bnq in {
+                        facts.set_text(names, ints, texts, "t271.x1", buffer.bytes(bnq));
+                        facts.set_text(names, ints, texts, "t271.x6", buffer.bytes(bnq));
+                    }
+                    facts.set_float(names, ints, floats, "t271.x2", rmin);
+                    facts.set_float(names, ints, floats, "t271.x3", rmax);
+                    facts.set_float(names, ints, floats, "t271.x4", r4min);
+                    facts.set_float(names, ints, floats, "t271.x5", r4max);
+                    let mem = json.get(a, at, 0, "memory_mib");
+                    facts.set_float(names, ints, floats, "t271.x7", jf(a, at, json.get(a, at, mem, "qsim")));
+                    facts.set_float(names, ints, floats, "t271.x8", jf(a, at, json.get(a, at, mem, "state_vector_mib")));
+                    let dm8 = json.get(a, at, json.get(a, at, json.get(a, at, 0, "noisy"), "density_matrix"), "8");
+                    facts.set_float(names, ints, floats, "t271.x9", jf(a, at, json.get(a, at, dm8, "qsim_llvm")) / jf(a, at, json.get(a, at, dm8, "aer_density_matrix_1thread")));
+                    // the kernels in C against qsim
+                    let kw = json.get(b, bt2, 0, "workloads");
+                    var kmin = 0.0;
+                    var kmax = 0.0;
+                    var j2 = kw + 1;
+                    var g2 = 0;
+                    while g2 < json.count(bt2, kw) {
+                        let r = jf(b, bt2, json.get(b, bt2, j2 + 1, "qsim_llvm")) / jf(b, bt2, json.get(b, bt2, j2 + 1, "clang_naive"));
+                        if g2 == 0 || r < kmin {
+                            kmin = r;
+                        }
+                        if g2 == 0 || r > kmax {
+                            kmax = r;
+                        }
+                        j2 = json.skip(bt2, j2 + 1);
+                        g2 = g2 + 1;
+                    }
+                    facts.set_float(names, ints, floats, "t271.x10", kmin);
+                    facts.set_float(names, ints, floats, "t271.x11", kmax);
+                    page1.set_buf(heap, names, ints, texts, "t271.x12", text.put_esc(heap, buffer.empty(heap, 64), json.string_view(a, at, json.get(a, at, 0, "machine"))));
+                    let ver = json.get(a, at, 0, "versions");
+                    page1.set_buf(heap, names, ints, texts, "t271.x13", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, ver, "qiskit"))));
+                    page1.set_buf(heap, names, ints, texts, "t271.x14", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, ver, "qiskit_aer"))));
+                    // the chart
+                    var label = text.put(heap, buffer.empty(heap, 160), "Time to run five circuits on ");
+                    borrow bn as &bnr2 in {
+                        label = buffer.append(heap, label, buffer.bytes(bnr2));
+                    }
+                    label = text.put(heap, label, " qubits, qsim built with LLVM and Cranelift against Qiskit Aer on one and four threads, on a log axis");
+                    borrow label as &lr in {
+                        borrow groups as &gr in {
+                            borrow vals as &vr in {
+                                let chart = svg.bench_chart(heap, buffer.empty(heap, 4096), buffer.bytes(gr), "qsim LLVM\nqsim Cranelift\nAer 1 thread\nAer 4 threads", contents(vr)[0..4 * ng], buffer.bytes(lr), 0.01, 10.0);
+                                page1.set_buf(heap, names, ints, texts, "t271.x15", chart);
+                            }
+                        }
+                    }
+                    unbox_slice(heap, vals);
+                    buffer.drop(heap, groups);
+                    buffer.drop(heap, label);
+                    buffer.drop(heap, bn);
+                }
+            }
+        }
+    }
+    files.unload(heap, bs, bt);
+    files.unload(heap, ks, kt);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t271", false, false, "");
+    return 0;
+}
+
+// The device-style profile, idle noise, scheduling, a real device's calibration, OpenQASM.
+pub fn tiles_devices[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // a device-style noise profile
+    let (prof, pg) = files.read_all(heap, fs, "profiles/example_5q.json", 1048576);
+    let (ghz, gg) = files.read_all(heap, fs, "tests/profile/ghz5.qc", 1048576);
+    var stdin = buffer.empty(heap, 1024);
+    borrow prof as &pr in {
+        stdin = buffer.append(heap, stdin, buffer.bytes(pr));
+    }
+    var stdin2 = buffer.empty(heap, 1024);
+    borrow stdin as &sr in {
+        stdin2 = buffer.append(heap, stdin2, buffer.bytes(sr));
+    }
+    stdin = text.put(heap, stdin, "\n---\n");
+    borrow ghz as &ghr in {
+        stdin = buffer.append(heap, stdin, buffer.bytes(ghr));
+    }
+    buffer.drop(heap, ghz);
+    var circuit = buffer.empty(heap, 16);
+    borrow stdin as &sr2 in {
+        buffer.drop(heap, circuit);
+        circuit = util.qprofile(heap, io, tr_src, tr_tape, buffer.bytes(sr2));
+    }
+    buffer.drop(heap, stdin);
+    var ops = buffer.empty(heap, 16);
+    borrow stdin2 as &s2r in {
+        buffer.drop(heap, ops);
+        ops = util.qprofile(heap, io, tr_src, tr_tape, buffer.bytes(s2r));
+    }
+    buffer.drop(heap, stdin2);
+    buffer.drop(heap, prof);
+    var n_ops = 0;
+    borrow ops as &opr in {
+        let all = buffer.bytes(opr);
+        let lines = text.line_count(all);
+        var k = 0;
+        while k < lines {
+            if len(text.line_at(all, k)) > 0 {
+                n_ops = n_ops + 1;
+            }
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, ops);
+    facts.set_int(names, ints, "t284.x1", n_ops);
+    var pr_out = buffer.empty(heap, 16);
+    borrow circuit as &cr in {
+        buffer.drop(heap, pr_out);
+        pr_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(cr));
+    }
+    buffer.drop(heap, circuit);
+    borrow pr_out as &por in {
+        let all = buffer.bytes(por);
+        let lines = text.line_count(all);
+        let probs = box_slice(heap, 32, 0.0);
+        let rho = box_slice(heap, 3, 0.0);
+        var purity = 0.0;
+        borrow mut probs as &!pw in {
+            borrow mut rho as &!rw in {
+                let pv = contents(pw);
+                let rv = contents(rw);
+                var k = 0;
+                while k < lines {
+                    let line = text.line_at(all, k);
+                    let w = util.tok(line, 0);
+                    if bytes.equal(w, "prob") {
+                        let bits = util.tok(line, 1);
+                        var idx = 0;
+                        var b = 0;
+                        while b < len(bits) {
+                            idx = idx * 2 + (int_of(bits[b]) - '0');
+                            b = b + 1;
+                        }
+                        pv[idx] = util.parse_float(util.tok(line, 2));
+                    } else if bytes.equal(w, "rho") {
+                        let i1 = util.parse_int(util.tok(line, 1));
+                        let j1 = util.parse_int(util.tok(line, 2));
+                        let rho_re = util.parse_float(util.tok(line, 3));
+                        if i1 == 0 && j1 == 0 {
+                            rv[0] = rho_re;
+                        } else if i1 == 31 && j1 == 31 {
+                            rv[1] = rho_re;
+                        } else if i1 == 0 && j1 == 31 {
+                            rv[2] = rho_re;
+                        }
+                    } else if bytes.equal(w, "purity") {
+                        purity = util.parse_float(util.tok(line, 1));
+                    }
+                    k = k + 1;
+                }
+                facts.set_float(names, ints, floats, "t284.x2", (rv[0] + rv[1] + 2.0 * rv[2]) / 2.0);
+                facts.set_float(names, ints, floats, "t284.x3", purity);
+                // pr_amps: {i: (sqrt(v), 0.0)}; the bars draw a*a + b*b
+                var k2 = 0;
+                while k2 < 32 {
+                    let sv = math_sqrt(pv[k2]);
+                    pv[k2] = sv * sv + 0.0 * 0.0;
+                    k2 = k2 + 1;
+                }
+            }
+        }
+        borrow probs as &pbr in {
+            let chart = svg.bars(heap, buffer.empty(heap, 4096), 5, contents(pbr), "Exact probability of each of the 32 outcomes of a five-qubit GHZ state under the example noise profile: the all-zeros and all-ones outcomes dominate, with small leakage into neighbours");
+            page1.set_buf(heap, names, ints, texts, "t284.x4", chart);
+        }
+        unbox_slice(heap, probs);
+        unbox_slice(heap, rho);
+    }
+    buffer.drop(heap, pr_out);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t284", false, false, "");
+    return 0;
+}
+
+fn math_sqrt(x: float) -> [] float {
+    return sqrt(x);
+}

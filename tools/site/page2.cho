@@ -1,0 +1,122 @@
+module site.page2;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part two: the gallery tiles. Each tile's words live in docs/page/spec.json (the templates
+// `{{tNNN.xK}}` name the facts a tile needs); the code here computes the facts and calls `emit_tile`.
+
+// Set a text fact from a buffer.
+pub fn put_buf[&h, &n, &i, &t](heap: &!h Heap, names: &!n [byte], ints: &!i [int], texts: &!t [byte], name: &static [byte], b: buffer.Buffer) -> [heap] int {
+    return page1.set_buf(heap, names, ints, texts, name, b);
+}
+
+// One tile of the gallery, from the spec `id`: stored as the fact `tile:TITLE`. `soon`/`badge` as the Python `tile()`.
+pub fn emit_tile[&h, &i, &s, &t, &n, &q, &x, &f, &b](heap: &!h Heap, io: &!i Io, sp_src: &s [byte], sp_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &f [float], id: &static [byte], wide: bool, soon: bool, badge: &b [byte]) -> [heap, err_write] int {
+    let tiles = json.get(sp_src, sp_tape, json.get(sp_src, sp_tape, 0, "tiles"), id);
+    if tiles < 0 {
+        io.error_all(io, "site: no tile spec ");
+        io.error_all(io, id);
+        io.error_all(io, "\n");
+        let missing = trap();
+    }
+    let args = json.get(sp_src, sp_tape, tiles, "args");
+    let title_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 0));
+    var title = buffer.empty(heap, 64);
+    borrow title_t as &ttr in {
+        title = facts.render(heap, title, buffer.bytes(ttr), names, ints, texts, floats, false);
+    }
+    buffer.drop(heap, title_t);
+    let body_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 1));
+    let extra_t = page1.decode(heap, sp_src, sp_tape, json.at(sp_tape, args, 2));
+    var html = text.put(heap, buffer.empty(heap, 1024), "<li class=\"gtile");
+    if wide {
+        html = text.put(heap, html, " wide");
+    }
+    if soon {
+        html = text.put(heap, html, " soon");
+    }
+    html = text.put(heap, html, "\"><h4>");
+    borrow title as &tr in {
+        html = text.put_esc(heap, html, buffer.bytes(tr));
+    }
+    if len(badge) > 0 {
+        html = text.put(heap, html, " <span class=\"badge\">");
+        html = text.put_esc(heap, html, badge);
+        html = text.put(heap, html, "</span>");
+    }
+    html = text.put(heap, html, "</h4>\n      <p>");
+    borrow body_t as &br in {
+        html = facts.render(heap, html, buffer.bytes(br), names, ints, texts, floats, false);
+    }
+    html = text.put(heap, html, "</p>\n");
+    borrow extra_t as &er in {
+        html = facts.render(heap, html, buffer.bytes(er), names, ints, texts, floats, false);
+    }
+    html = text.put(heap, html, "</li>");
+    var name = text.put(heap, buffer.empty(heap, 64), "tile:");
+    borrow title as &tr2 in {
+        name = buffer.append(heap, name, buffer.bytes(tr2));
+    }
+    borrow name as &nr in {
+        borrow html as &hr in {
+            facts.set_text(names, ints, texts, buffer.bytes(nr), buffer.bytes(hr));
+        }
+    }
+    buffer.drop(heap, name);
+    buffer.drop(heap, html);
+    buffer.drop(heap, title);
+    buffer.drop(heap, body_t);
+    buffer.drop(heap, extra_t);
+    return 0;
+}
+
+// The state of an n-qubit circuit's output as bars, for a tile: the SVG of `svg.bars`, stored as the text fact `name`.
+pub fn bars_fact[&h, &n, &q, &x, &a, &b](heap: &!h Heap, names: &!n [byte], ints: &!q [int], texts: &!x [byte], name: &static [byte], nq: int, re: &a [float], im: &b [float], label: &static [byte]) -> [heap] int {
+    let probs = util.probabilities(heap, re, im);
+    var out = buffer.empty(heap, 4096);
+    borrow probs as &pr in {
+        out = svg.bars(heap, out, nq, contents(pr), label);
+    }
+    unbox_slice(heap, probs);
+    return page1.set_buf(heap, names, ints, texts, name, out);
+}
+
+// Bell pair, a 5-qubit state, GHZ on 10 qubits.
+pub fn tiles_states[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // Bell
+    let bell_qc = util.qc_file(heap, io, fs, "bell");
+    var bell_out = buffer.empty(heap, 16);
+    borrow bell_qc as &bq in {
+        buffer.drop(heap, bell_out);
+        bell_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(bq));
+        var strip = text.put_esc(heap, buffer.empty(heap, 64), util.strip(buffer.bytes(bq)));
+        put_buf(heap, names, ints, texts, "t197.x1", strip);
+    }
+    borrow bell_out as &bo in {
+        let (re, im) = util.read_amps(heap, buffer.bytes(bo), 2);
+        borrow re as &rr in {
+            borrow im as &ir in {
+                bars_fact(heap, names, ints, texts, "t197.x2", 2, contents(rr), contents(ir), "Probability of each two-qubit outcome of the Bell state: 00 and 11 at one half, 01 and 10 at zero");
+                put_buf(heap, names, ints, texts, "t197.x3", util.fmt_amp(heap, buffer.empty(heap, 32), contents(rr)[0], contents(ir)[0]));
+                put_buf(heap, names, ints, texts, "t197.x4", util.fmt_amp(heap, buffer.empty(heap, 32), contents(rr)[3], contents(ir)[3]));
+            }
+        }
+        unbox_slice(heap, re);
+        unbox_slice(heap, im);
+    }
+    buffer.drop(heap, bell_out);
+    buffer.drop(heap, bell_qc);
+    emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t197", false, false, "");
+    return 0;
+}

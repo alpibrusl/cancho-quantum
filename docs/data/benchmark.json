@@ -9,199 +9,199 @@
     "h_layer": {
       "10": {
         "gates": 10,
-        "qsim_cranelift": 0.0012067049999586743,
-        "qsim_llvm": 0.001425138999934461,
-        "aer_1thread": 0.0008674590000055105,
-        "aer_4threads": 0.0011335149999922578,
-        "qiskit_statevector": 0.0006103590000066106
+        "qsim_cranelift": 0.0012302349999799844,
+        "qsim_llvm": 0.0011599829999795475,
+        "aer_1thread": 0.0008270419999689693,
+        "aer_4threads": 0.0011782590000279924,
+        "qiskit_statevector": 0.00037169100005485234
       },
       "14": {
         "gates": 14,
-        "qsim_cranelift": 0.0033536670000557933,
-        "qsim_llvm": 0.0017347409999501906,
-        "aer_1thread": 0.001684521000015593,
-        "aer_4threads": 0.0017313360000343891,
-        "qiskit_statevector": 0.002130625999939184
+        "qsim_cranelift": 0.0031981490000134727,
+        "qsim_llvm": 0.001462937000042075,
+        "aer_1thread": 0.0025026939999861497,
+        "aer_4threads": 0.0014815750000138905,
+        "qiskit_statevector": 0.0013301109999588334
       },
       "18": {
         "gates": 18,
-        "qsim_cranelift": 0.04527418099996794,
-        "qsim_llvm": 0.009838361999982226,
-        "aer_1thread": 0.02096480500006237,
-        "aer_4threads": 0.008465932999911274,
-        "qiskit_statevector": 0.08739823100006561
+        "qsim_cranelift": 0.04143883800003323,
+        "qsim_llvm": 0.009684766000020772,
+        "aer_1thread": 0.019792059999986122,
+        "aer_4threads": 0.005866265000008752,
+        "qiskit_statevector": 0.08568510800000695
       },
       "20": {
         "gates": 20,
-        "qsim_cranelift": 0.2052146730000004,
-        "qsim_llvm": 0.04158476099996733,
-        "aer_1thread": 0.11276148299998567,
-        "aer_4threads": 0.031077805999984776
+        "qsim_cranelift": 0.23097135299997262,
+        "qsim_llvm": 0.037115392999965025,
+        "aer_1thread": 0.08455960700001697,
+        "aer_4threads": 0.033674586000017825
       }
     },
     "cx_chain": {
       "10": {
         "gates": 10,
-        "qsim_cranelift": 0.0014012010000215014,
-        "qsim_llvm": 0.0012753260000408773,
-        "aer_1thread": 0.0012508180000168068,
-        "aer_4threads": 0.001166725999951268,
-        "qiskit_statevector": 0.0007070249999969747
+        "qsim_cranelift": 0.0011526060000051075,
+        "qsim_llvm": 0.0010634209999693667,
+        "aer_1thread": 0.0006963409999798387,
+        "aer_4threads": 0.0007595540000124856,
+        "qiskit_statevector": 0.0003716730000178359
       },
       "14": {
         "gates": 14,
-        "qsim_cranelift": 0.0027608000000327593,
-        "qsim_llvm": 0.0017024370000626732,
-        "aer_1thread": 0.0023766630000636724,
-        "aer_4threads": 0.0023128779999979088,
-        "qiskit_statevector": 0.002080703000046924
+        "qsim_cranelift": 0.002172115999997004,
+        "qsim_llvm": 0.0013770779999617844,
+        "aer_1thread": 0.001509916000031808,
+        "aer_4threads": 0.001541731000031632,
+        "qiskit_statevector": 0.0014783830000055787
       },
       "18": {
         "gates": 18,
-        "qsim_cranelift": 0.037129876999983935,
-        "qsim_llvm": 0.01022764799995457,
-        "aer_1thread": 0.03848932699997931,
-        "aer_4threads": 0.008848194999927728,
-        "qiskit_statevector": 0.042406682999967416
+        "qsim_cranelift": 0.02281162399998493,
+        "qsim_llvm": 0.007443873999989137,
+        "aer_1thread": 0.025510349999990467,
+        "aer_4threads": 0.013739772000008088,
+        "qiskit_statevector": 0.054548449000037635
       },
       "20": {
         "gates": 20,
-        "qsim_cranelift": 0.11148454800002128,
-        "qsim_llvm": 0.0379556569999977,
-        "aer_1thread": 0.11905294300004243,
-        "aer_4threads": 0.05708825099998194
+        "qsim_cranelift": 0.09697595599999431,
+        "qsim_llvm": 0.03099990800001251,
+        "aer_1thread": 0.10804325400005155,
+        "aer_4threads": 0.045040480000011485
       }
     },
     "rz_layer": {
       "10": {
         "gates": 20,
-        "qsim_cranelift": 0.0014022429999158703,
-        "qsim_llvm": 0.0012387330000365182,
-        "aer_1thread": 0.001051678999942851,
-        "aer_4threads": 0.0010571279999567196,
-        "qiskit_statevector": 0.0007050430000390406
+        "qsim_cranelift": 0.0013264730000059899,
+        "qsim_llvm": 0.001103751000016473,
+        "aer_1thread": 0.0010378859999491397,
+        "aer_4threads": 0.0010016610000320725,
+        "qiskit_statevector": 0.000961952000011479
       },
       "14": {
         "gates": 28,
-        "qsim_cranelift": 0.004651770000009492,
-        "qsim_llvm": 0.0019018329999198613,
-        "aer_1thread": 0.0024701300000060655,
-        "aer_4threads": 0.0020656789999975445,
-        "qiskit_statevector": 0.00252733199999966
+        "qsim_cranelift": 0.004433179999978165,
+        "qsim_llvm": 0.0018167659999903663,
+        "aer_1thread": 0.0022545690000015384,
+        "aer_4threads": 0.0022065079999720183,
+        "qiskit_statevector": 0.0024395749999825966
       },
       "18": {
         "gates": 36,
-        "qsim_cranelift": 0.0791659989999971,
-        "qsim_llvm": 0.017969057999948745,
-        "aer_1thread": 0.023430479000012383,
-        "aer_4threads": 0.00843738100002156,
-        "qiskit_statevector": 0.06854832000010447
+        "qsim_cranelift": 0.0709435859999985,
+        "qsim_llvm": 0.01552312600000505,
+        "aer_1thread": 0.02038850500002809,
+        "aer_4threads": 0.006894111000008252,
+        "qiskit_statevector": 0.05683021400000143
       },
       "20": {
         "gates": 40,
-        "qsim_cranelift": 0.43738157600000704,
-        "qsim_llvm": 0.10525232300005882,
-        "aer_1thread": 0.09694849599998179,
-        "aer_4threads": 0.03815118499994696
+        "qsim_cranelift": 0.3226261219999742,
+        "qsim_llvm": 0.06870880700000725,
+        "aer_1thread": 0.08348470199996427,
+        "aer_4threads": 0.02620434200002819
       }
     },
     "random": {
       "10": {
         "gates": 300,
-        "qsim_cranelift": 0.0035308699999632154,
-        "qsim_llvm": 0.001472261999992952,
-        "aer_1thread": 0.00818374000004951,
-        "aer_4threads": 0.008095904000015253,
-        "qiskit_statevector": 0.013154059000044072
+        "qsim_cranelift": 0.0034907109999835484,
+        "qsim_llvm": 0.0014592780000270977,
+        "aer_1thread": 0.004944909000016651,
+        "aer_4threads": 0.004830294999976559,
+        "qiskit_statevector": 0.007922717999974793
       },
       "14": {
         "gates": 420,
-        "qsim_cranelift": 0.054903832000036346,
-        "qsim_llvm": 0.010632438000016009,
-        "aer_1thread": 0.026061820999984775,
-        "aer_4threads": 0.03003438799999003,
-        "qiskit_statevector": 0.05690826499994728
+        "qsim_cranelift": 0.049193439000021044,
+        "qsim_llvm": 0.009636659000022973,
+        "aer_1thread": 0.024710549000019455,
+        "aer_4threads": 0.024250187999996342,
+        "qiskit_statevector": 0.03841474600000083
       },
       "18": {
         "gates": 540,
-        "qsim_cranelift": 1.2337448590000122,
-        "qsim_llvm": 0.20807027000000744,
-        "aer_1thread": 0.30809848599994893,
-        "aer_4threads": 0.13222999300000993,
-        "qiskit_statevector": 0.8471815630000492
+        "qsim_cranelift": 1.0419795839999892,
+        "qsim_llvm": 0.18913557700000183,
+        "aer_1thread": 0.2818071430000373,
+        "aer_4threads": 0.11144360200000847,
+        "qiskit_statevector": 0.8181264290000172
       },
       "20": {
         "gates": 600,
-        "qsim_cranelift": 5.6944951110000375,
-        "qsim_llvm": 1.0134312410000348,
-        "aer_1thread": 1.6333873410000024,
-        "aer_4threads": 0.5075257890000557
+        "qsim_cranelift": 4.53769147600002,
+        "qsim_llvm": 0.8306564079999816,
+        "aer_1thread": 1.1812309040000173,
+        "aer_4threads": 0.38629177199999276
       }
     },
     "qft": {
       "10": {
         "gates": 60,
-        "qsim_cranelift": 0.0016413459999284896,
-        "qsim_llvm": 0.0013053049999598443,
-        "aer_1thread": 0.004616690000034396,
-        "aer_4threads": 0.0037141380000775825,
-        "qiskit_statevector": 0.004088023000008434
+        "qsim_cranelift": 0.0014082729999813637,
+        "qsim_llvm": 0.0010679829999844515,
+        "aer_1thread": 0.0034417370000028313,
+        "aer_4threads": 0.0034646470000438967,
+        "qiskit_statevector": 0.0029932369999983166
       },
       "14": {
         "gates": 112,
-        "qsim_cranelift": 0.008736482000017531,
-        "qsim_llvm": 0.003783482000017102,
-        "aer_1thread": 0.012367061000077229,
-        "aer_4threads": 0.012756057000046894,
-        "qiskit_statevector": 0.013618946999940817
+        "qsim_cranelift": 0.007925576999980422,
+        "qsim_llvm": 0.0027424250000080974,
+        "aer_1thread": 0.01377125999999862,
+        "aer_4threads": 0.012843395999993845,
+        "qiskit_statevector": 0.01474851000000399
       },
       "18": {
         "gates": 180,
-        "qsim_cranelift": 0.1665885380000418,
-        "qsim_llvm": 0.03893118499991033,
-        "aer_1thread": 0.1159496750000244,
-        "aer_4threads": 0.05246015199998055,
-        "qiskit_statevector": 0.35413336099998105
+        "qsim_cranelift": 0.14365398500001447,
+        "qsim_llvm": 0.03755957899994655,
+        "aer_1thread": 0.10375375500001383,
+        "aer_4threads": 0.03345475100002204,
+        "qiskit_statevector": 0.28348173699998824
       },
       "20": {
         "gates": 220,
-        "qsim_cranelift": 0.8641625840000415,
-        "qsim_llvm": 0.1854246970000304,
-        "aer_1thread": 0.4727098250000381,
-        "aer_4threads": 0.19416996000006748
+        "qsim_cranelift": 0.7478272160000188,
+        "qsim_llvm": 0.18017611700003044,
+        "aer_1thread": 0.46669643399997085,
+        "aer_4threads": 0.12461075499999197
       }
     }
   },
   "startup_ms": {
     "cranelift": 1.2,
-    "llvm": 1.3
+    "llvm": 1.1
   },
   "memory_mib": {
     "n": 20,
-    "qsim": 17.3,
+    "qsim": 17.4,
     "state_vector_mib": 16.0,
-    "aer_incl_python": 209.5
+    "aer_incl_python": 207.3
   },
   "noisy": {
     "trajectory_10q_random_with_1000_samples": {
-      "cranelift": 0.08750511899995672,
-      "llvm": 0.03115583199996763
+      "cranelift": 0.07397824699995681,
+      "llvm": 0.029415386999971815
     },
     "density_matrix": {
       "4": {
-        "qsim_cranelift": 0.011008187000015823,
-        "qsim_llvm": 0.002573467000047458,
-        "aer_density_matrix_1thread": 0.003959817000009025
+        "qsim_cranelift": 0.001824673999976767,
+        "qsim_llvm": 0.001151384000024791,
+        "aer_density_matrix_1thread": 0.004169644999990396
       },
       "6": {
-        "qsim_cranelift": 0.19284519799998634,
-        "qsim_llvm": 0.03273932199999763,
-        "aer_density_matrix_1thread": 0.017498332000059236
+        "qsim_cranelift": 0.021880979999991723,
+        "qsim_llvm": 0.005066964999969059,
+        "aer_density_matrix_1thread": 0.01581223499999851
       },
       "8": {
-        "qsim_cranelift": 4.473777197000004,
-        "qsim_llvm": 0.8790309419999858,
-        "aer_density_matrix_1thread": 0.11805705300002955
+        "qsim_cranelift": 0.33102447299995674,
+        "qsim_llvm": 0.0862333059999969,
+        "aer_density_matrix_1thread": 0.09396796900000481
       }
     }
   },

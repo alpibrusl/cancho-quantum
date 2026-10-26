@@ -1,0 +1,49 @@
+module site.replay;
+
+import std.buffer;
+import std.json;
+
+// Replay of a builder transcript: what `scripts/build_site.py --transcript` recorded for every command it ran.
+// The transcript is a JSON object whose keys are `argv joined by \x01`, `\x02`, then the standard input, and
+// whose values are {"rc", "out", "err"}. The cancho builder builds the very same keys (that is the test that it asks
+// for the same things), and takes the answers from the file instead of running anything.
+
+pub fn key_start[&h](heap: &!h Heap, argv0: &static [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, 256), argv0);
+}
+
+// argv entry
+pub fn key_arg[&h, &s](heap: &!h Heap, key: buffer.Buffer, arg: &s [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.push(heap, key, byte_of(1)), arg);
+}
+
+// the standard input, which ends the key
+pub fn key_input[&h, &s](heap: &!h Heap, key: buffer.Buffer, input: &s [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.push(heap, key, byte_of(2)), input);
+}
+
+// The recorded answer for `key`: its exit status and the node of the entry in the transcript (-1 if there is none).
+pub fn lookup[&s, &t, &k](src: &s [byte], tape: &t [int], key: &k [byte]) -> [] int {
+    return json.get(src, tape, 0, key);
+}
+
+pub fn rc[&s, &t](src: &s [byte], tape: &t [int], entry: int) -> [] int {
+    return json.to_int(src, tape, json.get(src, tape, entry, "rc"));
+}
+
+// A string field ("out" or "err") of an entry, decoded, as a new buffer.
+pub fn text[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], entry: int, field: &static [byte]) -> [heap] buffer.Buffer {
+    let node = json.get(src, tape, entry, field);
+    let need = json.string_length(src, tape, node);
+    let raw = box_slice(heap, need + 1, byte_of(0));
+    var out = buffer.empty(heap, 16);
+    borrow mut raw as &!rw in {
+        let r = contents(rw);
+        let got = json.string_into(src, tape, node, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, raw);
+    return out;
+}

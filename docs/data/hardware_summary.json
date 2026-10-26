@@ -1,0 +1,15 @@
+{
+ "date": "2026-10-26",
+ "shots": 2000,
+ "healthy_device": "ibm_kingston",
+ "healthy_runs": 18,
+ "healthy_max_cz": 32,
+ "healthy_worst_gap": 0.01804318544326137,
+ "drift_device": "ibm_fez",
+ "drift_runs": 24,
+ "drift_worst_gap": 0.36205480718086147,
+ "drift_ratio_min": 0.609568640846876,
+ "drift_ratio_max": 3.051939196507205,
+ "stuck_qubit": 0,
+ "stuck_percent": 84.05
+}

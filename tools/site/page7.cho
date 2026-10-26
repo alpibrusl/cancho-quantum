@@ -1,0 +1,278 @@
+module site.page7;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.page4;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part seven: idle noise, scheduling, a real device's calibration, OpenQASM.
+
+fn jf[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] float {
+    return json.to_float(src, tape, node);
+}
+
+fn ji[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] int {
+    return json.to_int(src, tape, node);
+}
+
+fn pad_fixed[&h](heap: &!h Heap, buf: buffer.Buffer, x: float, nd: int, width: int) -> [heap] buffer.Buffer {
+    let t = numfmt.put_fixed(heap, buffer.empty(heap, 16), x, nd);
+    var out = buf;
+    borrow t as &tr in {
+        out = numfmt.put_padded(heap, out, buffer.bytes(tr), width);
+    }
+    buffer.drop(heap, t);
+    return out;
+}
+
+pub fn tiles_curves[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // idle noise: T1 and T2 (t290.x4 was set with the density-matrix tile)
+    let (ics, ict) = files.load(heap, io, fs, "docs/data/idle_curve.json");
+    borrow ics as &icr in {
+        borrow mut ict as &!ictw in {
+            let a = buffer.bytes(icr);
+            let at = contents(ictw);
+            facts.set_int(names, ints, "t290.x1", ji(a, at, json.get(a, at, 0, "t1_ns")) / 1000);
+            facts.set_int(names, ints, "t290.x2", ji(a, at, json.get(a, at, 0, "t2_ns")) / 1000);
+            facts.set_float(names, ints, floats, "t290.x3", jf(a, at, json.get(a, at, 0, "worst_difference")));
+            let pop = json.get(a, at, 0, "population");
+            let box = page4.curve_rows(heap, a, at, pop);
+            borrow box as &bx in {
+                page4.curve_fact(heap, names, ints, texts, "t290.x5", contents(bx), json.count(at, pop), "Chance a qubit prepared in 1 is still 1 against waiting time, with T1 of 50 microseconds: a falling exponential that cancho and Qiskit Aer share", "waiting time (microseconds)", "P(still 1)", 0.0, 1.0, "cancho (exact)", "exp(-t/T1)", false, 100.0, "t");
+            }
+            unbox_slice(heap, box);
+            let coh = json.get(a, at, 0, "coherence");
+            let box2 = page4.curve_rows(heap, a, at, coh);
+            borrow box2 as &bx2 in {
+                page4.curve_fact(heap, names, ints, texts, "t290.x6", contents(bx2), json.count(at, coh), "Coherence of a qubit prepared in plus against waiting time, with T2 of 70 microseconds", "waiting time (microseconds)", "coherence |rho01|", 0.0, 0.5, "cancho (exact)", "exp(-t/T2) / 2", false, 100.0, "t");
+            }
+            unbox_slice(heap, box2);
+        }
+    }
+    files.unload(heap, ics, ict);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t290", false, false, "");
+
+    // scheduling
+    let (scs, sct) = files.load(heap, io, fs, "docs/data/schedule_curve.json");
+    borrow scs as &scr in {
+        borrow mut sct as &!sctw in {
+            let a = buffer.bytes(scr);
+            let at = contents(sctw);
+            facts.set_int(names, ints, "t296.x1", ji(a, at, json.get(a, at, 0, "t1_ns")) / 1000);
+            facts.set_float(names, ints, floats, "t296.x2", jf(a, at, json.get(a, at, 0, "worst_vs_qiskit")));
+            facts.set_float(names, ints, floats, "t296.x3", jf(a, at, json.get(a, at, 0, "smallest_gap_without_sched")));
+            let rows = json.get(a, at, 0, "rows");
+            let box = page4.curve_rows(heap, a, at, rows);
+            borrow box as &bx in {
+                page4.curve_fact(heap, names, ints, texts, "t296.x4", contents(bx), json.count(at, rows), "Chance a qubit prepared in 1 is still 1 while other qubits work, with T1 of 50 microseconds: it decays as a falling exponential under the scheduler", "time the other qubits spend working (microseconds)", "P(still 1)", 0.0, 1.0, "cancho, sched (exact)", "exp(-t/T1)", false, 50.0, "t");
+            }
+            unbox_slice(heap, box);
+        }
+    }
+    files.unload(heap, scs, sct);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t296", false, false, "");
+
+    // OpenQASM
+    let (qrs, qrt) = files.load(heap, io, fs, "tests/qasm/results.json");
+    borrow qrs as &qrr in {
+        borrow mut qrt as &!qrtw in {
+            let a = buffer.bytes(qrr);
+            let at = contents(qrtw);
+            facts.set_int(names, ints, "t320.x1", ji(a, at, json.get(a, at, 0, "files")));
+            facts.set_int(names, ints, "t320.x2", ji(a, at, json.get(a, at, 0, "qiskit_written_run")));
+            facts.set_int(names, ints, "t320.x3", ji(a, at, json.get(a, at, 0, "qiskit_written_refused_decimal")));
+        }
+    }
+    files.unload(heap, qrs, qrt);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t320", false, false, "");
+    return 0;
+}
+
+// A real device's calibration: the table is built here from the profile qcalib made.
+pub fn tile_calibration[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    let (cs, ct) = files.load(heap, io, fs, "profiles/ibm_perth_2024-05-27.json");
+    let (ccs, cct) = files.load(heap, io, fs, "docs/data/calibration_check.json");
+    borrow cs as &csr in {
+        borrow mut ct as &!ctw in {
+            borrow ccs as &ccr in {
+                borrow mut cct as &!cctw in {
+                    let a = buffer.bytes(csr);
+                    let at = contents(ctw);
+                    let b = buffer.bytes(ccr);
+                    let bt = contents(cctw);
+                    var tbl = text.put(heap, buffer.empty(heap, 512), "q   T1   T2   1q p  r01   r10");
+                    let nq = ji(a, at, json.get(a, at, 0, "qubits"));
+                    let coh = json.get(a, at, json.get(a, at, 0, "coherence"), "per_qubit");
+                    let ro = json.get(a, at, json.get(a, at, 0, "readout"), "per_qubit");
+                    let g1 = json.get(a, at, json.get(a, at, 0, "gate1"), "per_qubit");
+                    var qi = 0;
+                    while qi < nq {
+                        var key = buffer.push_nat(heap, buffer.empty(heap, 4), qi);
+                        borrow key as &kr in {
+                            let kb = buffer.bytes(kr);
+                            let c = json.get(a, at, coh, kb);
+                            let r = json.get(a, at, ro, kb);
+                            tbl = text.put(heap, tbl, "\n");
+                            tbl = text.put_int(heap, tbl, qi);
+                            tbl = text.put(heap, tbl, "  ");
+                            tbl = pad_fixed(heap, tbl, jf(a, at, json.at(at, c, 0)) / 1000.0, 0, 4);
+                            tbl = text.put(heap, tbl, " ");
+                            tbl = pad_fixed(heap, tbl, jf(a, at, json.at(at, c, 1)) / 1000.0, 0, 4);
+                            tbl = text.put(heap, tbl, "  ");
+                            tbl = pad_fixed(heap, tbl, jf(a, at, json.get(a, at, g1, kb)) * 1.0e4, 1, 4);
+                            tbl = text.put(heap, tbl, "e-4 ");
+                            tbl = numfmt.put_fixed(heap, tbl, jf(a, at, json.at(at, r, 0)), 3);
+                            tbl = text.put(heap, tbl, " ");
+                            tbl = numfmt.put_fixed(heap, tbl, jf(a, at, json.at(at, r, 1)), 3);
+                        }
+                        buffer.drop(heap, key);
+                        qi = qi + 1;
+                    }
+                    tbl = text.put(heap, tbl, "\n\npair  ns   cx error > p");
+                    let g2 = json.get(a, at, json.get(a, at, 0, "gate2"), "per_pair");
+                    let t2 = json.get(a, at, json.get(a, at, json.get(a, at, 0, "gate2"), "time_ns"), "per_pair");
+                    let conv = json.get(a, at, json.get(a, at, 0, "conversion"), "two_qubit");
+                    var j = g2 + 1;
+                    var left = json.count(at, g2);
+                    while left > 0 {
+                        let key = json.string_view(a, at, j);
+                        // the published error of this pair, from the conversion list
+                        var pub_err = 0.0;
+                        var c = 0;
+                        while c < json.count(at, conv) {
+                            let row = json.at(at, conv, c);
+                            if bytes.equal(json.string_view(a, at, json.get(a, at, row, "pair")), key) {
+                                pub_err = jf(a, at, json.get(a, at, row, "published_error"));
+                            }
+                            c = c + 1;
+                        }
+                        tbl = text.put(heap, tbl, "\n");
+                        // {key:>4}
+                        var kk = len(key);
+                        while kk < 4 {
+                            tbl = text.put(heap, tbl, " ");
+                            kk = kk + 1;
+                        }
+                        tbl = buffer.append(heap, tbl, key);
+                        tbl = text.put(heap, tbl, " ");
+                        let nsv = ji(a, at, json.get(a, at, t2, key));
+                        let nst = text.put_int(heap, buffer.empty(heap, 8), nsv);
+                        borrow nst as &nsr in {
+                            tbl = numfmt.put_padded(heap, tbl, buffer.bytes(nsr), 4);
+                        }
+                        buffer.drop(heap, nst);
+                        tbl = text.put(heap, tbl, "  ");
+                        tbl = numfmt.put_fixed(heap, tbl, pub_err, 4);
+                        tbl = text.put(heap, tbl, " > ");
+                        tbl = numfmt.put_fixed(heap, tbl, jf(a, at, json.get(a, at, g2, key)), 4);
+                        j = json.skip(at, j + 1);
+                        left = left - 1;
+                    }
+                    borrow tbl as &tblr in {
+                        page1.set_buf(heap, names, ints, texts, "t315.x11", text.put_esc(heap, buffer.empty(heap, 512), buffer.bytes(tblr)));
+                    }
+                    buffer.drop(heap, tbl);
+                    // numbers from the check
+                    page1.set_buf(heap, names, ints, texts, "t315.x1", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(b, bt, json.get(b, bt, 0, "backend"))));
+                    let snap = json.string_view(b, bt, json.get(b, bt, 0, "snapshot"));
+                    page1.set_buf(heap, names, ints, texts, "t315.x2", text.put_esc(heap, buffer.empty(heap, 16), snap[0..10]));
+                    var decay_only = 0;
+                    var c2 = 0;
+                    while c2 < json.count(at, conv) {
+                        let row = json.at(at, conv, c2);
+                        if jf(a, at, json.get(a, at, row, "relaxation_part")) > jf(a, at, json.get(a, at, row, "published_error")) {
+                            decay_only = decay_only + 1;
+                        }
+                        c2 = c2 + 1;
+                    }
+                    facts.set_int(names, ints, "t315.x3", decay_only);
+                    facts.set_int(names, ints, "t315.x4", json.count(at, conv));
+                    facts.set_int(names, ints, "t315.x5", ji(b, bt, json.get(b, bt, 0, "numbers_rederived")));
+                    let circuits = json.get(b, bt, 0, "circuits");
+                    var worst = 0.0;
+                    var mmin = 0.0;
+                    var mmax = 0.0;
+                    var cmin = 0.0;
+                    var cmax = 0.0;
+                    var ci = 0;
+                    while ci < json.count(bt, circuits) {
+                        let r = json.at(bt, circuits, ci);
+                        let v = jf(b, bt, json.get(b, bt, r, "cancho_vs_aer"));
+                        let moved = jf(b, bt, json.get(b, bt, r, "noise_vs_ideal"));
+                        let c_a = jf(b, bt, json.get(b, bt, r, "control_no_idle")) / v;
+                        let c_b = jf(b, bt, json.get(b, bt, r, "control_naive")) / v;
+                        if ci == 0 || v > worst {
+                            worst = v;
+                        }
+                        if ci == 0 || moved < mmin {
+                            mmin = moved;
+                        }
+                        if ci == 0 || moved > mmax {
+                            mmax = moved;
+                        }
+                        // Python builds [r[k] / v for r in circuits for k in (no_idle, naive)] and takes min and max
+                        if ci == 0 || c_a < cmin {
+                            cmin = c_a;
+                        }
+                        if c_b < cmin {
+                            cmin = c_b;
+                        }
+                        if ci == 0 || c_a > cmax {
+                            cmax = c_a;
+                        }
+                        if c_b > cmax {
+                            cmax = c_b;
+                        }
+                        ci = ci + 1;
+                    }
+                    facts.set_float(names, ints, floats, "t315.x6", worst);
+                    facts.set_float(names, ints, floats, "t315.x7", mmin);
+                    facts.set_float(names, ints, floats, "t315.x8", mmax);
+                    facts.set_float(names, ints, floats, "t315.x9", cmin);
+                    facts.set_float(names, ints, floats, "t315.x10", cmax);
+                }
+            }
+        }
+    }
+    files.unload(heap, cs, ct);
+    files.unload(heap, ccs, cct);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t315", false, false, "");
+    return 0;
+}
+
+// The tile that quotes the first runs on real devices: its numbers are in docs/data/hardware_summary.json
+// (`scripts/hw_summary.py`, from the files of docs/data/hardware/).
+pub fn tile_hardware[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    let (hs, ht) = files.load(heap, io, fs, "docs/data/hardware_summary.json");
+    borrow hs as &hsr in {
+        borrow mut ht as &!htw in {
+            let a = buffer.bytes(hsr);
+            let at = contents(htw);
+            page1.set_buf(heap, names, ints, texts, "t900.x1", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "healthy_device"))));
+            page1.set_buf(heap, names, ints, texts, "t900.x2", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "date"))));
+            facts.set_int(names, ints, "t900.x3", ji(a, at, json.get(a, at, 0, "healthy_runs")));
+            facts.set_int(names, ints, "t900.x4", ji(a, at, json.get(a, at, 0, "healthy_max_cz")));
+            facts.set_int(names, ints, "t900.x5", ji(a, at, json.get(a, at, 0, "shots")));
+            facts.set_float(names, ints, floats, "t900.x6", jf(a, at, json.get(a, at, 0, "healthy_worst_gap")));
+            page1.set_buf(heap, names, ints, texts, "t900.x7", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "drift_device"))));
+            facts.set_int(names, ints, "t900.x8", ji(a, at, json.get(a, at, 0, "drift_runs")));
+            facts.set_float(names, ints, floats, "t900.x9", jf(a, at, json.get(a, at, 0, "drift_ratio_min")));
+            facts.set_float(names, ints, floats, "t900.x10", jf(a, at, json.get(a, at, 0, "drift_ratio_max")));
+            page1.set_buf(heap, names, ints, texts, "t900.x11", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "healthy_device"))));
+            facts.set_float(names, ints, floats, "t900.x12", jf(a, at, json.get(a, at, 0, "stuck_percent")));
+            facts.set_int(names, ints, "t900.x13", ji(a, at, json.get(a, at, 0, "shots")));
+        }
+    }
+    files.unload(heap, hs, ht);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t900", false, false, "");
+    return 0;
+}

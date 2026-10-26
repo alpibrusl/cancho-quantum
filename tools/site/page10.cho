@@ -1,0 +1,688 @@
+module site.page10;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.replay;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part ten: the figures and the small texts the Python `extras()` makes: the worst error per circuit,
+// the two sampled histograms, the distance of sin and cos from the C library, the timings, the diagrams and the stepper.
+
+fn jf[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] float {
+    return json.to_float(src, tape, node);
+}
+
+// {x:.Nf} as a buffer.
+fn fixed_buf[&h](heap: &!h Heap, x: float, nd: int) -> [heap] buffer.Buffer {
+    return numfmt.put_fixed(heap, buffer.empty(heap, 16), x, nd);
+}
+
+pub fn simple_figures[&h, &i, &f, &s, &t, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    // the css the figures share
+    let (css, cg) = files.read_all(heap, fs, "docs/page/svg.css", 65536);
+    page1.set_buf(heap, names, ints, texts, "SVG_CSS", css);
+    // the worst amplitude error per circuit
+    let (cds, cdt) = files.load(heap, io, fs, "docs/data/check_diff.json");
+    borrow cds as &cdr in {
+        borrow mut cdt as &!cdw in {
+            let a = buffer.bytes(cdr);
+            let at = contents(cdw);
+            let rows = json.get(a, at, 0, "rows");
+            // all but `trig`, in name order (the file lists them in name order already)
+            var kept = 0;
+            var k = 0;
+            while k < json.count(at, rows) {
+                if !bytes.equal(json.string_view(a, at, json.at(at, json.at(at, rows, k), 0)), "trig") {
+                    kept = kept + 1;
+                }
+                k = k + 1;
+            }
+            let vals = box_slice(heap, kept + 1, 0.0);
+            var blob = buffer.empty(heap, 1024);
+            var exact = 0;
+            var dm_max = 0.0;
+            var dm_any = false;
+            borrow mut vals as &!vw in {
+                let w = contents(vw);
+                var j = 0;
+                k = 0;
+                while k < json.count(at, rows) {
+                    let row = json.at(at, rows, k);
+                    let nm = json.string_view(a, at, json.at(at, row, 0));
+                    if !bytes.equal(nm, "trig") {
+                        let v = util.parse_float(json.string_view(a, at, json.at(at, row, 1)));
+                        w[j] = v;
+                        if j > 0 {
+                            blob = text.put(heap, blob, "\n");
+                        }
+                        blob = buffer.append(heap, blob, nm);
+                        if v == 0.0 {
+                            exact = exact + 1;
+                        }
+                        if util.starts_with(nm, "dm_") {
+                            if !dm_any || v > dm_max {
+                                dm_max = v;
+                            }
+                            dm_any = true;
+                        }
+                        j = j + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+            borrow blob as &br in {
+                borrow vals as &vr in {
+                    page1.set_buf(heap, names, ints, texts, "CHART_ERROR", svg.hbar(heap, buffer.empty(heap, 4096), buffer.bytes(br), contents(vr)[0..kept], "Worst amplitude error against Qiskit for each circuit, on a log axis, all far below the 1e-12 gate", 1.0e-12, ""));
+                }
+            }
+            buffer.drop(heap, blob);
+            unbox_slice(heap, vals);
+            page1.set_buf(heap, names, ints, texts, "DM_WORST", numfmt.put_sci(heap, buffer.empty(heap, 16), dm_max, 1));
+            page1.set_buf(heap, names, ints, texts, "N_ERR_ROWS", page1.put_nat_buf(heap, kept));
+            page1.set_buf(heap, names, ints, texts, "N_ERR_ALL", page1.put_nat_buf(heap, kept + 1));
+            page1.set_buf(heap, names, ints, texts, "N_ERR_EXACT", page1.put_nat_buf(heap, exact));
+        }
+    }
+    files.unload(heap, cds, cdt);
+    let (nks, nkt) = files.load(heap, io, fs, "docs/data/noise_check.json");
+    borrow nks as &nkr in {
+        borrow mut nkt as &!nktw in {
+            let b = buffer.bytes(nkr);
+            let bt = contents(nktw);
+            let circuits = json.get(b, bt, 0, "circuits");
+            var zmax = 0.0;
+            var k = 0;
+            while k < json.count(bt, circuits) {
+                let z = jf(b, bt, json.get(b, bt, json.at(bt, circuits, k), "max_z"));
+                if k == 0 || z > zmax {
+                    zmax = z;
+                }
+                k = k + 1;
+            }
+            page1.set_buf(heap, names, ints, texts, "NOISE_Z", fixed_buf(heap, zmax, 1));
+        }
+    }
+    files.unload(heap, nks, nkt);
+    return 0;
+}
+
+// The diagrams of the Bell pair and of the unitary half of teleportation.
+fn diagram[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), name: &static [byte], label: &static [byte], out_name: &static [byte], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    let qc = util.qc_file(heap, io, fs, name);
+    borrow qc as &qr in {
+        let all = buffer.bytes(qr);
+        let head = text.line_at(all, 0);
+        let nq = util.parse_int(util.tok(head, 1));
+        // the operations: everything after the header line, without blank lines
+        var ops = buffer.empty(heap, 128);
+        let lines = text.line_count(all);
+        var k = 1;
+        var first = true;
+        while k < lines {
+            let line = text.line_at(all, k);
+            if len(util.strip(line)) > 0 {
+                if !first {
+                    ops = text.put(heap, ops, "\n");
+                }
+                first = false;
+                ops = buffer.append(heap, ops, util.strip(line));
+            }
+            k = k + 1;
+        }
+        borrow ops as &opr in {
+            page1.set_buf(heap, names, ints, texts, out_name, svg.circuit(heap, buffer.empty(heap, 2048), nq, buffer.bytes(opr), label, false, false));
+        }
+        buffer.drop(heap, ops);
+    }
+    buffer.drop(heap, qc);
+    return 0;
+}
+
+pub fn diagrams[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    diagram(heap, io, fs, "bell", "Circuit diagram: H on qubit 0, then CNOT from qubit 0 to qubit 1", "DIAGRAM_BELL", names, ints, texts);
+    diagram(heap, io, fs, "teleport_unitary", "Circuit diagram of the unitary half of teleportation", "DIAGRAM_TELEPORT", names, ints, texts);
+    return 0;
+}
+
+// A seeded run of the three-qubit uniform circuit and of the Bell pair, 800 times each, and their histograms.
+pub fn sampled_figures[&h, &i, &s, &t, &n, &q, &x](heap: &!h Heap, io: &!i Io, tr_src: &s [byte], tr_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, err_write] int {
+    let shots = 800;
+    let uni = box_slice(heap, 8, 0);
+    let bell = box_slice(heap, 4, 0);
+    borrow mut uni as &!uw in {
+        borrow mut bell as &!bw in {
+            let u = contents(uw);
+            let b = contents(bw);
+            var seed = 1;
+            while seed <= shots {
+                var input = text.put(heap, buffer.empty(heap, 64), "n 3\nseed ");
+                input = text.put_int(heap, input, seed);
+                input = text.put(heap, input, "\nh 0\nh 1\nh 2\nm 0\nm 1\nm 2\nquiet\n");
+                var out = buffer.empty(heap, 16);
+                borrow input as &ir in {
+                    buffer.drop(heap, out);
+                    out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(ir));
+                }
+                buffer.drop(heap, input);
+                borrow out as &or in {
+                    let all = buffer.bytes(or);
+                    var idx = 0;
+                    let lines = text.line_count(all);
+                    var k = 0;
+                    var mm = 0;
+                    while k < lines {
+                        let line = text.line_at(all, k);
+                        if util.starts_with(line, "m ") {
+                            let bit = util.parse_int(util.tok(line, 2));
+                            if mm == 0 {
+                                idx = idx + bit;
+                            } else if mm == 1 {
+                                idx = idx + 2 * bit;
+                            } else {
+                                idx = idx + 4 * bit;
+                            }
+                            mm = mm + 1;
+                        }
+                        k = k + 1;
+                    }
+                    u[idx] = u[idx] + 1;
+                }
+                buffer.drop(heap, out);
+                var input2 = text.put(heap, buffer.empty(heap, 64), "n 2\nseed ");
+                input2 = text.put_int(heap, input2, seed);
+                input2 = text.put(heap, input2, "\nh 0\ncx 0 1\nm 0\nm 1\nquiet\n");
+                var out2 = buffer.empty(heap, 16);
+                borrow input2 as &ir2 in {
+                    buffer.drop(heap, out2);
+                    out2 = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(ir2));
+                }
+                buffer.drop(heap, input2);
+                borrow out2 as &or2 in {
+                    let all = buffer.bytes(or2);
+                    var idx = 0;
+                    let lines = text.line_count(all);
+                    var k = 0;
+                    var mm = 0;
+                    while k < lines {
+                        let line = text.line_at(all, k);
+                        if util.starts_with(line, "m ") {
+                            let bit = util.parse_int(util.tok(line, 2));
+                            if mm == 0 {
+                                idx = idx + bit;
+                            } else {
+                                idx = idx + 2 * bit;
+                            }
+                            mm = mm + 1;
+                        }
+                        k = k + 1;
+                    }
+                    b[idx] = b[idx] + 1;
+                }
+                buffer.drop(heap, out2);
+                seed = seed + 1;
+            }
+        }
+    }
+    // the uniform histogram
+    borrow uni as &ur in {
+        let c = contents(ur);
+        let expected = float_of(shots) / 8.0;
+        let sigma = sqrt(float_of(shots) * 0.125 * 0.875);
+        var chi2 = 0.0;
+        var k = 0;
+        while k < 8 {
+            let dv = float_of(c[k]) - expected;
+            chi2 = chi2 + dv * dv / expected;
+            k = k + 1;
+        }
+        var label = text.put(heap, buffer.empty(heap, 160), "Counts of each three-bit outcome over ");
+        label = text.put_int(heap, label, shots);
+        label = text.put(heap, label, " seeded runs, expected ");
+        label = numfmt.put_fixed(heap, label, expected, 0);
+        label = text.put(heap, label, ", shaded band is two standard deviations");
+        borrow label as &lr in {
+            page1.set_buf(heap, names, ints, texts, "CHART_UNIFORM", svg.count_hist(heap, buffer.empty(heap, 2048), "000\n001\n010\n011\n100\n101\n110\n111", c[0..8], expected, 2.0 * sigma, buffer.bytes(lr)));
+        }
+        buffer.drop(heap, label);
+        var tx = text.put_int(heap, buffer.empty(heap, 128), shots);
+        tx = text.put(heap, tx, " runs, seeds 1 to ");
+        tx = text.put_int(heap, tx, shots);
+        tx = text.put(heap, tx, ": chi-squared ");
+        tx = numfmt.put_fixed(heap, tx, chi2, 1);
+        tx = text.put(heap, tx, " on 7 degrees of freedom (a fair sampler exceeds 14.1 about 5% of the time)");
+        page1.set_buf(heap, names, ints, texts, "UNIFORM_TEXT", tx);
+    }
+    borrow bell as &br in {
+        let c = contents(br);
+        var label = text.put(heap, buffer.empty(heap, 160), "Counts of the four outcomes of measuring both Bell-pair qubits over ");
+        label = text.put_int(heap, label, shots);
+        label = text.put(heap, label, " seeded runs: the two mixed outcomes never occur");
+        borrow label as &lr in {
+            page1.set_buf(heap, names, ints, texts, "CHART_BELL", svg.count_hist(heap, buffer.empty(heap, 2048), "q0=0 q1=0\nq0=1 q1=0\nq0=0 q1=1\nq0=1 q1=1", c[0..4], float_of(shots) / 2.0, 0.0, buffer.bytes(lr)));
+        }
+        buffer.drop(heap, label);
+        var tx = text.put_int(heap, buffer.empty(heap, 64), c[0]);
+        tx = text.put(heap, tx, " + ");
+        tx = text.put_int(heap, tx, c[3]);
+        tx = text.put(heap, tx, " agree, ");
+        tx = text.put_int(heap, tx, c[1]);
+        tx = text.put(heap, tx, " + ");
+        tx = text.put_int(heap, tx, c[2]);
+        tx = text.put(heap, tx, " disagree, of ");
+        tx = text.put_int(heap, tx, shots);
+        page1.set_buf(heap, names, ints, texts, "BELL_TEXT", tx);
+    }
+    unbox_slice(heap, uni);
+    unbox_slice(heap, bell);
+    return 0;
+}
+
+// Python's key for the distance in units in the last place: the bits as a signed integer, negatives folded.
+fn ulp_key(x: float) -> [] int {
+    let b = bits_of(x);
+    if b >= 0 {
+        return b;
+    }
+    return 0 - 9223372036854775807 - 1 - b;
+}
+
+fn abs_int(a: int) -> [] int {
+    if a < 0 {
+        return 0 - a;
+    }
+    return a;
+}
+
+// The distance of cancho's sin and cos from the C library (tests/diff/trig.ref), and the timings.
+pub fn numeric_figures[&h, &i, &f, &s, &t, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    let qc = util.qc_file(heap, io, fs, "trig");
+    var tq = buffer.empty(heap, 16);
+    borrow qc as &qr in {
+        buffer.drop(heap, tq);
+        tq = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(qr));
+    }
+    buffer.drop(heap, qc);
+    let (ref_text, rg) = files.read_all(heap, fs, "tests/diff/trig.ref", 1048576);
+    var n_values = 0;
+    var zero = 0;
+    var one = 0;
+    var more = 0;
+    var biggest = 0;
+    borrow tq as &tqr in {
+        borrow ref_text as &rr in {
+            let got_all = buffer.bytes(tqr);
+            let ref_all = buffer.bytes(rr);
+            // the `trig` lines of each, in order
+            let ng = text.line_count(got_all);
+            let nr = text.line_count(ref_all);
+            var gi = 0;
+            var ri = 0;
+            var done = false;
+            while !done {
+                while gi < ng && !util.starts_with(text.line_at(got_all, gi), "trig") {
+                    gi = gi + 1;
+                }
+                while ri < nr && !util.starts_with(text.line_at(ref_all, ri), "trig") {
+                    ri = ri + 1;
+                }
+                if gi >= ng || ri >= nr {
+                    done = true;
+                } else {
+                    let gl = text.line_at(got_all, gi);
+                    let rl = text.line_at(ref_all, ri);
+                    var c = 1;
+                    while c <= 2 {
+                        let d = abs_int(ulp_key(util.parse_float(util.tok(gl, c))) - ulp_key(util.parse_float(util.tok(rl, c))));
+                        if d == 0 {
+                            zero = zero + 1;
+                        } else if d == 1 {
+                            one = one + 1;
+                        } else {
+                            more = more + 1;
+                        }
+                        if d > biggest {
+                            biggest = d;
+                        }
+                        n_values = n_values + 1;
+                        c = c + 1;
+                    }
+                    gi = gi + 1;
+                    ri = ri + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, tq);
+    buffer.drop(heap, ref_text);
+    let hist = box_slice(heap, 3, 0);
+    borrow mut hist as &!hw in {
+        let w = contents(hw);
+        w[0] = zero;
+        w[1] = one;
+        w[2] = more;
+    }
+    var label = text.put(heap, buffer.empty(heap, 160), "Distance of cancho's sin and cos from the C library over ");
+    label = text.put_int(heap, label, n_values);
+    label = text.put(heap, label, " values: ");
+    label = text.put_int(heap, label, zero);
+    label = text.put(heap, label, " identical, ");
+    label = text.put_int(heap, label, one);
+    label = text.put(heap, label, " one ulp away, ");
+    label = text.put_int(heap, label, more);
+    label = text.put(heap, label, " further");
+    borrow label as &lr in {
+        borrow hist as &hr in {
+            page1.set_buf(heap, names, ints, texts, "CHART_ULP", svg.count_hist(heap, buffer.empty(heap, 1024), "0 ulp\n1 ulp\n2+ ulp", contents(hr)[0..3], 0.0, 0.0, buffer.bytes(lr)));
+        }
+    }
+    buffer.drop(heap, label);
+    unbox_slice(heap, hist);
+    var ut = text.put_int(heap, buffer.empty(heap, 64), n_values);
+    ut = text.put(heap, ut, " values from ");
+    ut = text.put_int(heap, ut, n_values / 2);
+    ut = text.put(heap, ut, " angles; none more than ");
+    ut = text.put_int(heap, ut, biggest);
+    ut = text.put(heap, ut, " ulp away");
+    page1.set_buf(heap, names, ints, texts, "ULP_TEXT", ut);
+    return 0;
+}
+
+// The timings (docs/data/timings.json, a checked-in file: not re-measured).
+pub fn timing_figure[&h, &i, &f, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    let (ts, tt) = files.load(heap, io, fs, "docs/data/timings.json");
+    borrow ts as &tsr in {
+        borrow mut tt as &!ttw in {
+            let a = buffer.bytes(tsr);
+            let at = contents(ttw);
+            let qubits = json.get(a, at, 0, "qubits");
+            let secs = json.get(a, at, 0, "seconds");
+            let cran = json.get(a, at, secs, "cranelift");
+            let llvm = json.get(a, at, secs, "llvm");
+            let np = json.count(at, qubits);
+            let xs = box_slice(heap, np, 0);
+            let ys = box_slice(heap, 2 * np, 0.0);
+            borrow mut xs as &!xw in {
+                borrow mut ys as &!yw in {
+                    let xv = contents(xw);
+                    let yv = contents(yw);
+                    var k = 0;
+                    while k < np {
+                        xv[k] = json.to_int(a, at, json.at(at, qubits, k));
+                        yv[k] = jf(a, at, json.at(at, cran, k));
+                        yv[np + k] = jf(a, at, json.at(at, llvm, k));
+                        k = k + 1;
+                    }
+                }
+            }
+            borrow xs as &xr in {
+                borrow ys as &yr in {
+                    page1.set_buf(heap, names, ints, texts, "CHART_TIMING", svg.line_chart(heap, buffer.empty(heap, 4096), "Cranelift\nLLVM", contents(xr), contents(yr), "Seconds to apply H to every qubit, against the number of qubits, on a log axis; each added qubit roughly doubles the time", "qubits", "seconds"));
+                    var tx = text.put(heap, buffer.empty(heap, 256), "Measured ");
+                    tx = buffer.append(heap, tx, json.string_view(a, at, json.get(a, at, 0, "measured")));
+                    tx = text.put(heap, tx, " on ");
+                    tx = buffer.append(heap, tx, json.string_view(a, at, json.get(a, at, 0, "machine")));
+                    tx = text.put(heap, tx, ": minimum of 3 runs, output off. 20 qubits is ");
+                    tx = numfmt.put_fixed(heap, tx, contents(yr)[np - 1] * 1000.0, 0);
+                    tx = text.put(heap, tx, " ms (Cranelift) and ");
+                    tx = numfmt.put_fixed(heap, tx, contents(yr)[2 * np - 1] * 1000.0, 0);
+                    tx = text.put(heap, tx, " ms (LLVM); 2^20 amplitudes is 16 MiB.");
+                    page1.set_buf(heap, names, ints, texts, "TIMING_TEXT", tx);
+                }
+            }
+            unbox_slice(heap, xs);
+            unbox_slice(heap, ys);
+        }
+    }
+    files.unload(heap, ts, tt);
+    return 0;
+}
+
+// Python's `op_text`, with its tags removed and `&pi;` spelled `pi`, for the stepper's captions.
+fn op_text[&h, &s](heap: &!h Heap, buf: buffer.Buffer, line: &s [byte]) -> [heap] buffer.Buffer {
+    var out = buf;
+    let w = svg.word(line);
+    let a0 = svg.nth(line, 1);
+    let a1 = svg.nth(line, 2);
+    let a2 = svg.nth(line, 3);
+    let a3 = svg.nth(line, 4);
+    if bytes.equal(w, "cx") {
+        out = text.put(heap, out, "CNOT, control q");
+        out = text.put_int(heap, out, a0);
+        out = text.put(heap, out, ", target q");
+        out = text.put_int(heap, out, a1);
+    } else if bytes.equal(w, "cz") {
+        out = text.put(heap, out, "CZ on q");
+        out = text.put_int(heap, out, a0);
+        out = text.put(heap, out, " and q");
+        out = text.put_int(heap, out, a1);
+    } else if bytes.equal(w, "rz") {
+        out = text.put(heap, out, "Rz(");
+        out = text.put_int(heap, out, a1);
+        out = text.put(heap, out, "pi/");
+        out = text.put_int(heap, out, a2);
+        out = text.put(heap, out, ") on q");
+        out = text.put_int(heap, out, a0);
+    } else if bytes.equal(w, "m") {
+        out = text.put(heap, out, "measure q");
+        out = text.put_int(heap, out, a0);
+    } else if bytes.equal(w, "swap") {
+        out = text.put(heap, out, "SWAP q");
+        out = text.put_int(heap, out, a0);
+        out = text.put(heap, out, " and q");
+        out = text.put_int(heap, out, a1);
+    } else if bytes.equal(w, "ccx") {
+        out = text.put(heap, out, "Toffoli, controls q");
+        out = text.put_int(heap, out, a0);
+        out = text.put(heap, out, " and q");
+        out = text.put_int(heap, out, a1);
+        out = text.put(heap, out, ", target q");
+        out = text.put_int(heap, out, a2);
+    } else if bytes.equal(w, "cp") {
+        out = text.put(heap, out, "controlled phase ");
+        out = text.put_int(heap, out, a2);
+        out = text.put(heap, out, "pi/");
+        out = text.put_int(heap, out, a3);
+        out = text.put(heap, out, ", q");
+        out = text.put_int(heap, out, a0);
+        out = text.put(heap, out, " and q");
+        out = text.put_int(heap, out, a1);
+    } else if bytes.equal(w, "rx") || bytes.equal(w, "ry") || bytes.equal(w, "p") {
+        if bytes.equal(w, "p") {
+            out = text.put(heap, out, "P(");
+        } else if bytes.equal(w, "rx") {
+            out = text.put(heap, out, "Rx(");
+        } else {
+            out = text.put(heap, out, "Ry(");
+        }
+        out = text.put_int(heap, out, a1);
+        out = text.put(heap, out, "pi/");
+        out = text.put_int(heap, out, a2);
+        out = text.put(heap, out, ") on q");
+        out = text.put_int(heap, out, a0);
+    } else {
+        // NAME.upper() on qN
+        var k = 0;
+        while k < len(w) {
+            var c = int_of(w[k]);
+            if c >= 'a' && c <= 'z' {
+                c = c - 32;
+            }
+            out = buffer.push(heap, out, byte_of(c));
+            k = k + 1;
+        }
+        out = text.put(heap, out, " on q");
+        out = text.put_int(heap, out, a0);
+    }
+    return out;
+}
+
+fn stepper_one[&h, &i, &f, &s, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], name: &static [byte], title: &static [byte], data: buffer.Buffer, diagrams: buffer.Buffer, tabs: buffer.Buffer, first: bool) -> [heap, fs_read(""), err_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var d = data;
+    var dg = diagrams;
+    var tb = tabs;
+    let qc = util.qc_file(heap, io, fs, name);
+    borrow qc as &qr in {
+        let all = buffer.bytes(qr);
+        let head = text.line_at(all, 0);
+        let nq = util.parse_int(util.tok(head, 1));
+        // the operations, without seed and sample, as single-spaced lines
+        var ops = buffer.empty(heap, 128);
+        var n_ops = 0;
+        let lines = text.line_count(all);
+        var k = 1;
+        while k < lines {
+            let line = text.line_at(all, k);
+            let w = svg.word(line);
+            if len(w) > 0 && !bytes.equal(w, "seed") && !bytes.equal(w, "sample") {
+                if n_ops > 0 {
+                    ops = text.put(heap, ops, "\n");
+                }
+                // single spaces between the tokens
+                var t = 0;
+                while len(util.tok(line, t)) > 0 {
+                    if t > 0 {
+                        ops = text.put(heap, ops, " ");
+                    }
+                    ops = buffer.append(heap, ops, util.tok(line, t));
+                    t = t + 1;
+                }
+                n_ops = n_ops + 1;
+            }
+            k = k + 1;
+        }
+        borrow ops as &opr in {
+            let opl = buffer.bytes(opr);
+            if !first {
+                d = text.put(heap, d, ",");
+            }
+            d = text.put(heap, d, "\"");
+            d = text.put(heap, d, name);
+            d = text.put(heap, d, "\":{\"n\":");
+            d = text.put_int(heap, d, nq);
+            d = text.put(heap, d, ",\"title\":");
+            d = text.put_json_string(heap, d, title);
+            d = text.put(heap, d, ",\"ops\":[");
+            k = 0;
+            while k < n_ops {
+                if k > 0 {
+                    d = text.put(heap, d, ",");
+                }
+                var cap = op_text(heap, buffer.empty(heap, 64), text.line_at(opl, k));
+                borrow cap as &cr in {
+                    d = text.put_json_string(heap, d, buffer.bytes(cr));
+                }
+                buffer.drop(heap, cap);
+                k = k + 1;
+            }
+            d = text.put(heap, d, "],\"frames\":[");
+            var kk = 0;
+            while kk <= n_ops {
+                // the prefix of kk operations, run
+                var input = text.put(heap, buffer.empty(heap, 128), "n ");
+                input = text.put_int(heap, input, nq);
+                input = text.put(heap, input, "\n");
+                k = 0;
+                while k < kk {
+                    input = buffer.append(heap, input, text.line_at(opl, k));
+                    input = text.put(heap, input, "\n");
+                    k = k + 1;
+                }
+                var out = buffer.empty(heap, 16);
+                borrow input as &ir in {
+                    buffer.drop(heap, out);
+                    out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(ir));
+                }
+                buffer.drop(heap, input);
+                if kk > 0 {
+                    d = text.put(heap, d, ",");
+                }
+                d = text.put(heap, d, "[");
+                borrow out as &or in {
+                    let (re, im) = util.read_amps(heap, buffer.bytes(or), nq);
+                    borrow re as &rr in {
+                        borrow im as &ir2 in {
+                            let a = contents(rr);
+                            let b = contents(ir2);
+                            var i2 = 0;
+                            while i2 < len(a) {
+                                let p = a[i2] * a[i2] + b[i2] * b[i2];
+                                if i2 > 0 {
+                                    d = text.put(heap, d, ",");
+                                }
+                                d = text.put(heap, d, "[");
+                                d = numfmt.put_repr(heap, d, numfmt.round_nd(p, 6));
+                                d = text.put(heap, d, ",");
+                                if p > 1.0e-12 {
+                                    d = text.put(heap, d, "\"");
+                                    d = svg.phase_color(heap, d, a[i2], b[i2]);
+                                    d = text.put(heap, d, "\"");
+                                } else {
+                                    d = text.put(heap, d, "\"none\"");
+                                }
+                                d = text.put(heap, d, ",");
+                                d = numfmt.put_repr(heap, d, numfmt.round_nd(a[i2], 4));
+                                d = text.put(heap, d, ",");
+                                d = numfmt.put_repr(heap, d, numfmt.round_nd(b[i2], 4));
+                                d = text.put(heap, d, "]");
+                                i2 = i2 + 1;
+                            }
+                        }
+                    }
+                    unbox_slice(heap, re);
+                    unbox_slice(heap, im);
+                }
+                buffer.drop(heap, out);
+                d = text.put(heap, d, "]");
+                kk = kk + 1;
+            }
+            d = text.put(heap, d, "]}");
+            // the diagram and the tab
+            if !first {
+                dg = text.put(heap, dg, "\n    ");
+                tb = text.put(heap, tb, "\n      ");
+            }
+            dg = text.put(heap, dg, "<div class=\"stepcirc\" data-circuit=\"");
+            dg = text.put(heap, dg, name);
+            dg = text.put(heap, dg, "\" hidden>");
+            var label = text.put(heap, buffer.empty(heap, 64), "Circuit diagram: ");
+            label = text.put(heap, label, title);
+            borrow label as &lr in {
+                dg = svg.circuit(heap, dg, nq, opl, buffer.bytes(lr), true, true);
+            }
+            buffer.drop(heap, label);
+            dg = text.put(heap, dg, "</div>");
+            tb = text.put(heap, tb, "<button type=\"button\" class=\"tab\" data-circuit=\"");
+            tb = text.put(heap, tb, name);
+            tb = text.put(heap, tb, "\">");
+            tb = text.put_esc(heap, tb, title);
+            tb = text.put(heap, tb, "</button>");
+        }
+        buffer.drop(heap, ops);
+    }
+    buffer.drop(heap, qc);
+    return (d, dg, tb);
+}
+
+pub fn stepper[&h, &i, &f, &s, &t, &n, &q, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte]) -> [heap, fs_read(""), err_write] int {
+    var data = text.put(heap, buffer.empty(heap, 65536), "{");
+    var diagrams = buffer.empty(heap, 8192);
+    var tabs = buffer.empty(heap, 1024);
+    let (d1, g1, t1) = stepper_one(heap, io, fs, tr_src, tr_tape, "bell", "Bell pair", data, diagrams, tabs, true);
+    let (d2, g2, t2) = stepper_one(heap, io, fs, tr_src, tr_tape, "ghz4", "GHZ, 4 qubits", d1, g1, t1, false);
+    let (d3, g3, t3) = stepper_one(heap, io, fs, tr_src, tr_tape, "teleport_unitary", "Teleportation, before the measurements", d2, g2, t2, false);
+    let (d4, g4, t4) = stepper_one(heap, io, fs, tr_src, tr_tape, "qft4", "Fourier transform of |5>", d3, g3, t3, false);
+    let (d5, g5, t5) = stepper_one(heap, io, fs, tr_src, tr_tape, "grover3", "Grover search for 101", d4, g4, t4, false);
+    let closed = text.put(heap, d5, "}");
+    page1.set_buf(heap, names, ints, texts, "STEPPER_DATA", closed);
+    page1.set_buf(heap, names, ints, texts, "STEPPER_DIAGRAMS", g5);
+    page1.set_buf(heap, names, ints, texts, "STEPPER_TABS", t5);
+    return 0;
+}

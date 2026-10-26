@@ -9,7 +9,7 @@ in `docs/qubit-types.md`, plus more gates, sampling, OpenQASM input,
 algorithms (`docs/features-results.md`), noise by sampling (`docs/noise-results.md`) and exact
 noise on the density matrix (`docs/density-results.md`).
 
-- `docs/index.html`: the landing page (for humans, for agents, a gallery of what runs, what is refused and what is planned). Rebuild with `python3 scripts/build_site.py`; `--check` fails if it has drifted from the tools. Serve it with GitHub Pages from `/docs`.
+- `docs/index.html`: the landing page (for humans, for agents, a gallery of what runs, what is refused and what is planned). It is built by a cancho program, `tools/site/` (`sh scripts/site.sh`; `--check` fails if it has drifted from the tools); `scripts/build_site.py` is the reference implementation it is compared with byte for byte (`python3 scripts/check_site.py`). Serve it with GitHub Pages from `/docs`.
 - `docs/llms.txt`, `docs/agent-prompt.md`: the same facts for agents
 - `docs/qubit-types.md`: M0 design and the must-reject list
 - `docs/m1-results.md`: M1 results (simulator, diff against Qiskit)

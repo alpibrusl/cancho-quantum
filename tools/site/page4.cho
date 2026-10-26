@@ -1,0 +1,168 @@
+module site.page4;
+
+import site.facts;
+import site.files;
+import site.numfmt;
+import site.page1;
+import site.page2;
+import site.svg;
+import site.text;
+import site.util;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// The page builder, part four: the tiles whose numbers come from the checked-in data files (docs/data/*.json): the
+// noise checks, the density matrix, the speed benchmark, the profile, idle noise and scheduling, OpenQASM.
+
+fn jf[&s, &t](src: &s [byte], tape: &t [int], node: int) -> [] float {
+    return json.to_float(src, tape, node);
+}
+
+fn max_f(a: float, b: float) -> [] float {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn min_f(a: float, b: float) -> [] float {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// A JSON number as the Python prints it (`str`): an int as an int, a float as a float.
+pub fn set_number[&n, &q, &d, &s, &t](names: &!n [byte], ints: &!q [int], floats: &!d [float], name: &static [byte], src: &s [byte], tape: &t [int], node: int) -> [] int {
+    if json.is_int(tape, node) {
+        return facts.set_int(names, ints, name, json.to_int(src, tape, node));
+    }
+    return facts.set_float(names, ints, floats, name, json.to_float(src, tape, node));
+}
+
+// The rows of a curve chart ({p, exact, estimate, stderr}) as four columns in one box: [p.., exact.., estimate.., stderr..].
+pub fn curve_rows[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], rows: int) -> [heap] Box[[float]] {
+    let n = json.count(tape, rows);
+    let box = box_slice(heap, 4 * n + 1, 0.0);
+    borrow mut box as &!bw in {
+        let w = contents(bw);
+        var k = 0;
+        while k < n {
+            let r = json.at(tape, rows, k);
+            w[k] = jf(src, tape, json.get(src, tape, r, "p"));
+            w[n + k] = jf(src, tape, json.get(src, tape, r, "exact"));
+            w[2 * n + k] = jf(src, tape, json.get(src, tape, r, "estimate"));
+            w[3 * n + k] = jf(src, tape, json.get(src, tape, r, "stderr"));
+            k = k + 1;
+        }
+    }
+    return box;
+}
+
+// svg.curve_chart over a box of curve rows, stored as the fact `name`.
+pub fn curve_fact[&h, &n, &q, &x, &b](heap: &!h Heap, names: &!n [byte], ints: &!q [int], texts: &!x [byte], name: &static [byte], box: &b [float], count: int, label: &static [byte], xlab: &static [byte], ylab: &static [byte], y0: float, y1: float, label_est: &static [byte], label_exact: &static [byte], errbars: bool, xmax: float, xname: &static [byte]) -> [heap] int {
+    let out = svg.curve_chart(heap, buffer.empty(heap, 4096), box[0..count], box[count..2 * count], box[2 * count..3 * count], box[3 * count..4 * count], label, xlab, ylab, y0, y1, label_est, label_exact, errbars, xmax, xname);
+    return page1.set_buf(heap, names, ints, texts, name, out);
+}
+
+// Grover, Bernstein-Vazirani, Toffoli.
+pub fn tiles_algorithms[&h, &i, &f, &s, &t, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), tr_src: &s [byte], tr_tape: &t [int], sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    // Grover
+    let g_qc = util.qc_file(heap, io, fs, "grover3");
+    var g_out = buffer.empty(heap, 16);
+    borrow g_qc as &gq in {
+        buffer.drop(heap, g_out);
+        g_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(gq));
+        // the gates: every line after the header that is not seed or sample
+        let all = buffer.bytes(gq);
+        let total = text.line_count(all);
+        var gates = 0;
+        var k = 1;
+        while k < total {
+            let line = text.line_at(all, k);
+            let w = svg.word(line);
+            if len(w) > 0 && !bytes.equal(w, "seed") && !bytes.equal(w, "sample") {
+                gates = gates + 1;
+            }
+            k = k + 1;
+        }
+        facts.set_int(names, ints, "t232.x1", gates);
+    }
+    borrow g_out as &go in {
+        let out = buffer.bytes(go);
+        let counts = box_slice(heap, 8, 0);
+        borrow mut counts as &!cw in {
+            let c = contents(cw);
+            let lines = text.line_count(out);
+            var k = 0;
+            while k < lines {
+                let line = text.line_at(out, k);
+                if util.starts_with(line, "sample") {
+                    let bits = util.tok(line, 1);
+                    c[(int_of(bits[0]) - '0') * 4 + (int_of(bits[1]) - '0') * 2 + (int_of(bits[2]) - '0')] = util.parse_int(util.tok(line, 2));
+                }
+                k = k + 1;
+            }
+            facts.set_int(names, ints, "t232.x2", c[5]);
+        }
+        borrow counts as &cr in {
+            let svg_out = svg.count_hist(heap, buffer.empty(heap, 2048), "000\n001\n010\n011\n100\n101\n110\n111", contents(cr)[0..8], 125.0, 0.0, "Counts of each three-bit outcome over 1000 samples of the Grover state: the marked item 101 dominates");
+            page1.set_buf(heap, names, ints, texts, "t232.x3", svg_out);
+        }
+        unbox_slice(heap, counts);
+    }
+    buffer.drop(heap, g_out);
+    buffer.drop(heap, g_qc);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t232", false, false, "");
+
+    // Bernstein-Vazirani
+    let bv_qc = util.qc_file(heap, io, fs, "bernstein_vazirani");
+    var bv_out = buffer.empty(heap, 16);
+    borrow bv_qc as &bq in {
+        buffer.drop(heap, bv_out);
+        bv_out = util.qsim(heap, io, tr_src, tr_tape, buffer.bytes(bq));
+    }
+    var joined = buffer.empty(heap, 64);
+    borrow bv_out as &bo in {
+        let out = buffer.bytes(bo);
+        let lines = text.line_count(out);
+        var k = 0;
+        var first = true;
+        while k < lines {
+            let line = text.line_at(out, k);
+            if util.starts_with(line, "sample") {
+                if !first {
+                    joined = text.put(heap, joined, " | ");
+                }
+                first = false;
+                // l.replace('sample ', '')
+                var cut = 0;
+                if util.starts_with(line, "sample ") {
+                    cut = 7;
+                }
+                joined = text.put_esc(heap, joined, line[cut..len(line)]);
+            }
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, bv_out);
+    buffer.drop(heap, bv_qc);
+    page1.set_buf(heap, names, ints, texts, "t239.x1", joined);
+    let (cb, bv_typed) = util.accept(heap, io, tr_src, tr_tape, "bernstein_vazirani_typed");
+    borrow bv_typed as &bt in {
+        page1.set_buf(heap, names, ints, texts, "t239.x2", text.put_esc(heap, buffer.empty(heap, 32), util.strip(buffer.bytes(bt))));
+    }
+    buffer.drop(heap, bv_typed);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t239", false, false, "");
+
+    // Toffoli
+    let (ct, tof) = util.accept(heap, io, tr_src, tr_tape, "toffoli_typed");
+    borrow tof as &tr in {
+        page1.set_buf(heap, names, ints, texts, "t243.x1", text.put_esc(heap, buffer.empty(heap, 64), util.strip(buffer.bytes(tr))));
+    }
+    buffer.drop(heap, tof);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t243", false, false, "");
+    return 0;
+}

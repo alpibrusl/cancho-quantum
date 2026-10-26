@@ -1,0 +1,345 @@
+[
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm3",
+  "statistic": 175.13208194562554,
+  "df": 5,
+  "p_value": 5.85918129728144e-36
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm5",
+  "statistic": 213.80303095337354,
+  "df": 10,
+  "p_value": 2.1153741994295093e-40
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm7",
+  "statistic": 215.29694698825318,
+  "df": 15,
+  "p_value": 1.6276412537928043e-37
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d2",
+  "statistic": 647.0220745050393,
+  "df": 9,
+  "p_value": 1.6773306611303826e-133
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d4",
+  "statistic": 384.168455923106,
+  "df": 13,
+  "p_value": 4.91375591648856e-74
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d8",
+  "statistic": 321.435651645631,
+  "df": 24,
+  "p_value": 7.893404765063951e-54
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm3",
+  "statistic": 237.6586922793064,
+  "df": 5,
+  "p_value": 2.439442459918381e-49
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm5",
+  "statistic": 538.7260286308489,
+  "df": 10,
+  "p_value": 2.316023464337482e-109
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm7",
+  "statistic": 272.4717270873831,
+  "df": 15,
+  "p_value": 2.8532787126186687e-49
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d2",
+  "statistic": 1073.3414781119004,
+  "df": 9,
+  "p_value": 2.6183588576442775e-225
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d4",
+  "statistic": 894.9047096764137,
+  "df": 13,
+  "p_value": 6.297359468862081e-183
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d8",
+  "statistic": 701.9176916804008,
+  "df": 24,
+  "p_value": 9.794021331075771e-133
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm3",
+  "statistic": 1316.4187715389064,
+  "df": 5,
+  "p_value": 1.7709042145643324e-282
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm5",
+  "statistic": 938.2348728944895,
+  "df": 9,
+  "p_value": 3.5642865054622582e-196
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm7",
+  "statistic": 961.8848712359506,
+  "df": 15,
+  "p_value": 1.9802659012399894e-195
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d2",
+  "statistic": 1473.247839178189,
+  "df": 7,
+  "p_value": 5.4489052013e-314
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d4",
+  "statistic": 1014.1929810743403,
+  "df": 13,
+  "p_value": 1.5642202303133462e-208
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d8",
+  "statistic": 775.9922678878393,
+  "df": 20,
+  "p_value": 1.759013339093023e-151
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "ghzm3",
+  "statistic": 300.943138618851,
+  "df": 5,
+  "p_value": 6.279070163894444e-63
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "ghzm5",
+  "statistic": 1546.7035344664678,
+  "df": 8,
+  "p_value": 0.0
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "ghzm7",
+  "statistic": 4770.055350109027,
+  "df": 12,
+  "p_value": 0.0
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "rmir5_d2",
+  "statistic": 472.9653213650594,
+  "df": 9,
+  "p_value": 3.515496328026328e-96
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "rmir5_d4",
+  "statistic": 619.8391021665262,
+  "df": 14,
+  "p_value": 3.178870181321156e-123
+ },
+ {
+  "file": "ibm_fez-2026-10-26-mirror.json",
+  "circuit": "rmir5_d8",
+  "statistic": 2814.9304193239245,
+  "df": 21,
+  "p_value": 0.0
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "bell",
+  "statistic": 58.39312603371156,
+  "df": 3,
+  "p_value": 1.2955968219281334e-12
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "ghz3",
+  "statistic": 149.7494126409368,
+  "df": 6,
+  "p_value": 8.741132288759296e-30
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "ghz5",
+  "statistic": 238.75596997437157,
+  "df": 10,
+  "p_value": 1.2501401081595243e-45
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "ghz7",
+  "statistic": 338.5318983701755,
+  "df": 15,
+  "p_value": 5.238449096062888e-63
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "toffoli",
+  "statistic": 654.6722778250468,
+  "df": 6,
+  "p_value": 3.7267696425632803e-138
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "qft4",
+  "statistic": 21.142955174765362,
+  "df": 15,
+  "p_value": 0.13232370095026233
+ },
+ {
+  "file": "ibm_fez-2026-10-26.json",
+  "circuit": "random5",
+  "statistic": 63.37929579344064,
+  "df": 31,
+  "p_value": 0.0005294977504605426
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm3",
+  "statistic": 105.85244660264894,
+  "df": 4,
+  "p_value": 5.574851174305094e-22
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm5",
+  "statistic": 77.19942037845631,
+  "df": 6,
+  "p_value": 1.3520406284661158e-14
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "ghzm7",
+  "statistic": 77.92985122536632,
+  "df": 8,
+  "p_value": 1.274858969318942e-13
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d2",
+  "statistic": 72.73644056052619,
+  "df": 6,
+  "p_value": 1.1214201390476857e-13
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d4",
+  "statistic": 61.25608424810514,
+  "df": 7,
+  "p_value": 8.469086398644503e-11
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1000.json",
+  "circuit": "rmir5_d8",
+  "statistic": 61.692823074357726,
+  "df": 14,
+  "p_value": 5.9097587721174844e-08
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm3",
+  "statistic": 31.794792266518538,
+  "df": 4,
+  "p_value": 2.107018594327847e-06
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm5",
+  "statistic": 75.78081669747492,
+  "df": 6,
+  "p_value": 2.650615887521186e-14
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "ghzm7",
+  "statistic": 126.34235735855526,
+  "df": 8,
+  "p_value": 1.619175949455246e-23
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d2",
+  "statistic": 106.03352737553523,
+  "df": 6,
+  "p_value": 1.3781231395210105e-20
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d4",
+  "statistic": 45.39832858189806,
+  "df": 7,
+  "p_value": 1.1444632918890324e-07
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+  "circuit": "rmir5_d8",
+  "statistic": 64.4362686886163,
+  "df": 14,
+  "p_value": 1.9281577645540043e-08
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm3",
+  "statistic": 121.0857888582614,
+  "df": 4,
+  "p_value": 3.1313596331027213e-25
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm5",
+  "statistic": 66.94653697899044,
+  "df": 6,
+  "p_value": 1.726014424426697e-12
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "ghzm7",
+  "statistic": 112.2817762135668,
+  "df": 8,
+  "p_value": 1.2924546028745444e-20
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d2",
+  "statistic": 66.2299169273183,
+  "df": 6,
+  "p_value": 2.418738782275718e-12
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d4",
+  "statistic": 24.48626874014383,
+  "df": 7,
+  "p_value": 0.0009354156616312013
+ },
+ {
+  "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+  "circuit": "rmir5_d8",
+  "statistic": 59.028050768960455,
+  "df": 14,
+  "p_value": 1.73579729620647e-07
+ }
+]

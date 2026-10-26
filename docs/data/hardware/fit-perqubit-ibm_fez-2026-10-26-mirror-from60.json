@@ -1,0 +1,161 @@
+{
+ "free": "depol2",
+ "prior": 1.0986122886681098,
+ "fitted_on": "ibm_fez-2026-10-26-mirror-from60.json",
+ "fit_circuits": [
+  "ghzm3",
+  "rmir5_d2",
+  "rmir5_d4"
+ ],
+ "factors": {
+  "decay": 1.0,
+  "depol1": 1.0,
+  "depol2": 2.9953524166769148,
+  "readout": 1.0
+ },
+ "p01_fitted": {
+  "56": 0.0005002298978274666,
+  "60": 0.18332903522891256,
+  "61": 0.05310424997333724,
+  "62": 0.014890620301433368,
+  "63": 0.029149814155259562
+ },
+ "p01_calibration": {
+  "56": 0.003662109375,
+  "60": 0.031005859375,
+  "61": 0.030517578125,
+  "62": 0.019775390625,
+  "63": 0.03271484375
+ },
+ "misfit_before": 0.6343359762479769,
+ "misfit_after": 0.02170571800809406,
+ "evaluations": 390,
+ "rows": [
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm3",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.1633024023780137,
+   "model_vs_device_fitted": 0.013941650351654185
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d2",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.18545313232791427,
+   "model_vs_device_fitted": 0.02741395977465989
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d4",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.18301834829897456,
+   "model_vs_device_fitted": 0.04819751251592239
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm5",
+   "role": "held out",
+   "model_vs_device_calibration": 0.1799050871676931,
+   "model_vs_device_fitted": 0.03777359750406609
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm7",
+   "role": "held out",
+   "model_vs_device_calibration": 0.19946007376305463,
+   "model_vs_device_fitted": 0.07567532237031616
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d8",
+   "role": "held out",
+   "model_vs_device_calibration": 0.16955447957834022,
+   "model_vs_device_fitted": 0.09252628043646663
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "ghzm3",
+   "role": "other run",
+   "model_vs_device_calibration": 0.11109071828448712,
+   "model_vs_device_fitted": 0.09876070796108816
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "ghzm5",
+   "role": "other run",
+   "model_vs_device_calibration": 0.12129985616574174,
+   "model_vs_device_fitted": 0.14286533847069982
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "ghzm7",
+   "role": "other run",
+   "model_vs_device_calibration": 0.10741837442429432,
+   "model_vs_device_fitted": 0.12522427517819215
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "rmir5_d2",
+   "role": "other run",
+   "model_vs_device_calibration": 0.13257877950358068,
+   "model_vs_device_fitted": 0.13075066424306012
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "rmir5_d4",
+   "role": "other run",
+   "model_vs_device_calibration": 0.1288355788616336,
+   "model_vs_device_fitted": 0.1278695737291608
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1000.json",
+   "circuit": "rmir5_d8",
+   "role": "other run",
+   "model_vs_device_calibration": 0.13485571690961676,
+   "model_vs_device_fitted": 0.16914040045878762
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm3",
+   "role": "other run",
+   "model_vs_device_calibration": 0.1290907182844871,
+   "model_vs_device_fitted": 0.11770070712646663
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm5",
+   "role": "other run",
+   "model_vs_device_calibration": 0.13583441768856439,
+   "model_vs_device_fitted": 0.1284455137841299
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm7",
+   "role": "other run",
+   "model_vs_device_calibration": 0.09831132430776557,
+   "model_vs_device_fitted": 0.09983977094985835
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d2",
+   "role": "other run",
+   "model_vs_device_calibration": 0.13905274708419202,
+   "model_vs_device_fitted": 0.13477065543723224
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d4",
+   "role": "other run",
+   "model_vs_device_calibration": 0.15343472721892765,
+   "model_vs_device_fitted": 0.15597081162865464
+  },
+  {
+   "file": "ibm_fez-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d8",
+   "role": "other run",
+   "model_vs_device_calibration": 0.1583685704582213,
+   "model_vs_device_fitted": 0.17977846728339109
+  }
+ ]
+}

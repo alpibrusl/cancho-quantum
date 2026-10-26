@@ -1,0 +1,79 @@
+// Test driver for svg.cho: one JSON object per line on standard input, {"fn": ..., ...}; the SVG is printed on one
+// line. Used by scripts/check_site_tools.py, which compares it with scripts/site_svg.py.
+
+import site.svg;
+import std.buffer;
+import std.io;
+import std.json;
+
+fn str_of[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] &s [byte] {
+    return json.string_view(src, tape, i);
+}
+
+fn one[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [int]) -> [heap, io_write] int {
+    var out = buffer.empty(heap, 1024);
+    if json.string_equals(src, tape, json.get(src, tape, 0, "fn"), "circuit") {
+        let ops = json.get(src, tape, 0, "ops");
+        // the ops string has escapes (\n): decode into a heap slice
+        let need = json.string_length(src, tape, ops);
+        let lab = json.get(src, tape, 0, "label");
+        let lneed = json.string_length(src, tape, lab);
+        let raw = box_slice(heap, need + lneed + 2, byte_of(0));
+        borrow mut raw as &!rw in {
+            let r = contents(rw);
+            json.string_into(src, tape, ops, r[0..need + 1]);
+            json.string_into(src, tape, lab, r[need + 1..need + 1 + lneed + 1]);
+            out = svg.circuit(heap, out, json.to_int(src, tape, json.get(src, tape, 0, "n")), r[0..need], r[need + 1..need + 1 + lneed], json.to_bool(tape, json.get(src, tape, 0, "current")), json.to_bool(tape, json.get(src, tape, 0, "natural")));
+        }
+        unbox_slice(heap, raw);
+    }
+    borrow out as &ob in {
+        buffer.write(io, ob);
+    }
+    io.newline(io);
+    buffer.drop(heap, out);
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var line = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        if c == 10 {
+            borrow line as &lb in {
+                let src = buffer.bytes(lb);
+                let tape = box_slice(heap, json.tape_len(src), 0);
+                borrow mut tape as &!tw in {
+                    let t = contents(tw);
+                    if json.parse(src, t) > 0 {
+                        one(heap, io, src, t);
+                    }
+                }
+                unbox_slice(heap, tape);
+            }
+            borrow mut line as &!lm in {
+                buffer.clear(lm);
+            }
+        } else {
+            line = buffer.push(heap, line, byte_of(c));
+        }
+        c = getchar(io);
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}
