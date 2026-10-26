@@ -19,7 +19,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 HW = os.path.join(ROOT, "docs", "data", "hardware")
-FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "common files props qasm3 model gof predict main".split()]
+FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "common files props qasm3 model rates gof predict main".split()]
 
 
 def build():
@@ -218,6 +218,71 @@ def check_predict(hw, qsim):
     return ok
 
 
+def synthetic_rates_job(d):
+    """A `--set rates` job made up from the kingston calibration: gate counts at random, the survival of each circuit from the published errors times 1.3, the zeros sampled (2000 shots)."""
+    import random
+
+    props = json.load(open(os.path.join(HW, "ibm_kingston-2026-10-26-mirror-from60-props.json")))
+    err = {}
+    for g in props["gates"]:
+        p = {x["name"]: x["value"] for x in g["parameters"]}
+        if g["gate"] == "sx":
+            err[("g1", g["qubits"][0])] = p["gate_error"]
+        if g["gate"] == "cz":
+            err[("cz", tuple(sorted(g["qubits"])))] = p["gate_error"]
+    line = [60, 61, 62, 63, 56]
+    rnd = random.Random(3)
+    rows = []
+    for i in range(100):
+        cz = {f"{min(a, b)}-{max(a, b)}": 2 * rnd.randint(0, 30) for a, b in zip(line, line[1:])}
+        one = {str(q): 2 * rnd.randint(0, 40) for q in line}
+        logs = sum(v * math.log(1 - 1.3 * err[("cz", tuple(sorted(map(int, k.split("-")))))]) for k, v in cz.items())
+        logs += sum(v * math.log(1 - 1.3 * err[("g1", int(k))]) for k, v in one.items())
+        for q in line:
+            v = {x["name"]: x["value"] for x in props["qubits"][q]}
+            logs += math.log(1 - v["prob_meas1_prep0"])
+        pz = math.exp(logs)
+        zeros = sum(1 for _ in range(2000) if rnd.random() < pz)
+        rows.append({"circuit": f"r{i:03d}", "qubits": 5, "ideal": {"00000": 1.0}, "device": {"00000": zeros, "00001": 2000 - zeros}, "gates": {"sx_x": one, "cz": cz}})
+    job = os.path.join(d, "rates-job.json")
+    json.dump({"device": "ibm_kingston", "date": "MADE UP", "shots": 2000, "line": line, "circuits": rows}, open(job, "w"))
+    shutil.copy(os.path.join(HW, "ibm_kingston-2026-10-26-mirror-from60-props.json"), os.path.join(d, "rates-job-props.json"))
+    return job
+
+
+def check_rates(hw):
+    ml = os.environ.get("ML")
+    if not ml:
+        print("skip hw rates: ML (a built cancho-ml `ml`) is not set")
+        return True
+    d = tempfile.mkdtemp(prefix="hwrates-")
+    job = synthetic_rates_job(d)
+    env = dict(os.environ, ML=ml)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "hw_rates.py"), job], capture_output=True, text=True, env=env)
+    if r.returncode:
+        print("FAIL hw rates: the Python reference failed:", r.stderr[-300:])
+        return False
+    want = json.load(open(job[:-5] + "-rates.json"))
+    os.remove(job[:-5] + "-rates.json")
+    r = subprocess.run([hw, "rates", job, "--ml", ml, "--tmp", os.path.join(d, "t-")], capture_output=True, text=True)
+    if r.returncode:
+        print("FAIL hw rates:", r.stderr[-300:], r.stdout[-300:])
+        return False
+    got = json.load(open(job[:-5] + "-rates.json"))
+    worst = abs(got["intercept"] - want["intercept"])
+    for key in ("coefficients", "lambda_fitted", "lambda_published"):
+        for k, v in want[key].items():
+            worst = max(worst, abs(got[key][k] - v))
+    for x, y in zip(got["held_out_error"], want["held_out_error"]):
+        if x["predictor"] != y["predictor"]:
+            worst = 1.0
+        worst = max(worst, abs(x["rmse_log_s"] - y["rmse_log_s"]), abs(x["rmse_s"] - y["rmse_s"]))
+    ok = worst <= 1e-9 and got["fit_circuits"] == want["fit_circuits"] and got["held_out"] == want["held_out"]
+    best = {x["predictor"]: x["rmse_log_s"] for x in got["held_out_error"]}
+    print(f"{'ok  ' if ok else 'FAIL'} hw rates on a made-up run of 100 circuits agrees with hw_rates.py to {worst:.1e}; held-out error of log S: " + ", ".join(f"{k} {v:.4f}" for k, v in best.items()))
+    return ok
+
+
 def build_tool(name):
     out = os.path.join(tempfile.mkdtemp(prefix=name + "-"), name)
     r = subprocess.run([os.environ.get("CANCHO", "cancho"), "build", os.path.join(ROOT, "tools", name + ".cho"), "--std", "-o", out], capture_output=True, text=True)
@@ -228,7 +293,7 @@ def build_tool(name):
 
 def main():
     hw, qsim = build(), qsim_exe()
-    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate")), check_predict(hw, qsim)]
+    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate")), check_predict(hw, qsim), check_rates(hw)]
     sys.exit(0 if all(results) else 1)
 
 

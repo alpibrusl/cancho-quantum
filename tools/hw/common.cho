@@ -117,3 +117,57 @@ pub fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [by
     }
     return arg(args, 0)[0..0];
 }
+
+// A number as `qsim` prints it (`9.7e-1`, `0e0`) read as a float, by way of the JSON reader (the same grammar).
+pub fn float_of_token[&s](tok: &s [byte]) -> [] float {
+    var out = 0.0;
+    region r {
+        let src = alloc_slice[r](len(tok) + 2, byte_of(0));
+        src[0] = byte_of('[');
+        var k = 0;
+        while k < len(tok) {
+            src[1 + k] = tok[k];
+            k = k + 1;
+        }
+        src[len(tok) + 1] = byte_of(']');
+        let all = src[0..len(tok) + 2];
+        let tape = alloc_slice[r](json.tape_len(all), 0);
+        if json.parse(all, tape) > 0 && json.is_number(tape, 1) {
+            out = json.to_float(all, tape, 1);
+        }
+    }
+    return out;
+}
+
+// Write the decimal digits of the non-negative `v` into `out` at `at`; the index after the last digit.
+pub fn digits_into[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    var width = 1;
+    var t = v;
+    while t >= 10 {
+        t = t / 10;
+        width = width + 1;
+    }
+    var p = 1;
+    var e = 1;
+    while e < width {
+        p = p * 10;
+        e = e + 1;
+    }
+    var rest = v;
+    var w = at;
+    while p >= 1 {
+        out[w] = byte_of('0' + rest / p);
+        rest = rest % p;
+        p = p / 10;
+        w = w + 1;
+    }
+    return w;
+}
+
+pub fn basename[&s](path: &s [byte]) -> [] &s [byte] {
+    var k = len(path);
+    while k > 0 && int_of(path[k - 1]) != '/' {
+        k = k - 1;
+    }
+    return path[k..len(path)];
+}

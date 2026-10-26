@@ -8,6 +8,9 @@ edition 7;
 //                                            `hw_spike.py check` scan: writes JOB-mitigated.json (`hw_mitigate.py`)
 //     hw predict JOB.json [--scan SCAN.json] [--rates RATES.json] [--qsim PATH] [--stats PATH] [--tmp PREFIX]
 //                                            the model with the calibration, with a scan's read-out, with fitted gate rates, and with both, against the counts: writes JOB-predict.json (`hw_predict.py`)
+//     hw rates JOB.json [--ml PATH] [--tmp PREFIX]
+//                                            gate error rates by regression (cancho-ml's `ml`) from a `hw_spike.py run --set rates` job, tested on circuits left out, against the
+//                                            published calibration: writes JOB-rates.json (`hw_rates.py`)
 //     hw gof JOB.json [--stats PATH] [--tmp PREFIX]
 //                                            a chi-square test of each circuit's counts against JOB-qsim.json's distribution, with cancho-stats' `stats`: writes JOB-gof.json (`hw_gof.py`)
 //
@@ -20,6 +23,7 @@ import hw.files;
 import hw.gof;
 import hw.model;
 import hw.predict;
+import hw.rates;
 import hw.props;
 import hw.qasm3;
 import std.buffer;
@@ -882,6 +886,54 @@ fn predict_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs
     return status;
 }
 
+fn rates_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), exec(""), clock, poll, args] int {
+    if arg_count(args) < 3 {
+        return files.refuse(io, "hw rates JOB.json [--ml PATH] [--tmp PREFIX]");
+    }
+    let job_path = arg(args, 2);
+    var ml = common.flag_value(args, "--ml");
+    if len(ml) == 0 {
+        ml = "ml";
+    }
+    var tmp = common.flag_value(args, "--tmp");
+    if len(tmp) == 0 {
+        tmp = "/tmp/hw-";
+    }
+    let cut = files.stem_len(job_path);
+    let props_path = files.joined(heap, job_path[0..cut], "-props.json");
+    let out_path = files.joined(heap, job_path[0..cut], "-rates.json");
+    var status = 0;
+    let dev = box_slice(heap, props.dev_size(), 0.0);
+    let czp = box_slice(heap, 2 * props.max_cz() + 1, 0);
+    borrow props_path as &pp in {
+        borrow mut dev as &!dw in {
+            borrow mut czp as &!cw in {
+                status = props.load(heap, io, fs, buffer.bytes(pp), contents(dw), contents(cw));
+            }
+        }
+    }
+    let (js, jt, s1) = files.load_json(heap, io, fs, job_path);
+    if status == 0 {
+        status = s1;
+    }
+    if status == 0 {
+        borrow dev as &dr in {
+            borrow czp as &cr in {
+                borrow out_path as &op in {
+                    status = rates.run(heap, io, fs, exec, clock, ml, tmp, common.basename(job_path), js, jt, contents(dr), contents(cr), buffer.bytes(op));
+                }
+            }
+        }
+    } else {
+        files.unload_json(heap, js, jt);
+    }
+    unbox_slice(heap, dev);
+    unbox_slice(heap, czp);
+    buffer.drop(heap, props_path);
+    buffer.drop(heap, out_path);
+    return status;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
     release(ffi);
@@ -896,6 +948,8 @@ fn main(world: World) -> [] int {
                         borrow mut io as &!i in {
                             if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "model") {
                                 status = model_command(h, i, f, x, c, g);
+                            } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "rates") {
+                                status = rates_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "predict") {
                                 status = predict_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "mitigate") {
@@ -903,7 +957,7 @@ fn main(world: World) -> [] int {
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "gof") {
                                 status = gof_command(h, i, f, x, c, g);
                             } else {
-                                status = files.refuse(i, "the commands are: model, gof, mitigate, predict");
+                                status = files.refuse(i, "the commands are: model, gof, mitigate, predict, rates");
                             }
                         }
                     }

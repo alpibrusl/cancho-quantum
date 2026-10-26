@@ -2,6 +2,7 @@ edition 7;
 
 module hw.model;
 
+import hw.common;
 import hw.files;
 import hw.props;
 import hw.qasm3;
@@ -248,27 +249,6 @@ pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [in
 
 // ---- running it -------------------------------------------------------------------------------------------------
 
-// A number as `qsim` prints it (`9.7e-1`, `0e0`) read as a float, by way of the JSON reader (the same grammar).
-fn float_of_token[&s](tok: &s [byte]) -> [] float {
-    var out = 0.0;
-    region r {
-        let src = alloc_slice[r](len(tok) + 2, byte_of(0));
-        src[0] = byte_of('[');
-        var k = 0;
-        while k < len(tok) {
-            src[1 + k] = tok[k];
-            k = k + 1;
-        }
-        src[len(tok) + 1] = byte_of(']');
-        let all = src[0..len(tok) + 2];
-        let tape = alloc_slice[r](json.tape_len(all), 0);
-        if json.parse(all, tape) > 0 && json.is_number(tape, 1) {
-            out = json.to_float(all, tape, 1);
-        }
-    }
-    return out;
-}
-
 // Run the `.qc` text in `qsim` and read its `prob <bits> <p>` lines into `dist` (over the compact qubits, qubit 0 the lowest bit; size 2^n). 0, or 2 after a refusal.
 pub fn simulate[&h, &i, &x, &c, &s, &t, &d](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &s [byte], text: &t [byte], n: int, dist: &!d [float]) -> [heap, err_write, exec(""), clock, poll] int {
     var status = 0;
@@ -304,7 +284,7 @@ pub fn simulate[&h, &i, &x, &c, &s, &t, &d](heap: &!h Heap, io: &!i Io, exec: &x
                             b = b + 1;
                         }
                         if idx >= 0 && idx < len(dist) && sp + 1 <= len(ln) {
-                            dist[idx] = float_of_token(ln[sp + 1..len(ln)]);
+                            dist[idx] = common.float_of_token(ln[sp + 1..len(ln)]);
                         }
                     }
                 }
