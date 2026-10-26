@@ -73,3 +73,20 @@ size reported for superconducting devices, and none comes from a real machine.
 - No Toffoli noise (a three-qubit gate has no rate).
 - A real device's calibration is read by `scripts/calibration_import.py`: `calibration.md`.
 - Rates are rounded to a millionth.
+
+
+## A read-out scan over a profile: `tools/qscan.cho`
+
+A published calibration's read-out errors can be wrong by a factor (docs/hardware.md: one qubit of `ibm_fez` read 1 six times as often as published). `python3 scripts/hw_spike.py check` measures them, per qubit, in a few seconds:
+how often an idle qubit reads 1 (`idle_reads_1`, `p01`) and how often one prepared in 1 reads 0 (`after_x_reads_0`, `p10`). `qscan` turns that file into `readerr` operations:
+
+```
+(echo qubits 60 61 62; cat docs/data/hardware/<device>-<time>-readout.json) | qscan      # the circuit's qubits 0, 1, 2 are the device's 60, 61, 62
+readerr 0 183000 1000000 21000 1000000
+...
+```
+
+Put them after the operations of `qprofile` and before the circuit's gates: a later `readerr` replaces that qubit's read-out error, so the scan overrides the calibration for the qubits it measured and nothing else.
+Without the `qubits` line the scan's keys are used as they are (each below 20). Probabilities are rounded to 10^-6, half to even, as `qprofile` does. Reference: `scripts/scan_ops.py`; `python3 scripts/check_scan.py`
+compares them on 500 random scans and 13 broken inputs (both refuse; the tool exits 2) and runs `qsim` on the output (a qubit given p01 = 0.2 read 1 in 792 of 4000 idle shots).
+Authority: heap and standard input and output only. Not shown: that the scan's numbers are better than the calibration's; that is `scripts/hw_scan_model.py` on a run (issue #12, part A).

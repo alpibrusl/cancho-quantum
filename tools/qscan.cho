@@ -1,0 +1,222 @@
+// `qscan` — turn a read-out scan of a device into `qsim` operations.
+//
+//     qscan < scan.json                        one `readerr` per qubit of the scan, the qubits as the scan numbers them
+//     (echo qubits 60 61 62; cat scan.json) | qscan
+//                                              the same, for a circuit whose qubits 0, 1, 2 are the device's 60, 61, 62
+//
+// Standard input only: an optional first line `qubits P0 P1 ...` (the device qubits, in the order of the circuit's own numbering), then the JSON that
+// `scripts/hw_spike.py check` writes: `"qubits": {"60": {"idle_reads_1": 0.18, "after_x_reads_0": 0.02}, ...}`. `idle_reads_1` is how often an idle qubit read 1
+// (the chance a 0 is reported 1, `p01`), `after_x_reads_0` how often a qubit prepared in 1 read 0 (`p10`). The output is `qsim` input, one line per qubit,
+// `readerr <qubit> <n01> 1000000 <n10> 1000000`, in increasing order of the circuit's qubit; put it after the operations of a profile (`qprofile`) and a `readerr` replaces that
+// qubit's read-out error, so a scan taken just before a run overrides a published calibration (docs/hardware.md). Probabilities become round(p * 10^6) / 10^6, rounding half
+// to even, as `qprofile` does. Without the first line a key is the circuit's qubit (a number below 20).
+//
+// A refusal prints `qscan: <what>` on standard error, exits 2 and prints nothing on standard output. Nothing is read from a file and nothing written to one
+// (`cancho authority` says so). Reference implementation: `scripts/scan_ops.py`, compared by `scripts/check_scan.py`.
+
+import std.buffer;
+import std.io;
+import std.json;
+
+fn den() -> [] int {
+    return 1000000;
+}
+
+fn refuse[&i](io: &!i Io, what: &static [byte]) -> [err_write] int {
+    io.error_all(io, "qscan: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+// round half to even, for x >= 0
+fn round_even(x: float) -> [] int {
+    let f = truncate(x);
+    let d = x - float_of(f);
+    if d > 0.5 {
+        return f + 1;
+    }
+    if d < 0.5 {
+        return f;
+    }
+    if f % 2 == 0 {
+        return f;
+    }
+    return f + 1;
+}
+
+// The value of a plain decimal, or -1 (at most 6 digits, no sign).
+fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 6 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+// The probability at node `i` as numerator of x / 10^6, or -1 when it is not a number in [0, 1].
+fn prob_num[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] int {
+    if i < 0 || !json.is_number(tape, i) {
+        return 0 - 1;
+    }
+    let p = json.to_float(src, tape, i);
+    if !(p >= 0.0 && p <= 1.0) {
+        return 0 - 1;
+    }
+    return round_even(p * float_of(den()));
+}
+
+// Where the JSON begins: after the optional first line `qubits ...`. `order` receives the device qubits of that line (at most 20); the number of them is
+// `order[20]`, or -1 for a malformed line, and 0 when the line is absent.
+fn header[&s, &o](all: &s [byte], order: &!o [int]) -> [] int {
+    order[20] = 0;
+    var at = 0;
+    if len(all) >= 7 && int_of(all[0]) == 'q' && int_of(all[1]) == 'u' && int_of(all[2]) == 'b' && int_of(all[3]) == 'i' && int_of(all[4]) == 't' && int_of(all[5]) == 's' && int_of(all[6]) == ' ' {
+        var end = 0;
+        while end < len(all) && int_of(all[end]) != 10 {
+            end = end + 1;
+        }
+        var from = 7;
+        var count = 0;
+        var k = 7;
+        while k <= end {
+            if k == end || int_of(all[k]) == ' ' {
+                if k > from {
+                    let v = digits(all[from..k]);
+                    if v < 0 || count >= 20 {
+                        order[20] = 0 - 1;
+                        return 0;
+                    }
+                    order[count] = v;
+                    count = count + 1;
+                }
+                from = k + 1;
+            }
+            k = k + 1;
+        }
+        order[20] = count;
+        at = end;
+    }
+    return at;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write, err_write] int {
+    var input = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    borrow input as &ir in {
+        region r {
+            let order = alloc_slice[r](21, 0);
+            let all = buffer.bytes(ir);
+            let at = header(all, order);
+            let src = all[at..len(all)];
+            let tape = box_slice(heap, json.tape_len(src), 0);
+            borrow mut tape as &!tw in {
+                let t = contents(tw);
+                if order[20] < 0 {
+                    status = refuse(io, "the first line must be `qubits` and up to 20 device qubit numbers");
+                } else if json.parse(src, t) <= 0 || !json.is_object(t, 0) {
+                    status = refuse(io, "the input is not a JSON object");
+                } else {
+                    let qs = json.get(src, t, 0, "qubits");
+                    if qs < 0 || !json.is_object(t, qs) {
+                        status = refuse(io, "`qubits` must be an object of qubit: {idle_reads_1, after_x_reads_0}");
+                    } else {
+                        status = emit(heap, io, src, t, qs, order);
+                    }
+                }
+            }
+            unbox_slice(heap, tape);
+        }
+    }
+    buffer.drop(heap, input);
+    return status;
+}
+
+// The node of device qubit `p` in the scan, or -1.
+fn entry[&s, &t](src: &s [byte], t: &t [int], qs: int, p: int) -> [] int {
+    var j = qs + 1;
+    var left = json.count(t, qs);
+    while left > 0 {
+        if digits(json.string_view(src, t, j)) == p {
+            return j + 1;
+        }
+        j = json.skip(t, j + 1);
+        left = left - 1;
+    }
+    return 0 - 1;
+}
+
+fn emit[&h, &i, &s, &t, &o](heap: &!h Heap, io: &!i Io, src: &s [byte], t: &t [int], qs: int, order: &o [int]) -> [heap, io_write, err_write] int {
+    var out = buffer.empty(heap, 256);
+    var status = 0;
+    let listed = order[20];
+    var circuit_qubits = listed;
+    if listed == 0 {
+        circuit_qubits = 20;
+    }
+    var q = 0;
+    while q < circuit_qubits && status == 0 {
+        var p = q;
+        if listed > 0 {
+            p = order[q];
+        }
+        let node = entry(src, t, qs, p);
+        if node < 0 {
+            if listed > 0 {
+                status = refuse(io, "a qubit named on the first line is not in the scan");
+            }
+        } else {
+            let a = prob_num(src, t, json.get(src, t, node, "idle_reads_1"));
+            let b = prob_num(src, t, json.get(src, t, node, "after_x_reads_0"));
+            if !json.is_object(t, node) || a < 0 || b < 0 {
+                status = refuse(io, "a qubit's idle_reads_1 and after_x_reads_0 must be numbers from 0 to 1");
+            } else {
+                out = buffer.append(heap, out, "readerr ");
+                out = buffer.push_nat(heap, out, q);
+                out = buffer.push(heap, out, byte_of(32));
+                out = buffer.push_nat(heap, out, a);
+                out = buffer.append(heap, out, " 1000000 ");
+                out = buffer.push_nat(heap, out, b);
+                out = buffer.append(heap, out, " 1000000\n");
+            }
+        }
+        q = q + 1;
+    }
+    if status == 0 {
+        borrow out as &ob in {
+            buffer.write(io, ob);
+        }
+    }
+    buffer.drop(heap, out);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
