@@ -33,8 +33,65 @@ OUT = os.path.join(ROOT, "docs", "data", "hardware")
 CIRCUITS = ["bell", "ghz3", "ghz5", "ghz7", "toffoli", "qft4", "random5"]
 
 
+MIRROR = ["ghzm3", "ghzm5", "ghzm7", "rmir5_d2", "rmir5_d4", "rmir5_d8"]
+
+
+def mirror(name):
+    """A circuit U, a barrier, then U inverse: the ideal output is all zeros, so the distance from it is the error the
+    circuit accumulated (and a model that is blind to correlated noise shows it). `ghzm<n>` is an n-qubit GHZ state and its
+    inverse; `rmir5_d<k>` is k layers of random one-qubit gates and `cx` on a line of 5 qubits (fixed seed) and its inverse."""
+    import random
+
+    from qiskit import QuantumCircuit
+
+    if name.startswith("ghzm"):
+        n = int(name[4:])
+        u = QuantumCircuit(n)
+        u.h(0)
+        for i in range(n - 1):
+            u.cx(i, i + 1)
+    else:
+        n, depth = 5, int(name.split("_d")[1])
+        rng = random.Random(2026)
+        u = QuantumCircuit(n)
+        for layer in range(depth):
+            for q in range(n):
+                getattr(u, rng.choice(["h", "s", "t", "sx", "x"]))(q)
+            for q in range(layer % 2, n - 1, 2):
+                u.cx(q, q + 1)
+    qc = QuantumCircuit(u.num_qubits)
+    qc.compose(u, inplace=True)
+    qc.barrier()
+    qc.compose(u.inverse(), inplace=True)
+    qc.measure_all()
+    return qc
+
+
+def line_from(backend, start, n):
+    """n connected qubits, a simple path in the coupling map beginning at `start` (depth-first, so it exists whenever one does)."""
+    adj = {}
+    for a, b in backend.coupling_map.get_edges():
+        adj.setdefault(a, []).append(b)
+
+    def walk(path):
+        if len(path) == n:
+            return path
+        for nxt in sorted(adj.get(path[-1], [])):
+            if nxt not in path and (found := walk(path + [nxt])):
+                return found
+        return None
+
+    path = walk([start])
+    if path is None:
+        raise SystemExit(f"no line of {n} connected qubits from {start}")
+    return path
+
+
 def load(name):
     from qiskit import QuantumCircuit
+
+    if name in MIRROR:
+        return mirror(name)
 
     qc = QuantumCircuit.from_qasm_file(os.path.join(ROOT, "tests", "qasm", name + ".qasm"))
     # the files declare a classical register and never use it: start from the gates alone, measured into one register `meas`
@@ -62,7 +119,8 @@ def run(args):
     from qiskit_aer import AerSimulator
     from qiskit_aer.noise import NoiseModel
 
-    circuits = [load(n) for n in CIRCUITS]
+    names = MIRROR if args.set == "mirror" else CIRCUITS
+    circuits = [load(n) for n in names]
     if args.fake:
         from qiskit_ibm_runtime import fake_provider
 
@@ -75,8 +133,12 @@ def run(args):
         backend = service.backend(args.backend) if args.backend else service.least_busy(operational=True, simulator=False, min_num_qubits=7)
         stand_in = False
     print("device:", backend.name, "qubits:", backend.num_qubits)
-    pm = generate_preset_pass_manager(backend=backend, optimization_level=args.level, seed_transpiler=1)
-    isa = pm.run(circuits)
+    pm = generate_preset_pass_manager(backend=backend, optimization_level=args.level, seed_transpiler=args.seed)
+    if args.start is None:
+        isa = pm.run(circuits)
+    else:  # one line of connected qubits from --start, as long as each circuit needs
+        isa = [generate_preset_pass_manager(backend=backend, optimization_level=args.level, seed_transpiler=args.seed,
+                                            initial_layout=line_from(backend, args.start, c.num_qubits)).run(c) for c in circuits]
 
     noisy = AerSimulator(noise_model=NoiseModel.from_backend(backend), seed_simulator=1)
     aer_counts = [noisy.run(c, shots=args.shots).result().get_counts() for c in isa]
@@ -94,7 +156,7 @@ def run(args):
         counts = [r.data.meas.get_counts() for r in result]
 
     rows = []
-    for name, qc, c, a, t in zip(CIRCUITS, circuits, counts, aer_counts, isa):
+    for name, qc, c, a, t in zip(names, circuits, counts, aer_counts, isa):
         n = qc.num_qubits
         rows.append({
             "circuit": name,
@@ -102,7 +164,7 @@ def run(args):
             "ideal": ideal(qc),
             "device": pad(c, n),
             "aer_noise": pad(a, n),
-            "transpiled": {"depth": t.depth(), "two_qubit_gates": sum(1 for i in t.data if len(i.qubits) == 2),
+            "transpiled": {"depth": t.depth(), "two_qubit_gates": sum(1 for i in t.data if len(i.qubits) == 2 and i.operation.name != "barrier"),
                            "ops": dict(t.count_ops())},
         })
     when = datetime.datetime.now(datetime.timezone.utc)
@@ -111,7 +173,9 @@ def run(args):
            "note": "NOT hardware: Aer with the fake device's noise stands in for it" if stand_in else "real device",
            "circuits": rows}
     os.makedirs(OUT, exist_ok=True)
-    path = os.path.join(OUT, f"{backend.name}-{when.strftime('%Y-%m-%d')}{'-standin' if stand_in else ''}.json")
+    path = os.path.join(OUT, f"{backend.name}-{when.strftime('%Y-%m-%d')}{'-' + args.set if args.set != 'spike' else ''}{'-from' + str(args.start) if args.start is not None else ''}{'-standin' if stand_in else ''}.json")
+    if os.path.exists(path):  # a second run on the same day keeps the first: the time of day goes into the name
+        path = path[: -len(".json")] + when.strftime("-%H%M") + ".json"
     json.dump(doc, open(path, "w"), indent=1)
     print("wrote", os.path.relpath(path, ROOT))
     analyze_doc(doc)
@@ -147,6 +211,9 @@ def main():
     r.add_argument("--backend", help="device name (default: the least busy real device with 7 or more qubits)")
     r.add_argument("--fake", help="a fake device class (e.g. FakePerth): test the script without an account")
     r.add_argument("--shots", type=int, default=2000)
+    r.add_argument("--set", choices=["spike", "mirror"], default="spike", help="spike: the seven circuits of tests/qasm; mirror: circuits followed by their inverse")
+    r.add_argument("--seed", type=int, default=1, help="transpiler seed (another seed can mean another placement)")
+    r.add_argument("--start", type=int, help="place each circuit on a line of connected qubits beginning here (default: the transpiler chooses)")
     r.add_argument("--level", type=int, default=1, help="Qiskit transpiler optimization level")
     a = sub.add_parser("analyze")
     a.add_argument("file")
