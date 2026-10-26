@@ -64,3 +64,11 @@ what 240 circuits of 2000 shots allow (the two-qubit ones to 6 to 25%, the one-q
 **better** than the published ones; on fez, where one qubit's read-out was off by a factor of six, the read-out intercept is what should differ.
 
 `ml predict` returns the predicted `log S`; nothing else of cancho-stats or cancho-ml is needed.
+
+## The end-to-end test: `scripts/hw_predict.py`
+
+Everything above asks a piece of the question. The whole one: *does what can be measured in a few minutes before a run (a read-out scan and gate rates by regression) turn a model that the counts reject into one they do not?*
+`hw_predict.py JOB --scan SCAN --rates RATES` runs `hw_model.py`'s density-matrix model on each circuit of a job with the published calibration, with the scan's read-out, with the fitted gate rates, and with both, and prints the distance and
+the chi-square p-value of each (`docs/hardware.md`, last section). Nothing is fitted to the job's own counts: the scan and the rates come from other runs on the same qubits. The protocol and what counts as an answer are written in
+issue #16 **before** the data exist. Tested here only for plumbing, with a made-up scan and a made-up rates file (a scan equal to the calibration changes nothing; all rates doubled moves the model's distance from 0.027 to 0.036 on kingston's
+mirror circuits, which is the direction it should): the numbers say nothing about a device.
