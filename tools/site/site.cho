@@ -99,6 +99,7 @@ fn build[&h, &i, &f, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &g Arg
                                         page6.tiles_devices(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
                                         page7.tiles_curves(heap, io, fs, sp_src, spt, n, it, x, fl);
                                         page7.tile_calibration(heap, io, fs, sp_src, spt, n, it, x, fl);
+                                        page7.tile_hardware(heap, io, fs, sp_src, spt, n, it, x, fl);
                                         page8.tiles_static(heap, io, tr_src, tt, sp_src, spt, n, it, x, fl);
                                         page9.capabilities(heap, io, fs, tr_src, tt, sp_src, spt, n, it, x, fl);
                                         page9.groups(heap, io, sp_src, spt, n, it, x);

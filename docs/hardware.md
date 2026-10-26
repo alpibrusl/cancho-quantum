@@ -192,3 +192,20 @@ What this settles: at this size, on a healthy device, the noise model (depolariz
 is enough: kingston, twice. On fez it is not reliable in either direction. What it does not settle: the cause. A test would run the same
 circuits on fez every hour for a day and plot device against model; if the model's error follows the calibration's jumps, the right fix is to
 estimate error rates from the circuits themselves (a short mirror calibration run before the real one), not a better model.
+
+## Pre-flight: reading the qubits before a run
+
+On 2026-10-26 `ibm_kingston`'s qubit 0 read 1 in 82 to 84% of idle shots, and the calibration published that morning gave no sign
+of it (readout error 0.6%, T1 250 us). The first job on it was lost to the fault. `hw_spike.py` now checks for that:
+
+- `python3 scripts/hw_spike.py check [--backend D] [--qubits 0,1,2]` reads every qubit (or those listed) idle and again after an X
+  gate, in one job of two circuits, and writes `docs/data/hardware/<device>-<time>-readout.json`. A qubit that reads the wrong value more than
+  15% of the time is **bad**, more than 5% **weak**. Exit status 1 if any is bad.
+- `hw_spike.py run` does the same for the qubits its circuits use, before the real job, and stops if one is bad (`--no-preflight` skips
+  it). It costs one more job of two short circuits.
+- `python3 scripts/check_hw_spike.py` tests the check offline: a fake device with one qubit stuck at 1 and one stuck at 0 is
+  given to `scan`, and it has to name exactly those two. It has not been run against a real device yet; the thresholds are
+  chosen from the one fault seen (82 to 84%), so 5% and 15% are judgement, not measurement.
+
+The numbers the landing page quotes from these runs are in `docs/data/hardware_summary.json`, computed from the files
+by `scripts/hw_summary.py` (`--check` fails when they are stale).

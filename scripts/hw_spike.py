@@ -114,6 +114,104 @@ def pad(counts, n):
     return {format(int(k.replace(" ", ""), 2), f"0{n}b"): v for k, v in counts.items()}
 
 
+BAD = 0.15    # a qubit that reads the wrong value this often is broken, whatever its calibration says
+WEAK = 0.05   # and this often is worth a look
+
+
+def classify(p1_idle, p0_flipped):
+    """`bad`, `weak` or `ok`, from how often an idle qubit reads 1 and how often one prepared in 1 reads 0."""
+    worst = max(p1_idle, p0_flipped)
+    return "bad" if worst > BAD else "weak" if worst > WEAK else "ok"
+
+
+def scan(backend, qubits, shots, stand_in=False):
+    """Pre-flight: measure `qubits` idle, then each after an X gate, in one job of two circuits (a few seconds of the plan's time).
+
+    Returns {qubit: (P(read 1 | idle), P(read 0 | prepared 1))}. A qubit stuck at 1 shows in the first number, one stuck at 0 in the
+    second; the calibration the device publishes did not warn of either (docs/hardware.md, kingston qubit 0)."""
+    from qiskit import QuantumCircuit
+    from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+    qubits = sorted(qubits)
+    circuits = []
+    for flip in (False, True):
+        qc = QuantumCircuit(backend.num_qubits, len(qubits))
+        if flip:
+            for q in qubits:
+                qc.x(q)
+        for k, q in enumerate(qubits):
+            qc.measure(q, k)
+        circuits.append(qc)
+    isa = generate_preset_pass_manager(backend=backend, optimization_level=0, initial_layout=list(range(backend.num_qubits))).run(circuits)
+    if stand_in:
+        from qiskit_aer import AerSimulator
+        from qiskit_aer.noise import NoiseModel
+
+        sim = AerSimulator(noise_model=NoiseModel.from_backend(backend), seed_simulator=3)
+        counts = [sim.run(c, shots=shots).result().get_counts() for c in isa]
+    else:
+        from qiskit_ibm_runtime import SamplerV2
+
+        result = SamplerV2(mode=backend).run(isa, shots=shots).result()
+        counts = [r.data.c.get_counts() for r in result]
+    out = {}
+    for k, q in enumerate(qubits):
+        def ones(c):  # how often clbit k reads 1 (bit k is k places from the right of a key)
+            total = sum(c.values())
+            return sum(v for key, v in c.items() if key.replace(" ", "")[::-1][k] == "1") / total
+        out[q] = (ones(counts[0]), 1.0 - ones(counts[1]))
+    return out
+
+
+def report_scan(result):
+    bad = sorted(q for q, (a, b) in result.items() if classify(a, b) == "bad")
+    weak = sorted(q for q, (a, b) in result.items() if classify(a, b) == "weak")
+    print(f"{len(result)} qubits read idle and after X: {len(result) - len(bad) - len(weak)} ok, {len(weak)} weak (> {WEAK:.0%}), {len(bad)} bad (> {BAD:.0%})")
+    for q in bad + weak:
+        a, b = result[q]
+        print(f"  qubit {q:3d}  {classify(a, b):4}  reads 1 idle {a:6.1%}   reads 0 after X {b:6.1%}")
+    return bad, weak
+
+
+def check(args):
+    """`hw_spike.py check`: scan the qubits of a device (all of them by default) and write what was found."""
+    backend, stand_in = open_backend(args)
+    qubits = [int(x) for x in args.qubits.split(",")] if args.qubits else list(range(backend.num_qubits))
+    print("device:", backend.name, "qubits scanned:", len(qubits))
+    result = scan(backend, qubits, args.shots, stand_in)
+    bad, weak = report_scan(result)
+    when = datetime.datetime.now(datetime.timezone.utc)
+    doc = {"device": backend.name, "date": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "shots": args.shots, "stand_in": stand_in,
+           "thresholds": {"bad": BAD, "weak": WEAK}, "bad": bad, "weak": weak,
+           "qubits": {str(q): {"idle_reads_1": a, "after_x_reads_0": b} for q, (a, b) in result.items()}}
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, f"{backend.name}-{when.strftime('%Y-%m-%d-%H%M')}-readout{'-standin' if stand_in else ''}.json")
+    json.dump(doc, open(path, "w"), indent=1)
+    print("wrote", os.path.relpath(path, ROOT))
+    return 1 if bad else 0
+
+
+def open_backend(args):
+    if args.fake:
+        from qiskit_ibm_runtime import fake_provider
+
+        return getattr(fake_provider, args.fake)(), True
+    from qiskit_ibm_runtime import QiskitRuntimeService
+
+    service = QiskitRuntimeService(channel="ibm_quantum_platform", token=os.environ.get("QISKIT_IBM_TOKEN"))
+    return (service.backend(args.backend) if args.backend else service.least_busy(operational=True, simulator=False, min_num_qubits=7)), False
+
+
+def used_qubits(isa):
+    """The physical qubits any gate of the transpiled circuits touches."""
+    used = set()
+    for t in isa:
+        for inst in t.data:
+            if inst.operation.name != "barrier":
+                used.update(t.find_bit(q).index for q in inst.qubits)
+    return used
+
+
 def run(args):
     from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
     from qiskit_aer import AerSimulator
@@ -121,17 +219,7 @@ def run(args):
 
     names = MIRROR if args.set == "mirror" else CIRCUITS
     circuits = [load(n) for n in names]
-    if args.fake:
-        from qiskit_ibm_runtime import fake_provider
-
-        backend = getattr(fake_provider, args.fake)()
-        stand_in = True
-    else:
-        from qiskit_ibm_runtime import QiskitRuntimeService
-
-        service = QiskitRuntimeService(channel="ibm_quantum_platform", token=os.environ.get("QISKIT_IBM_TOKEN"))
-        backend = service.backend(args.backend) if args.backend else service.least_busy(operational=True, simulator=False, min_num_qubits=7)
-        stand_in = False
+    backend, stand_in = open_backend(args)
     print("device:", backend.name, "qubits:", backend.num_qubits)
     pm = generate_preset_pass_manager(backend=backend, optimization_level=args.level, seed_transpiler=args.seed)
     if args.start is None:
@@ -139,6 +227,13 @@ def run(args):
     else:  # one line of connected qubits from --start, as long as each circuit needs
         isa = [generate_preset_pass_manager(backend=backend, optimization_level=args.level, seed_transpiler=args.seed,
                                             initial_layout=line_from(backend, args.start, c.num_qubits)).run(c) for c in circuits]
+
+    if not args.no_preflight:
+        used = sorted(used_qubits(isa))
+        print(f"pre-flight: {len(used)} qubits the circuits use, read idle and after X")
+        bad, weak = report_scan(scan(backend, used, 1000, stand_in))
+        if bad:
+            raise SystemExit(f"qubits {bad} are broken: choose another --start or --seed, or run with --no-preflight to measure them anyway")
 
     noisy = AerSimulator(noise_model=NoiseModel.from_backend(backend), seed_simulator=1)
     aer_counts = [noisy.run(c, shots=args.shots).result().get_counts() for c in isa]
@@ -214,12 +309,20 @@ def main():
     r.add_argument("--set", choices=["spike", "mirror"], default="spike", help="spike: the seven circuits of tests/qasm; mirror: circuits followed by their inverse")
     r.add_argument("--seed", type=int, default=1, help="transpiler seed (another seed can mean another placement)")
     r.add_argument("--start", type=int, help="place each circuit on a line of connected qubits beginning here (default: the transpiler chooses)")
+    r.add_argument("--no-preflight", action="store_true", help="skip the read-out check of the qubits the circuits use (it costs one more job of two circuits)")
     r.add_argument("--level", type=int, default=1, help="Qiskit transpiler optimization level")
+    c = sub.add_parser("check", help="read every qubit of a device idle and after X, and name the broken ones")
+    c.add_argument("--backend")
+    c.add_argument("--fake")
+    c.add_argument("--shots", type=int, default=1000)
+    c.add_argument("--qubits", help="comma-separated list (default: all)")
     a = sub.add_parser("analyze")
     a.add_argument("file")
     args = ap.parse_args()
     if args.cmd == "run":
         run(args)
+    elif args.cmd == "check":
+        return check(args)
     else:
         analyze_doc(json.load(open(args.file)))
 

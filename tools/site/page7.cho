@@ -248,3 +248,30 @@ pub fn tile_calibration[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: 
     page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t315", false, false, "");
     return 0;
 }
+
+// The tile that quotes the first runs on real devices: its numbers are in docs/data/hardware_summary.json
+// (`scripts/hw_summary.py`, from the files of docs/data/hardware/).
+pub fn tile_hardware[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), sp_src: &u [byte], sp_tape: &v [int], names: &!n [byte], ints: &!q [int], texts: &!x [byte], floats: &!d [float]) -> [heap, fs_read(""), err_write] int {
+    let (hs, ht) = files.load(heap, io, fs, "docs/data/hardware_summary.json");
+    borrow hs as &hsr in {
+        borrow mut ht as &!htw in {
+            let a = buffer.bytes(hsr);
+            let at = contents(htw);
+            page1.set_buf(heap, names, ints, texts, "t900.x1", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "healthy_device"))));
+            page1.set_buf(heap, names, ints, texts, "t900.x2", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "date"))));
+            facts.set_int(names, ints, "t900.x3", ji(a, at, json.get(a, at, 0, "healthy_runs")));
+            facts.set_int(names, ints, "t900.x4", ji(a, at, json.get(a, at, 0, "healthy_max_cz")));
+            facts.set_int(names, ints, "t900.x5", ji(a, at, json.get(a, at, 0, "shots")));
+            facts.set_float(names, ints, floats, "t900.x6", jf(a, at, json.get(a, at, 0, "healthy_worst_gap")));
+            page1.set_buf(heap, names, ints, texts, "t900.x7", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "drift_device"))));
+            facts.set_int(names, ints, "t900.x8", ji(a, at, json.get(a, at, 0, "drift_runs")));
+            facts.set_float(names, ints, floats, "t900.x9", jf(a, at, json.get(a, at, 0, "drift_ratio_min")));
+            facts.set_float(names, ints, floats, "t900.x10", jf(a, at, json.get(a, at, 0, "drift_ratio_max")));
+            page1.set_buf(heap, names, ints, texts, "t900.x11", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "healthy_device"))));
+            facts.set_float(names, ints, floats, "t900.x12", jf(a, at, json.get(a, at, 0, "stuck_percent")));
+        }
+    }
+    files.unload(heap, hs, ht);
+    page2.emit_tile(heap, io, sp_src, sp_tape, names, ints, texts, floats, "t900", false, false, "");
+    return 0;
+}

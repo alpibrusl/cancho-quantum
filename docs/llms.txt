@@ -26,4 +26,6 @@
 - `python3 scripts/check_qasm.py`: OpenQASM files agree between Qiskit's parser and qsim (needs qiskit).
 - `python3 scripts/check_diff.py`: amplitudes against Qiskit (needs qiskit, numpy).
 - `python3 scripts/check_determinism.py [--arm64]`: byte-identical output across builds.
+- `python3 scripts/check_hw_spike.py`: the pre-flight read-out check of `scripts/hw_spike.py` finds broken qubits (offline).
+- `python3 scripts/hw_summary.py --check`: the hardware numbers on the landing page match docs/data/hardware/.
 - `sh scripts/site.sh --check`: the landing page matches the tools (built by cancho, `tools/site/`); `python3 scripts/check_site.py` compares it with the Python reference builder.
