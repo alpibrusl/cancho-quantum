@@ -1,0 +1,119 @@
+{
+ "free": "depol2",
+ "prior": 1.0986122886681098,
+ "fitted_on": "ibm_kingston-2026-10-26-mirror-from60.json",
+ "fit_circuits": [
+  "ghzm3",
+  "rmir5_d2",
+  "rmir5_d4"
+ ],
+ "factors": {
+  "decay": 1.0,
+  "depol1": 1.0,
+  "depol2": 3.187377510278386,
+  "readout": 1.0
+ },
+ "p01_fitted": {
+  "56": 0.005670104957063498,
+  "60": 0.012493143378066316,
+  "61": 0.0006545020460282245,
+  "62": 0.006200202475818387,
+  "63": 0.00935262828081027
+ },
+ "p01_calibration": {
+  "56": 0.005859375,
+  "60": 0.00732421875,
+  "61": 0.00390625,
+  "62": 0.00146484375,
+  "63": 0.0283203125
+ },
+ "misfit_before": 0.03593173817576313,
+ "misfit_after": 0.01124873481266509,
+ "evaluations": 191,
+ "rows": [
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm3",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.01979314382610079,
+   "model_vs_device_fitted": 0.0096377012309811
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d2",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.025102901245028553,
+   "model_vs_device_fitted": 0.013763942600827254
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d4",
+   "role": "fitted",
+   "model_vs_device_calibration": 0.017651724548523314,
+   "model_vs_device_fitted": 0.02041826290276724
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm5",
+   "role": "held out",
+   "model_vs_device_calibration": 0.024637416314464766,
+   "model_vs_device_fitted": 0.017995681586522715
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "ghzm7",
+   "role": "held out",
+   "model_vs_device_calibration": 0.04405278179476287,
+   "model_vs_device_fitted": 0.026283012170324555
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60.json",
+   "circuit": "rmir5_d8",
+   "role": "held out",
+   "model_vs_device_calibration": 0.02884241074858297,
+   "model_vs_device_fitted": 0.042271574245346395
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm3",
+   "role": "other run",
+   "model_vs_device_calibration": 0.015393450853806966,
+   "model_vs_device_fitted": 0.008043146661221195
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm5",
+   "role": "other run",
+   "model_vs_device_calibration": 0.027597071626138014,
+   "model_vs_device_fitted": 0.014118816246424665
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "ghzm7",
+   "role": "other run",
+   "model_vs_device_calibration": 0.039484355700771384,
+   "model_vs_device_fitted": 0.027776278848431767
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d2",
+   "role": "other run",
+   "model_vs_device_calibration": 0.022059019315810047,
+   "model_vs_device_fitted": 0.014093900302610773
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d4",
+   "role": "other run",
+   "model_vs_device_calibration": 0.01891663982060077,
+   "model_vs_device_fitted": 0.017713159066071224
+  },
+  {
+   "file": "ibm_kingston-2026-10-26-mirror-from60-1030.json",
+   "circuit": "rmir5_d8",
+   "role": "other run",
+   "model_vs_device_calibration": 0.026935648909334742,
+   "model_vs_device_fitted": 0.042683423959195485
+  }
+ ]
+}

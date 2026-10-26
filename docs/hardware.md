@@ -238,3 +238,45 @@ second, cheap check on whether a published calibration is in line with the devic
 Not shown: the distance after mitigation is not the model's error (the model includes read-out error itself, so it is
 compared before correction); mitigation helps the circuits whose ideal output is concentrated, as mirror circuits' is, more than
 spread-out ones; and it does nothing for gate error. 2000 shots, one day, two devices.
+
+## What is wrong with `ibm_fez`: one qubit, found by fitting (`scripts/hw_fit.py`)
+
+The third round said the calibration-based model was wrong on fez "in either direction" and the cause was unknown. The error does not
+grow with the circuit: on the morning round the model's distance from the device is 0.16 to 0.20 for every circuit, a 4-`cz` GHZ and a
+32-`cz` random one alike. A per-qubit look at the counts (the circuits' ideal output is all zeros, so any 1 is error) shows where it is:
+
+| fez, mirror circuits from qubit 60 | P(read 1) on qubit 60 | its published P(read 1 given 0) |
+|---|---|---|
+| morning round | 0.20 (ghzm3), 0.26 (ghzm7) | 0.031 |
+| after the 10:43 recalibration | 0.10 and 0.08, 0.16 and 0.18 | 0.197 |
+
+(In the first round, on qubits from 0, qubit 0 did the same: 0.41 in `ghzm7` against 0.017 published.) One qubit that reads wrongly
+a fifth of the time, with a calibration that is wrong in the morning and, after it was updated, wrong the other way. The pre-flight above would
+have called it weak or bad (more than 5% or 15%), and flagged it before the run.
+
+`scripts/hw_fit.py` tests whether that is enough. It fits some of the model's numbers to three circuits of one job (`ghzm3`, `rmir5_d2`,
+`rmir5_d4`; Pearson chi-square misfit, Nelder-Mead, pulled towards the calibration by a prior) and reports, for the three circuits left out, and
+for the later rounds, the distance between the model's distribution and the device's counts (a perfect model still shows 0.01 to 0.05 at 2000 shots).
+
+| fez, morning round, fitted on 3 circuits | fitted on | held out (calibration -> fitted) | the later rounds (calibration -> fitted) |
+|---|---|---|---|
+| four global factors (T1/T2 decay, one- and two-qubit depolarizing, read-out), 118 runs | misfit 0.63 -> 0.20 | ghzm5 0.18 -> 0.16, ghzm7 0.20 -> 0.28, rmir5_d8 0.17 -> 0.38: **worse** | worse by 0.05 to 0.3 |
+| each measured qubit's own P(read 1 given 0), and the two-qubit depolarizing factor, 390 runs | misfit 0.63 -> 0.022 | ghzm5 0.18 -> 0.038, ghzm7 0.20 -> 0.076, rmir5_d8 0.17 -> 0.093 | 0.10 to 0.17, **no change** |
+
+- **Global factors do not work.** The fit trades decay against depolarizing (decay x15, two-qubit depolarizing x0.07: not physical),
+  and what it learns does not carry over to the circuits left out. The calibration's rates are not simply off by a common factor.
+- **Per-qubit read-out does.** The fit moved qubit 60's from 0.031 to 0.18 (61: 0.031 to 0.053; the others barely moved) and the held-out
+  circuits of the same job dropped from 0.17-0.20 to 0.04-0.09, near what sampling allows. The model is not wrong in its physics on fez; it was given a wrong
+  number for one qubit.
+- **It does not last.** An hour later, with a new calibration and the qubit reading differently, the same numbers help nothing (0.10 to
+  0.17 before and after). So a correction of this kind has to be measured just before the job it is for, which is what the scan is.
+- **Kingston, where nothing is wrong:** the same fit with per-qubit read-out moves little (qubit 60: 0.007 to 0.012), improves the
+  held-out ghzm5 and ghzm7 (0.025 to 0.018, 0.044 to 0.026), and makes the deepest circuit worse (rmir5_d8 0.029 to 0.042, and again, 0.027 to 0.043, an hour
+  later). The two-qubit depolarizing factor came out near 3 on both devices (3.00 and 3.19, with the prior at ln 3 = a factor of 3
+  in one sigma), and the deepest circuit getting worse says it is not a clean factor. This is not explained.
+
+Not shown: this is one qubit, one device, one morning, and fitted to counts that were also used to show the problem; the held-out circuits
+share the qubits and the minute of the fit. The test that does not share them is `scripts/hw_scan_model.py JOB SCAN`: take a `hw_spike.py check`
+of the qubits just before a mirror run and see whether the model, given the scan's read-out errors and nothing fitted, lands within sampling noise of the
+device. Run it on a job whose scan was taken before it; `hw_scan_model.py` was tested here only with a made-up scan (one qubit's value set from the fit above),
+which checks the plumbing and is not a result.
