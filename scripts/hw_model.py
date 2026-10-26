@@ -23,6 +23,7 @@ qubits renumbered to 0..k-1):
 * Angles are written as m*pi/2^20. A native angle is a multiple of pi/2^k already; only a few `rz` in an arbitrary
   circuit are not, and the rounding is below 3e-6 rad.
 """
+import functools
 import json
 import math
 import os
@@ -57,6 +58,7 @@ def fetch(path):
     print("wrote", stem(path) + "-circuits.json and -props.json")
 
 
+@functools.lru_cache(maxsize=None)
 def relax_infidelity(t1_us, t2_us, ns):
     from qiskit.quantum_info import average_gate_fidelity
     from qiskit_aer.noise import thermal_relaxation_error
@@ -64,6 +66,7 @@ def relax_infidelity(t1_us, t2_us, ns):
     return 1 - average_gate_fidelity(thermal_relaxation_error(t1_us * 1e3, t2_us * 1e3, ns))
 
 
+@functools.lru_cache(maxsize=None)
 def relax_infidelity2(a, b, ns):
     from qiskit.quantum_info import average_gate_fidelity
     from qiskit_aer.noise import thermal_relaxation_error
@@ -87,17 +90,39 @@ class Device:
             self.gates[(g["gate"], tuple(g["qubits"]))] = (p.get("gate_error", 0.0), p.get("gate_length", 0.0))
 
 
+def _scaled(self, factor):
+    """A copy of the device whose read-out errors are `factor` times as large (each capped at 0.5)."""
+    import copy
+
+    other = copy.copy(self)
+    other.readout = {q: (min(0.5, a * factor), min(0.5, b * factor)) for q, (a, b) in self.readout.items()}
+    return other
+
+
+Device.scaled = _scaled
+
+
 def frac(x):
     """x radians as `num den` meaning num*pi/den."""
     num = round(x / math.pi * DEN)
     return f"{num} {DEN}"
 
 
-def build(qasm3_text, dev):
-    """The `.qc` text for one circuit, the compact qubit order, and the measured physical qubits."""
+@functools.lru_cache(maxsize=None)
+def parse(qasm3_text):
     from qiskit import qasm3
 
-    qc = qasm3.loads(qasm3_text)
+    return qasm3.loads(qasm3_text)
+
+
+def build(qasm3_text, dev, scales=None):
+    """The `.qc` text for one circuit, the compact qubit order, and the measured physical qubits.
+
+    `scales` (used by `hw_fit.py`) multiplies the three kinds of noise the calibration gives: `decay` the rate of T1/T2 decay (T1 and
+    T2 are divided by it), `depol1` and `depol2` the depolarizing probability left after the decay is taken out. The read-out
+    error is scaled in `Device` (`Device.scaled`). All 1 by default: the model of docs/calibration.md as it was."""
+    sc = {"decay": 1.0, "depol1": 1.0, "depol2": 1.0, **(scales or {})}
+    qc = parse(qasm3_text)
     phys = sorted({qc.find_bit(q).index for i in qc.data for q in i.qubits if i.operation.name not in ("barrier",)})
     idx = {p: k for k, p in enumerate(phys)}
     lines = [f"dm {len(phys)}"]
@@ -111,7 +136,7 @@ def build(qasm3_text, dev):
 
     for p in phys:
         T1, T2 = dev.t1t2[p]
-        lines.append(f"coher {idx[p]} {round(T1 * 1e3)} {round(T2 * 1e3)}")
+        lines.append(f"coher {idx[p]} {round(T1 * 1e3 / sc['decay'])} {round(T2 * 1e3 / sc['decay'])}")
     measured = {}
     for inst in qc.data:
         op, qs = inst.operation, [qc.find_bit(q).index for q in inst.qubits]
@@ -124,7 +149,7 @@ def build(qasm3_text, dev):
             lines.append(f"rx {idx[p]} 1 2" if name == "sx" else f"x {idx[p]}")
             lines.append(f"wait {idx[p]} {round(ns)}")
             clock[p] += round(ns)
-            pdep = max(0.0, 1.5 * (r - relax_infidelity(*dev.t1t2[p], ns)))
+            pdep = min(1.0, sc["depol1"] * max(0.0, 1.5 * (r - relax_infidelity(*dev.t1t2[p], ns))))
             if pdep > 0:
                 lines.append(f"depol {idx[p]} {round(pdep * 1e6)} 1000000")
         elif name == "cz":
@@ -138,7 +163,7 @@ def build(qasm3_text, dev):
             lines.append(f"wait {idx[b]} {round(ns)}")
             clock[a] += round(ns)
             clock[b] += round(ns)
-            pdep = max(0.0, 1.25 * (r - relax_infidelity2(dev.t1t2[a], dev.t1t2[b], ns)))
+            pdep = min(1.0, sc["depol2"] * max(0.0, 1.25 * (r - relax_infidelity2(dev.t1t2[a], dev.t1t2[b], ns))))
             if pdep > 0:
                 lines.append(f"depol2 {idx[a]} {idx[b]} {round(pdep * 1e6)} 1000000")
         elif name == "barrier":
