@@ -1,0 +1,764 @@
+edition 7;
+
+module hw.fit;
+
+import hw.common;
+import hw.files;
+import hw.model;
+import hw.props;
+import hw.qasm3;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+import std.math;
+
+// The model's side of `hw fit` (`hw_fit.py`): every circuit of a job run through the calibration-derived model with four scale factors (`decay`, `depol1`, `depol2`, `readout`), against the counts the
+// device returned. The misfit the fit minimises is Pearson's chi-square per shot over the circuits it is fitted on, `sum (observed - expected)^2 / (expected + 1)`, and the distance is the total variation
+// between the model's distribution and the device's counts.
+
+// is `name` one of the comma separated names of `list`? An empty list holds everything.
+pub fn in_list[&l, &n](list: &l [byte], name: &n [byte]) -> [] bool {
+    if len(list) == 0 {
+        return true;
+    }
+    var start = 0;
+    var k = 0;
+    while k <= len(list) {
+        if k == len(list) || int_of(list[k]) == ',' {
+            if bytes.equal(list[start..k], name) {
+                return true;
+            }
+            start = k + 1;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// The results of `evaluate`: per circuit (up to 64), `dists` the distance, `infit` 1 when it counts in the misfit, and `names` the circuits' names each followed by a NUL.
+// Answers (status, the misfit summed over the fit circuits, their shots, how many circuits, names).
+pub fn evaluate[&h, &i, &f, &x, &c, &q, &a0, &b0, &a1, &b1, &d, &u, &l, &r, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], js: &a0 [byte], jt: &b0 [int], cs: &a1 [byte], ct: &b1 [int], dev: &d [float], czp: &u [int], fit_list: &l [byte], decay: float, dep1: float, dep2: float, readout: float, dists: &!r [float], infit: &!g [int]) -> [heap, io_write, err_write, exec(""), clock, poll] (int, float, int, int, buffer.Buffer) {
+    var status = 0;
+    var names = buffer.empty(heap, 64);
+    var total = 0.0;
+    var shots = 0;
+    var count = 0;
+    let phys = box_slice(heap, model.phys_size(), 0);
+    let measured = box_slice(heap, model.measured_size(), 0);
+    let dist = box_slice(heap, 1024, 0.0);
+    let counts = box_slice(heap, 1024, 0.0);
+    let normal = box_slice(heap, 1024, 0.0);
+    let rows = json.get(js, jt, 0, "circuits");
+    let crows = json.get(cs, ct, 0, "circuits");
+    if rows < 0 || crows < 0 || json.count(ct, crows) != json.count(jt, rows) || json.count(jt, rows) > 64 {
+        status = files.refuse(io, "the job and its -circuits.json do not list the same circuits (at most 64)");
+    } else {
+        count = json.count(jt, rows);
+    }
+    var k = 0;
+    while k < count && status == 0 {
+        let row = json.at(jt, rows, k);
+        let n = json.to_int(js, jt, json.get(js, jt, row, "qubits"));
+        let qasm = common.text_of(heap, cs, ct, json.get(cs, ct, json.at(ct, crows, k), "qasm3"));
+        var lines = 1;
+        borrow qasm as &qr in {
+            lines = qasm3.lines_in(buffer.bytes(qr));
+        }
+        let circuit_ops = box_slice(heap, 1 + 5 * lines, 0);
+        if n < 1 || n > 10 {
+            status = files.refuse(io, "a circuit must have 1 to 10 classical bits");
+        }
+        borrow mut circuit_ops as &!ow in {
+            borrow qasm as &qr2 in {
+                if status == 0 {
+                    status = qasm3.parse(io, buffer.bytes(qr2), contents(ow));
+                }
+            }
+        }
+        let name = json.string_view(js, jt, json.get(js, jt, row, "circuit"));
+        names = buffer.append(heap, names, name);
+        names = buffer.push(heap, names, byte_of(0));
+        borrow mut counts as &!cw in {
+            borrow mut normal as &!nw in {
+                let _c = common.read_dist(js, jt, json.get(js, jt, row, "device"), n, false, contents(cw));
+                let _n = common.read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(nw));
+            }
+        }
+        if status == 0 {
+            borrow circuit_ops as &cor in {
+                borrow mut phys as &!pw in {
+                    borrow mut measured as &!mw in {
+                        borrow mut dist as &!ew in {
+                            status = model.predict_scaled(heap, io, exec, clock, qsim, contents(cor), dev, czp, contents(pw), contents(mw), contents(ew), decay, dep1, dep2, readout);
+                            if status == 0 {
+                                // `hw_model.py` writes only the outcomes above 1e-12
+                                var z = 0;
+                                while z < 1 << n {
+                                    if !(contents(ew)[z] > 0.000000000001) {
+                                        contents(ew)[z] = 0.0;
+                                    }
+                                    z = z + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if status == 0 {
+            borrow dist as &er in {
+                borrow counts as &cr in {
+                    borrow normal as &nr in {
+                        dists[k] = model.tvd(contents(er), contents(nr), 1 << n);
+                        var n_shots = 0.0;
+                        var z2 = 0;
+                        while z2 < 1 << n {
+                            n_shots = n_shots + contents(cr)[z2];
+                            z2 = z2 + 1;
+                        }
+                        if in_list(fit_list, name) {
+                            infit[k] = 1;
+                            var z3 = 0;
+                            while z3 < 1 << n {
+                                let e = n_shots * contents(er)[z3];
+                                let d2 = contents(cr)[z3] - e;
+                                total = total + d2 * d2 / (e + 1.0);
+                                z3 = z3 + 1;
+                            }
+                            shots = shots + files.round_even(n_shots);
+                        } else {
+                            infit[k] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, qasm);
+        unbox_slice(heap, circuit_ops);
+        k = k + 1;
+    }
+    unbox_slice(heap, phys);
+    unbox_slice(heap, measured);
+    unbox_slice(heap, dist);
+    unbox_slice(heap, counts);
+    unbox_slice(heap, normal);
+    return (status, total, shots, count, names);
+}
+
+// ---- the commands ---------------------------------------------------------------------------------------------------
+
+// the index of a factor in (decay, depol1, depol2, readout), or -1
+fn factor_index[&s](name: &s [byte]) -> [] int {
+    if bytes.equal(name, "decay") {
+        return 0;
+    }
+    if bytes.equal(name, "depol1") {
+        return 1;
+    }
+    if bytes.equal(name, "depol2") {
+        return 2;
+    }
+    if bytes.equal(name, "readout") {
+        return 3;
+    }
+    return 0 - 1;
+}
+
+// the factors named in the comma separated `text`, in order, into `idx`; how many, or -1 for a name that is not a factor (or a repeat), or too many
+fn parse_free[&s, &o](text: &s [byte], idx: &!o [int]) -> [] int {
+    var count = 0;
+    var start = 0;
+    var k = 0;
+    while k <= len(text) {
+        if k == len(text) || int_of(text[k]) == ',' {
+            let f = factor_index(text[start..k]);
+            if f < 0 || count >= 4 {
+                return 0 - 1;
+            }
+            var j = 0;
+            while j < count {
+                if idx[j] == f {
+                    return 0 - 1;
+                }
+                j = j + 1;
+            }
+            idx[count] = f;
+            count = count + 1;
+            start = k + 1;
+        }
+        k = k + 1;
+    }
+    return count;
+}
+
+// A factor as the model uses it: exp of the log factor held between 1/20 and 20.
+fn scale_of(v: float) -> [] float {
+    let limit = math.log(20.0);
+    var t = v;
+    if t > limit {
+        t = limit;
+    }
+    if t < 0.0 - limit {
+        t = 0.0 - limit;
+    }
+    return math.exp(t);
+}
+
+// The job `job_path` (its counts, circuits and calibration, as `hw model` reads them): status, job text and tape, circuits text and tape, calibration `dev` and `czp`. All six are always valid
+// (empty after a refusal) and the caller drops them.
+pub fn load_job[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), job_path: &p [byte]) -> [heap, err_write, fs_read("")] (int, buffer.Buffer, Box[[int]], buffer.Buffer, Box[[int]], Box[[float]], Box[[int]]) {
+    let cut = files.stem_len(job_path);
+    let circuits_path = files.joined(heap, job_path[0..cut], "-circuits.json");
+    let props_path = files.joined(heap, job_path[0..cut], "-props.json");
+    let dev = box_slice(heap, props.dev_size(), 0.0);
+    let czp = box_slice(heap, 2 * props.max_cz() + 1, 0);
+    var status = 0;
+    borrow props_path as &pp in {
+        borrow mut dev as &!dw in {
+            borrow mut czp as &!cw in {
+                status = props.load(heap, io, fs, buffer.bytes(pp), contents(dw), contents(cw));
+            }
+        }
+    }
+    let (js, jt, s1) = files.load_json(heap, io, fs, job_path);
+    if status == 0 {
+        status = s1;
+    }
+    var cs = buffer.empty(heap, 16);
+    var ct = box_slice(heap, 8, 0);
+    if status == 0 {
+        borrow circuits_path as &cp in {
+            let (cs2, ct2, s2) = files.load_json(heap, io, fs, buffer.bytes(cp));
+            buffer.drop(heap, cs);
+            unbox_slice(heap, ct);
+            cs = cs2;
+            ct = ct2;
+            status = s2;
+        }
+    }
+    buffer.drop(heap, circuits_path);
+    buffer.drop(heap, props_path);
+    return (status, js, jt, cs, ct, dev, czp);
+}
+
+pub fn drop_job[&h](heap: &!h Heap, js: buffer.Buffer, jt: Box[[int]], cs: buffer.Buffer, ct: Box[[int]], dev: Box[[float]], czp: Box[[int]]) -> [heap] int {
+    buffer.drop(heap, js);
+    unbox_slice(heap, jt);
+    buffer.drop(heap, cs);
+    unbox_slice(heap, ct);
+    unbox_slice(heap, dev);
+    unbox_slice(heap, czp);
+    return 0;
+}
+
+// `evaluate` on a job loaded by `load_job`.
+pub fn eval_job[&h, &i, &f, &x, &c, &q, &a0, &b0, &a1, &b1, &d, &u, &l, &r, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], js: &a0 buffer.Buffer, jt: &b0 Box[[int]], cs: &a1 buffer.Buffer, ct: &b1 Box[[int]], dev: &d Box[[float]], czp: &u Box[[int]], fit_list: &l [byte], decay: float, dep1: float, dep2: float, readout: float, dists: &!r [float], infit: &!g [int]) -> [heap, io_write, err_write, exec(""), clock, poll] (int, float, int, int, buffer.Buffer) {
+    return evaluate(heap, io, fs, exec, clock, qsim, buffer.bytes(js), contents(jt), buffer.bytes(cs), contents(ct), contents(dev), contents(czp), fit_list, decay, dep1, dep2, readout, dists, infit);
+}
+
+// `hw misfit JOB --circuits LIST --free LIST --prior P [--qsim PATH]`, the point (one number per free factor) on standard input: the objective of the fit, printed. It is what `opt minimize`
+// is given to minimise (`hw fit` starts it); not meant to be run by hand.
+pub fn misfit_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_read, io_write, err_write, fs_read(""), exec(""), clock, poll, args] int {
+    if arg_count(args) < 3 {
+        return files.refuse(io, "hw misfit JOB.json [--circuits LIST] [--free LIST] [--prior P] [--qsim PATH], the point on standard input");
+    }
+    let job_path = arg(args, 2);
+    var qsim = common.flag_value(args, "--qsim");
+    if len(qsim) == 0 {
+        qsim = "qsim";
+    }
+    var free_text = common.flag_value(args, "--free");
+    if len(free_text) == 0 {
+        free_text = "decay,depol1,depol2";
+    }
+    var prior_text = common.flag_value(args, "--prior");
+    if len(prior_text) == 0 {
+        prior_text = "1.0986122886681098";
+    }
+    let circuits = common.flag_value(args, "--circuits");
+    let idx = box_slice(heap, 4, 0);
+    let z = box_slice(heap, 4, 0.0);
+    var nfree = 0;
+    var status = 0;
+    borrow mut idx as &!iw in {
+        nfree = parse_free(free_text, contents(iw));
+    }
+    if nfree < 0 {
+        status = files.refuse(io, "--free is a comma separated list of decay, depol1, depol2, readout");
+    }
+    // the point
+    var input = buffer.empty(heap, 64);
+    var ch = getchar(io);
+    while ch >= 0 {
+        input = buffer.push(heap, input, byte_of(ch));
+        ch = getchar(io);
+    }
+    var got = 0;
+    if status == 0 {
+        borrow input as &ir in {
+            borrow mut z as &!zw in {
+                let text = buffer.bytes(ir);
+                var start = 0;
+                var k = 0;
+                while k <= len(text) && status == 0 {
+                    let blank = k == len(text) || int_of(text[k]) == ' ' || int_of(text[k]) == 10 || int_of(text[k]) == 13 || int_of(text[k]) == 9;
+                    if blank {
+                        if k > start {
+                            if got >= nfree {
+                                status = files.refuse(io, "the point has more numbers than --free names");
+                            } else {
+                                contents(zw)[got] = common.float_of_token(text[start..k]);
+                                got = got + 1;
+                            }
+                        }
+                        start = k + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+        if status == 0 && got != nfree {
+            status = files.refuse(io, "the point has fewer numbers than --free names");
+        }
+    }
+    buffer.drop(heap, input);
+    let (s0, js, jt, cs, ct, dev, czp) = load_job(heap, io, fs, job_path);
+    if status == 0 {
+        status = s0;
+    }
+    if status == 0 {
+        let dists = box_slice(heap, 64, 0.0);
+        let infit = box_slice(heap, 64, 0);
+        let sc = box_slice(heap, 4, 1.0);
+        borrow idx as &ir2 in {
+            borrow z as &zr in {
+                borrow mut sc as &!sw in {
+                    var m = 0;
+                    while m < nfree {
+                        contents(sw)[contents(ir2)[m]] = scale_of(contents(zr)[m]);
+                        m = m + 1;
+                    }
+                }
+            }
+        }
+        var sum_sq = 0.0;
+        borrow z as &zr2 in {
+            var m2 = 0;
+            while m2 < nfree {
+                sum_sq = sum_sq + contents(zr2)[m2] * contents(zr2)[m2];
+                m2 = m2 + 1;
+            }
+        }
+        var total = 0.0;
+        var shots = 0;
+        var names = buffer.empty(heap, 16);
+        borrow js as &a0 in {
+            borrow jt as &b0 in {
+                borrow cs as &a1 in {
+                    borrow ct as &b1 in {
+                        borrow dev as &dr in {
+                            borrow czp as &cr in {
+                                borrow sc as &sr in {
+                                    borrow mut dists as &!dw in {
+                                        borrow mut infit as &!fw in {
+                                            let (st, t, n, count, nm) = eval_job(heap, io, fs, exec, clock, qsim, a0, b0, a1, b1, dr, cr, circuits, contents(sr)[0], contents(sr)[1], contents(sr)[2], contents(sr)[3], contents(dw), contents(fw));
+                                            status = st;
+                                            total = t;
+                                            shots = n;
+                                            buffer.drop(heap, names);
+                                            names = nm;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, names);
+        if status == 0 && shots == 0 {
+            status = files.refuse(io, "no circuit is in --circuits, or they have no counts");
+        }
+        if status == 0 {
+            let prior = common.float_of_token(prior_text);
+            let value = total / float_of(shots) + 0.5 * sum_sq / (prior * prior) / float_of(shots);
+            common.say_float(io, value);
+            io.newline(io);
+        }
+        unbox_slice(heap, dists);
+        unbox_slice(heap, infit);
+        unbox_slice(heap, sc);
+    }
+    drop_job(heap, js, jt, cs, ct, dev, czp);
+    unbox_slice(heap, idx);
+    unbox_slice(heap, z);
+    return status;
+}
+
+// the NUL separated name number `k` of `names`
+fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
+    var start = 0;
+    var seen = 0;
+    var j = 0;
+    while j < len(names) {
+        if int_of(names[j]) == 0 {
+            if seen == k {
+                return names[start..j];
+            }
+            seen = seen + 1;
+            start = j + 1;
+        }
+        j = j + 1;
+    }
+    return names[0..0];
+}
+
+// the rows of a fit's output for the circuits of one job: `which` 0 the circuits the fit used, 1 the others of that job, 2 every circuit of another run
+fn add_rows[&h, &p, &n, &a, &b, &e](heap: &!h Heap, w: json.Writer, file: &p [byte], names: &n [byte], count: int, infit: &a [int], d0: &b [float], d1: &e [float], which: int) -> [heap] json.Writer {
+    var out = w;
+    var k = 0;
+    while k < count {
+        if which == 2 || which == 0 && infit[k] == 1 || which == 1 && infit[k] == 0 {
+            out = json.begin_object(heap, out);
+            out = json.put_key(heap, out, "file");
+            out = json.put_string(heap, out, file);
+            out = json.put_key(heap, out, "circuit");
+            out = json.put_string(heap, out, name_at(names, k));
+            out = json.put_key(heap, out, "role");
+            if which == 0 {
+                out = json.put_string(heap, out, "fitted");
+            } else if which == 1 {
+                out = json.put_string(heap, out, "held out");
+            } else {
+                out = json.put_string(heap, out, "other run");
+            }
+            out = json.put_key(heap, out, "model_vs_device_calibration");
+            out = json.put_float(heap, out, d0[k]);
+            out = json.put_key(heap, out, "model_vs_device_fitted");
+            out = json.put_float(heap, out, d1[k]);
+            out = json.end_object(heap, out);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// One job of a fit's report: the model with every factor 1 and with the fitted ones against the counts of each circuit. `main` 1: the job the fit was made on (the keys `fit_circuits`,
+// `misfit_before` and `misfit_after` are written, then `rows` is opened with the circuits fitted on and the others of the job), 0: another run, whose circuits are rows too.
+pub fn job_pass[&h, &i, &f, &x, &c, &q, &p, &l, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], path: &p [byte], fit_list: &l [byte], scales: &s [float], main: int, w: json.Writer) -> [heap, io_write, err_write, fs_read(""), exec(""), clock, poll] (int, json.Writer) {
+    let (s0, js, jt, cs, ct, dev, czp) = load_job(heap, io, fs, path);
+    var status = s0;
+    var out = w;
+    if status == 0 {
+        let d0 = box_slice(heap, 64, 0.0);
+        let d1 = box_slice(heap, 64, 0.0);
+        let infit = box_slice(heap, 64, 0);
+        let spare = box_slice(heap, 64, 0);
+        var names = buffer.empty(heap, 16);
+        var t0 = 0.0;
+        var t1 = 0.0;
+        var shots = 0;
+        var count = 0;
+        borrow js as &a0 in {
+            borrow jt as &b0 in {
+                borrow cs as &a1 in {
+                    borrow ct as &b1 in {
+                        borrow dev as &dr in {
+                            borrow czp as &cr in {
+                                borrow mut d0 as &!d0w in {
+                                    borrow mut d1 as &!d1w in {
+                                        borrow mut infit as &!fw in {
+                                            borrow mut spare as &!sw in {
+                                                let (st, t, n, cnt, nm) = eval_job(heap, io, fs, exec, clock, qsim, a0, b0, a1, b1, dr, cr, fit_list, 1.0, 1.0, 1.0, 1.0, contents(d0w), contents(fw));
+                                                status = st;
+                                                t0 = t;
+                                                shots = n;
+                                                count = cnt;
+                                                buffer.drop(heap, names);
+                                                names = nm;
+                                                if status == 0 {
+                                                    let (st2, t2, n2, cnt2, nm2) = eval_job(heap, io, fs, exec, clock, qsim, a0, b0, a1, b1, dr, cr, fit_list, scales[0], scales[1], scales[2], scales[3], contents(d1w), contents(sw));
+                                                    status = st2;
+                                                    t1 = t2;
+                                                    buffer.drop(heap, nm2);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if status == 0 {
+            borrow names as &nr in {
+                borrow infit as &ir in {
+                    borrow d0 as &d0r in {
+                        borrow d1 as &d1r in {
+                            let file = common.basename(path);
+                            if main == 1 {
+                                out = json.put_key(heap, out, "fit_circuits");
+                                out = json.begin_array(heap, out);
+                                var k = 0;
+                                while k < count {
+                                    if contents(ir)[k] == 1 {
+                                        out = json.put_string(heap, out, name_at(buffer.bytes(nr), k));
+                                    }
+                                    k = k + 1;
+                                }
+                                out = json.end_array(heap, out);
+                                out = json.put_key(heap, out, "misfit_before");
+                                out = json.put_float(heap, out, t0 / float_of(shots));
+                                out = json.put_key(heap, out, "misfit_after");
+                                out = json.put_float(heap, out, t1 / float_of(shots));
+                                out = json.put_key(heap, out, "rows");
+                                out = json.begin_array(heap, out);
+                                out = add_rows(heap, out, file, buffer.bytes(nr), count, contents(ir), contents(d0r), contents(d1r), 0);
+                                out = add_rows(heap, out, file, buffer.bytes(nr), count, contents(ir), contents(d0r), contents(d1r), 1);
+                            } else {
+                                out = add_rows(heap, out, file, buffer.bytes(nr), count, contents(ir), contents(d0r), contents(d1r), 2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, names);
+        unbox_slice(heap, d0);
+        unbox_slice(heap, d1);
+        unbox_slice(heap, infit);
+        unbox_slice(heap, spare);
+    }
+    drop_job(heap, js, jt, cs, ct, dev, czp);
+    return (status, out);
+}
+
+fn is_flag[&s](a: &s [byte]) -> [] bool {
+    return len(a) >= 2 && int_of(a[0]) == '-' && int_of(a[1]) == '-';
+}
+
+// `hw fit JOB.json [--fit-circuits LIST] [--test JOB...] [--free LIST] [--prior P] [--tag T] [--opt PATH] [--qsim PATH] [--self PATH]`: `hw_fit.py`. Four scale factors of the model (`decay`,
+// `depol1`, `depol2`, `readout`; `--free` says which may change, default the first three) are fitted to the counts of the circuits in `--fit-circuits` (default all of the job), by
+// cancho-opt's `opt minimize` (Nelder-Mead, as scipy does it) on `hw misfit`, which this starts once per evaluation of the misfit; then the model with the factors is compared, for every
+// circuit not fitted on and every circuit of each `--test` job, with the model as the calibration published it. Writes fit-TAG-JOB.json beside the job. `--per-qubit-readout` is not ported.
+pub fn fit_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), exec(""), clock, poll, args] int {
+    if arg_count(args) < 3 {
+        return files.refuse(io, "hw fit JOB.json [--fit-circuits LIST] [--test JOB.json...] [--free LIST] [--prior P] [--tag T] [--opt PATH] [--qsim PATH] [--self PATH]");
+    }
+    let job_path = arg(args, 2);
+    var qsim = common.flag_value(args, "--qsim");
+    if len(qsim) == 0 {
+        qsim = "qsim";
+    }
+    var opt_path = common.flag_value(args, "--opt");
+    if len(opt_path) == 0 {
+        opt_path = "opt";
+    }
+    var self_path = common.flag_value(args, "--self");
+    if len(self_path) == 0 {
+        self_path = arg(args, 0);
+    }
+    var free_text = common.flag_value(args, "--free");
+    if len(free_text) == 0 {
+        free_text = "decay,depol1,depol2";
+    }
+    var prior_text = common.flag_value(args, "--prior");
+    if len(prior_text) == 0 {
+        prior_text = "1.0986122886681098";
+    }
+    let tag = common.flag_value(args, "--tag");
+    let circuits = common.flag_value(args, "--fit-circuits");
+    var test_from = arg_count(args);
+    var test_to = arg_count(args);
+    var k0 = 3;
+    while k0 < arg_count(args) {
+        if bytes.equal(arg(args, k0), "--per-qubit-readout") {
+            return files.refuse(io, "--per-qubit-readout is not ported: use scripts/hw_fit.py for it");
+        }
+        if bytes.equal(arg(args, k0), "--test") {
+            test_from = k0 + 1;
+            test_to = k0 + 1;
+            while test_to < arg_count(args) && !is_flag(arg(args, test_to)) {
+                test_to = test_to + 1;
+            }
+        }
+        k0 = k0 + 1;
+    }
+    let idx = box_slice(heap, 4, 0);
+    var nfree = 0;
+    borrow mut idx as &!iw in {
+        nfree = parse_free(free_text, contents(iw));
+    }
+    var status = 0;
+    if nfree < 1 {
+        status = files.refuse(io, "--free is a comma separated list of decay, depol1, depol2, readout");
+    }
+    // the minimiser: `opt minimize --x0 0,0,0 --step 0.5 ... -- hw misfit ...`
+    var evaluations = 0;
+    let z = box_slice(heap, 4, 0.0);
+    if status == 0 {
+        var argv = buffer.empty(heap, 256);
+        argv = buffer.append(heap, argv, "minimize\0--x0\0");
+        var j = 0;
+        while j < nfree {
+            if j > 0 {
+                argv = buffer.push(heap, argv, byte_of(','));
+            }
+            argv = buffer.push(heap, argv, byte_of('0'));
+            j = j + 1;
+        }
+        argv = buffer.append(heap, argv, "\0--step\00.5\0--xatol\00.02\0--fatol\01e-6\0--maxfev\0400\0--\0");
+        argv = buffer.append(heap, argv, self_path);
+        argv = buffer.append(heap, argv, "\0misfit\0");
+        argv = buffer.append(heap, argv, job_path);
+        argv = buffer.append(heap, argv, "\0--free\0");
+        argv = buffer.append(heap, argv, free_text);
+        argv = buffer.append(heap, argv, "\0--prior\0");
+        argv = buffer.append(heap, argv, prior_text);
+        argv = buffer.append(heap, argv, "\0--qsim\0");
+        argv = buffer.append(heap, argv, qsim);
+        argv = buffer.push(heap, argv, byte_of(0));
+        if len(circuits) > 0 {
+            argv = buffer.append(heap, argv, "--circuits\0");
+            argv = buffer.append(heap, argv, circuits);
+            argv = buffer.push(heap, argv, byte_of(0));
+        }
+        var rc = 255;
+        var got = buffer.empty(heap, 0);
+        var errs = buffer.empty(heap, 0);
+        borrow argv as &ar in {
+            let (r2, o2, e2) = files.run(heap, io, exec, clock, opt_path, buffer.bytes(ar), "");
+            rc = r2;
+            buffer.drop(heap, got);
+            buffer.drop(heap, errs);
+            got = o2;
+            errs = e2;
+        }
+        buffer.drop(heap, argv);
+        if rc != 0 && rc != 1 {
+            status = files.refuse(io, "`opt minimize` failed (is `opt` built and on the PATH, or given with --opt? is hw reachable as --self?):");
+            borrow errs as &er in {
+                io.error_all(io, buffer.bytes(er));
+            }
+        } else {
+            borrow got as &gr in {
+                let src = buffer.bytes(gr);
+                let tape = box_slice(heap, json.tape_len(src), 0);
+                borrow mut tape as &!tw in {
+                    let t = contents(tw);
+                    let parsed = json.parse(src, t);
+                    var xs = 0 - 1;
+                    if parsed > 0 {
+                        xs = json.get(src, t, 0, "x");
+                    }
+                    if parsed <= 0 || xs < 0 || json.count(t, xs) != nfree {
+                        status = files.refuse(io, "`opt minimize` printed something that is not its result");
+                    } else {
+                        evaluations = json.to_int(src, t, json.get(src, t, 0, "nfev"));
+                        borrow idx as &ir in {
+                            borrow mut z as &!zw in {
+                                var m = 0;
+                                while m < nfree {
+                                    contents(zw)[contents(ir)[m]] = json.to_float(src, t, json.at(t, xs, m));
+                                    m = m + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, tape);
+            }
+        }
+        buffer.drop(heap, got);
+        buffer.drop(heap, errs);
+    }
+    if status == 0 {
+        // the fitted factors, each log factor held between 1/20 and 20
+        let sc = box_slice(heap, 4, 1.0);
+        borrow z as &zr in {
+            borrow mut sc as &!sw in {
+                var m = 0;
+                while m < 4 {
+                    contents(sw)[m] = scale_of(contents(zr)[m]);
+                    m = m + 1;
+                }
+            }
+        }
+        var w = json.writer(heap, 16384);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "free");
+        w = json.put_string(heap, w, free_text);
+        w = json.put_key(heap, w, "prior");
+        w = json.put_float(heap, w, common.float_of_token(prior_text));
+        w = json.put_key(heap, w, "fitted_on");
+        w = json.put_string(heap, w, common.basename(job_path));
+        w = json.put_key(heap, w, "factors");
+        w = json.begin_object(heap, w);
+        borrow sc as &sr in {
+            w = json.put_key(heap, w, "decay");
+            w = json.put_float(heap, w, contents(sr)[0]);
+            w = json.put_key(heap, w, "depol1");
+            w = json.put_float(heap, w, contents(sr)[1]);
+            w = json.put_key(heap, w, "depol2");
+            w = json.put_float(heap, w, contents(sr)[2]);
+            w = json.put_key(heap, w, "readout");
+            w = json.put_float(heap, w, contents(sr)[3]);
+            w = json.end_object(heap, w);
+            w = json.put_key(heap, w, "evaluations");
+            w = json.put_int(heap, w, evaluations);
+            let (st, w2) = job_pass(heap, io, fs, exec, clock, qsim, job_path, circuits, contents(sr), 1, w);
+            status = st;
+            w = w2;
+            var t = test_from;
+            while t < test_to && status == 0 {
+                let (st3, w3) = job_pass(heap, io, fs, exec, clock, qsim, arg(args, t), circuits[0..0], contents(sr), 0, w);
+                status = st3;
+                w = w3;
+                t = t + 1;
+            }
+            io.write_all(io, "factors:");
+            var m2 = 0;
+            while m2 < 4 {
+                io.write_all(io, " ");
+                common.say_float(io, contents(sr)[m2]);
+                m2 = m2 + 1;
+            }
+            io.newline(io);
+        }
+        w = json.end_array(heap, w);
+        w = json.end_object(heap, w);
+        let text = buffer.push(heap, json.finish(w), byte_of(10));
+        // fit-TAG-JOB.json beside the job
+        let base = common.basename(job_path);
+        var out_path = buffer.append(heap, buffer.empty(heap, 64), job_path[0..len(job_path) - len(base)]);
+        out_path = buffer.append(heap, out_path, "fit-");
+        if len(tag) > 0 {
+            out_path = buffer.append(heap, out_path, tag);
+            out_path = buffer.push(heap, out_path, byte_of('-'));
+        }
+        out_path = buffer.append(heap, out_path, base);
+        if status == 0 {
+            borrow out_path as &opr in {
+                borrow text as &tr in {
+                    if fs_write(fs, buffer.bytes(opr), buffer.bytes(tr)) < 0 {
+                        status = files.refuse(io, "cannot write the result");
+                    } else {
+                        io.write_all(io, "wrote ");
+                        io.write_all(io, buffer.bytes(opr));
+                        io.newline(io);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, text);
+        buffer.drop(heap, out_path);
+        unbox_slice(heap, sc);
+    }
+    unbox_slice(heap, idx);
+    unbox_slice(heap, z);
+    return status;
+}

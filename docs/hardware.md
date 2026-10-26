@@ -257,7 +257,7 @@ grow with the circuit: on the morning round the model's distance from the device
 a fifth of the time, with a calibration that is wrong in the morning and, after it was updated, wrong the other way. The pre-flight above would
 have called it weak or bad (more than 5% or 15%), and flagged it before the run.
 
-`scripts/hw_fit.py` tests whether that is enough. It fits some of the model's numbers to three circuits of one job (`ghzm3`, `rmir5_d2`,
+`scripts/hw_fit.py` (and `hw fit`, its cancho port, which uses cancho-opt's Nelder-Mead where the script used scipy's: same 118 evaluations and the same factors to 1e-16 on this run, `scripts/check_hw.py`) tests whether that is enough. It fits some of the model's numbers to three circuits of one job (`ghzm3`, `rmir5_d2`,
 `rmir5_d4`; Pearson chi-square misfit, Nelder-Mead, pulled towards the calibration by a prior) and reports, for the three circuits left out, and
 for the later rounds, the distance between the model's distribution and the device's counts (a perfect model still shows 0.01 to 0.05 at 2000 shots).
 

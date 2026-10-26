@@ -101,8 +101,9 @@ pub fn measured_size() -> [] int {
     return 64;
 }
 
-// The `.qc` text for the circuit in `ops`, from the device in `dev`/`czp`. `phys` and `measured` are filled. `st[0]` is 0, or 2 after a refusal.
-pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [int], dev: &d [float], czp: &c [int], phys: &!p [int], measured: &!m [int]) -> [heap, err_write] (buffer.Buffer, int) {
+// The `.qc` text for the circuit in `ops`, from the device in `dev`/`czp`. `phys` and `measured` are filled. The status is 0, or 2 after a refusal. `decay` divides T1 and T2 (the
+// rate of decay), `dep1` and `dep2` multiply the depolarizing probabilities of one- and two-qubit gates (`hw fit`'s factors); all 1 is the calibration as it was published.
+pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [int], dev: &d [float], czp: &c [int], phys: &!p [int], measured: &!m [int], decay: float, dep1: float, dep2: float) -> [heap, err_write] (buffer.Buffer, int) {
     var status = 0;
     var text = buffer.empty(heap, 1024);
     // the qubits used, in increasing order
@@ -152,7 +153,7 @@ pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [in
             if dev[props.t1(pq)] <= 0.0 || dev[props.t2(pq)] <= 0.0 {
                 status = files.refuse(io, "a qubit the circuit uses has no T1 or T2 in the calibration");
             } else {
-                text = line(heap, text, "coher", j, files.round_even(dev[props.t1(pq)] * 1000.0), files.round_even(props.t2_effective(dev, pq) * 1000.0), 3);
+                text = line(heap, text, "coher", j, files.round_even(dev[props.t1(pq)] * 1000.0 / decay), files.round_even(props.t2_effective(dev, pq) * 1000.0 / decay), 3);
             }
             j = j + 1;
         }
@@ -187,6 +188,10 @@ pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [in
                     if pdep < 0.0 {
                         pdep = 0.0;
                     }
+                    pdep = dep1 * pdep;
+                    if pdep > 1.0 {
+                        pdep = 1.0;
+                    }
                     if pdep > 0.0 {
                         text = line(heap, text, "depol", idx, files.round_even(pdep * 1000000.0), 1000000, 3);
                     }
@@ -215,6 +220,10 @@ pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [in
                     var pdep = 1.25 * (err - relax2(dev[props.t1(a)], props.t2_effective(dev, a), dev[props.t1(b)], props.t2_effective(dev, b), ns));
                     if pdep < 0.0 {
                         pdep = 0.0;
+                    }
+                    pdep = dep2 * pdep;
+                    if pdep > 1.0 {
+                        pdep = 1.0;
                     }
                     if pdep > 0.0 {
                         text = line4(heap, text, "depol2", ia, ib, files.round_even(pdep * 1000000.0), 1000000);
@@ -297,9 +306,9 @@ pub fn simulate[&h, &i, &x, &c, &s, &t, &d](heap: &!h Heap, io: &!i Io, exec: &x
     return status;
 }
 
-// Apply each measured qubit's read-out error to `dist` (over the compact qubits) and put the result over the classical bits into `out` (bit c of an index is the measurement of
+// (`readout` negative: the errors as the calibration has them; otherwise `hw fit`'s factor) Apply each measured qubit's read-out error to `dist` (over the compact qubits) and put the result over the classical bits into `out` (bit c of an index is the measurement of
 // physical qubit measured[c]); every used qubit must be measured exactly once. 0, or 2 after a refusal.
-pub fn confuse[&i, &d, &v, &p, &m, &o](io: &!i Io, dist: &d [float], n: int, dev: &v [float], phys: &p [int], measured: &m [int], out: &!o [float]) -> [err_write] int {
+pub fn confuse[&i, &d, &v, &p, &m, &o](io: &!i Io, dist: &d [float], n: int, dev: &v [float], phys: &p [int], measured: &m [int], out: &!o [float], readout: float) -> [err_write] int {
     if measured[63] != n {
         return files.refuse(io, "an unmeasured qubit would need marginalising (not every used qubit is measured)");
     }
@@ -321,8 +330,19 @@ pub fn confuse[&i, &d, &v, &p, &m, &o](io: &!i Io, dist: &d [float], n: int, dev
         }
         var q = 0;
         while q < n {
-            let e0 = dev[props.p01(phys[1 + q])];
-            let e1 = dev[props.p10(phys[1 + q])];
+            var e0 = dev[props.p01(phys[1 + q])];
+            var e1 = dev[props.p10(phys[1 + q])];
+            if readout >= 0.0 {
+                // `hw fit`: the read-out errors times a factor, each capped at 0.5 (`Device.scaled`)
+                e0 = e0 * readout;
+                e1 = e1 * readout;
+                if e0 > 0.5 {
+                    e0 = 0.5;
+                }
+                if e1 > 0.5 {
+                    e1 = 0.5;
+                }
+            }
             let bit = 1 << q;
             var i0 = 0;
             while i0 < size {
@@ -383,8 +403,8 @@ pub fn tvd[&a, &b](p: &a [float], q: &b [float], size: int) -> [] float {
 }
 
 // Build the circuit in `ops`, run it and put the model's distribution over the classical bits into `out` (size at least 2^n). `phys` and `measured` are filled as in `build`. 0, or 2 after a refusal.
-pub fn predict[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], ops: &o [int], dev: &d [float], czp: &u [int], phys: &!p [int], measured: &!m [int], out: &!r [float]) -> [heap, err_write, exec(""), clock, poll] int {
-    let (text, status0) = build(heap, io, ops, dev, czp, phys, measured);
+pub fn predict_scaled[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], ops: &o [int], dev: &d [float], czp: &u [int], phys: &!p [int], measured: &!m [int], out: &!r [float], decay: float, dep1: float, dep2: float, readout: float) -> [heap, err_write, exec(""), clock, poll] int {
+    let (text, status0) = build(heap, io, ops, dev, czp, phys, measured, decay, dep1, dep2);
     var status = status0;
     let compact = box_slice(heap, 1024, 0.0);
     if status == 0 {
@@ -396,12 +416,17 @@ pub fn predict[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &
     }
     if status == 0 {
         borrow compact as &cr in {
-            status = confuse(io, contents(cr), phys[0], dev, phys, measured, out);
+            status = confuse(io, contents(cr), phys[0], dev, phys, measured, out, readout);
         }
     }
     buffer.drop(heap, text);
     unbox_slice(heap, compact);
     return status;
+}
+
+// `predict_scaled` with the calibration as it was published.
+pub fn predict[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], ops: &o [int], dev: &d [float], czp: &u [int], phys: &!p [int], measured: &!m [int], out: &!r [float]) -> [heap, err_write, exec(""), clock, poll] int {
+    return predict_scaled(heap, io, exec, clock, qsim, ops, dev, czp, phys, measured, out, 1.0, 1.0, 1.0, 0.0 - 1.0);
 }
 
 // Only the layout of the circuit in `ops`: `phys` (the qubits it uses) and `measured` (the physical qubit of each classical bit), filled as `build` does, without the calibration.

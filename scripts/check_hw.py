@@ -19,7 +19,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 HW = os.path.join(ROOT, "docs", "data", "hardware")
-FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "common files props qasm3 model rates gof predict main".split()]
+FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "common files props qasm3 model rates gof predict fit main".split()]
 
 
 def build():
@@ -283,6 +283,51 @@ def check_rates(hw):
     return ok
 
 
+def check_fit(hw, qsim):
+    """`hw fit` (cancho-opt's `opt minimize` on `hw misfit`) against the committed result of `hw_fit.py`: the fez morning run fitted on three circuits and tested on the two other runs."""
+    opt = os.environ.get("OPT")
+    if not opt:
+        print("skip hw fit: OPT (a built cancho-opt `opt`) is not set")
+        return True
+    base = "ibm_fez-2026-10-26-mirror-from60"
+    want = json.load(open(os.path.join(HW, f"fit-global-{base}.json")))
+    stems = [os.path.join(HW, base), os.path.join(HW, base + "-1000"), os.path.join(HW, base + "-1030")]
+    d = tempfile.mkdtemp(prefix="hwfit-")
+    paths = []
+    for st in stems:
+        for suffix in (".json", "-circuits.json", "-props.json"):
+            shutil.copy(st + suffix, os.path.join(d, os.path.basename(st) + suffix))
+        paths.append(os.path.join(d, os.path.basename(st) + ".json"))
+    r = subprocess.run([hw, "fit", paths[0], "--fit-circuits", ",".join(want["fit_circuits"]), "--test", paths[1], paths[2], "--tag", "chk", "--opt", opt, "--qsim", qsim, "--self", hw], capture_output=True, text=True)
+    if r.returncode:
+        print("FAIL hw fit:", r.stderr[-300:])
+        return False
+    got = json.load(open(os.path.join(d, f"fit-chk-{base}.json")))
+    bad = []
+    if sorted(got["fit_circuits"]) != sorted(want["fit_circuits"]):
+        bad.append("fit_circuits")
+    if got["evaluations"] != want["evaluations"]:
+        bad.append(f"evaluations {got['evaluations']} != {want['evaluations']}")
+    worst = 0.0
+    for key in ("misfit_before", "misfit_after"):
+        worst = max(worst, abs(got[key] - want[key]))
+    for name in ("decay", "depol1", "depol2", "readout"):
+        worst = max(worst, abs(got["factors"][name] / want["factors"][name] - 1.0))
+    rows = {(r_["file"], r_["circuit"]): r_ for r_ in want["rows"]}
+    mine = {(r_["file"], r_["circuit"]): r_ for r_ in got["rows"]}
+    if set(rows) != set(mine):
+        bad.append("rows")
+    else:
+        for k, v in rows.items():
+            if mine[k]["role"] != v["role"]:
+                bad.append(f"role of {k}")
+            for f in ("model_vs_device_calibration", "model_vs_device_fitted"):
+                worst = max(worst, abs(mine[k][f] - v[f]))
+    ok = not bad and worst <= 1e-9
+    print(f"{'ok  ' if ok else 'FAIL'} hw fit (fez, 3 circuits, tested on 2 other runs: {len(rows)} rows) agrees with the committed hw_fit.py result: same number of evaluations, worst difference {worst:.1e}" + ("" if ok else f"  {bad}"))
+    return ok
+
+
 def build_tool(name):
     out = os.path.join(tempfile.mkdtemp(prefix=name + "-"), name)
     r = subprocess.run([os.environ.get("CANCHO", "cancho"), "build", os.path.join(ROOT, "tools", name + ".cho"), "--std", "-o", out], capture_output=True, text=True)
@@ -293,7 +338,7 @@ def build_tool(name):
 
 def main():
     hw, qsim = build(), qsim_exe()
-    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate")), check_predict(hw, qsim), check_rates(hw)]
+    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate")), check_predict(hw, qsim), check_rates(hw), check_fit(hw, qsim)]
     sys.exit(0 if all(results) else 1)
 
 
