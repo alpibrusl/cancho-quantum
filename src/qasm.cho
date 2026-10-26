@@ -12,15 +12,16 @@ import std.io;
 //   OPENQASM 2.0;  include "qelib1.inc";        skipped
 //   qreg q[N];                                  one register; sets the qubit count
 //   creg c[N];  barrier ...;                    skipped
-//   h x y z s sdg t tdg q[i];                   single-qubit gates
+//   h x y z s sdg t tdg sx sxdg id q[i];        single-qubit gates (sx = H S H, sxdg = H Sdg H, id does nothing)
 //   rx(a) ry(a) rz(a) p(a) u1(a) q[i];          one angle
+//   u2(a,b) u3(a,b,c) u(a,b,c) q[i];            u3(t,f,l) = p(f) ry(t) p(l) exactly, u2(f,l) = u3(pi/2,f,l)
 //   cx cz swap q[i],q[j];  cp(a) cu1(a) q[i],q[j];  ccx q[i],q[j],q[k];
 //   measure q[i] -> c[j];                       measure q[i] (the c[j] is ignored)
 //
 // An angle is a rational multiple of pi: `pi`, `-pi/2`, `3*pi/4`, `0`. A
 // decimal angle is refused (status 3), because the digits of a decimal are
 // rounded and a multiple of pi is not, and the references are compared bit
-// for bit. Anything else (`gate` definitions, `if`, `u3`, a second `qreg`)
+// for bit. Anything else (`gate` definitions, `if`, a second `qreg`)
 // is refused with a line that says what.
 //
 // A word is its characters packed big-endian into an int, the first seven
@@ -118,9 +119,9 @@ fn operand[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
     return k;
 }
 
-// The angle between `(` and `)` as a fraction of pi: answers (num, den), or
-// (0, 0) when the expression is outside the subset.
-fn angle[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int) {
+// An angle, up to and including the character `close` (`)` after the last of a gate's angles, `,` after the others), as a fraction of pi: answers
+// (num, den), or (0, 0) when the expression is outside the subset.
+fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, int) {
     skip(io, la);
     var sign = 1;
     if la[0] == '-' {
@@ -140,7 +141,7 @@ fn angle[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int) {
             advance(io, la);
             return (0, 0);
         }
-        if num == 0 && expect(io, la, ')') {
+        if num == 0 && expect(io, la, close) {
             return (0, 1);
         }
         if !expect(io, la, '*') {
@@ -157,7 +158,7 @@ fn angle[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int) {
             return (0, 0);
         }
     }
-    if !expect(io, la, ')') {
+    if !expect(io, la, close) {
         return (0, 0);
     }
     return (sign * num, den);
@@ -236,7 +237,7 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
             if !expect(io, la, '(') {
                 status = 2;
             } else {
-                let (num, den) = angle(io, la);
+                let (num, den) = angle(io, la, ')');
                 let q = operand(io, la);
                 to_semicolon(io, la);
                 if den == 0 {
@@ -252,6 +253,49 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
                 } else {
                     gates.p(st, n, q, gates.angle(num, den));
                 }
+            }
+        } else if w == 29560 || w == 1937269863 || w == 26980 {
+            let q = operand(io, la);
+            to_semicolon(io, la);
+            if q < 0 || q >= n {
+                status = 2;
+            } else if w == 29560 {
+                gates.h(st, n, q);
+                gates.s(st, n, q);
+                gates.h(st, n, q);
+            } else if w == 1937269863 {
+                gates.h(st, n, q);
+                gates.sdg(st, n, q);
+                gates.h(st, n, q);
+            }
+        } else if w == 30002 || w == 30003 || w == 117 {
+            // u2(f,l), u3(t,f,l), u(t,f,l): p(f) ry(t) p(l), the first one applied last
+            var ok = expect(io, la, '(');
+            var tn = 1;
+            var td = 2;
+            var bad = 0;
+            if ok && w != 30002 {
+                let (a1, b1) = angle(io, la, ',');
+                tn = a1;
+                td = b1;
+                if b1 == 0 {
+                    bad = 1;
+                }
+            }
+            let (fnum, fden) = angle(io, la, ',');
+            let (lnum, lden) = angle(io, la, ')');
+            let q = operand(io, la);
+            to_semicolon(io, la);
+            if !ok {
+                status = 2;
+            } else if bad == 1 || fden == 0 || lden == 0 {
+                status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+            } else if q < 0 || q >= n {
+                status = 2;
+            } else {
+                gates.p(st, n, q, gates.angle(lnum, lden));
+                gates.ry(st, n, q, gates.angle(tn, td));
+                gates.p(st, n, q, gates.angle(fnum, fden));
             }
         } else if w == 25464 || w == 25466 || w == 1937203568 {
             let a = operand(io, la);
@@ -271,7 +315,7 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
             if !expect(io, la, '(') {
                 status = 2;
             } else {
-                let (num, den) = angle(io, la);
+                let (num, den) = angle(io, la, ')');
                 let a = operand(io, la);
                 expect(io, la, ',');
                 let c = operand(io, la);
