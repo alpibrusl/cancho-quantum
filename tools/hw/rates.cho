@@ -1,0 +1,580 @@
+edition 7;
+
+module hw.rates;
+
+import hw.common;
+import hw.files;
+import hw.props;
+import std.buffer;
+import std.bytes;
+import std.fmt;
+import std.io;
+import std.json;
+import std.math;
+
+// `hw rates`: gate error rates from a run of `hw_spike.py run --set rates`, by regression (cancho-ml's `ml fit --model linear`), and whether they predict circuits left out better than the published calibration
+// (`hw_rates.py`; docs/rates-regression.md). The survival S of a circuit (the share of shots that read all zeros) is to first order a product over its gates, so log S is linear in the gate counts:
+// four of every five circuits (by index) are fitted, the fifth is predicted with `ml predict` and compared, as root mean square error of log S and of S, with the published calibration (lambda = the
+// published gate error, intercept = the read-out) and with the training mean.
+
+fn put_header[&h, &l](heap: &!h Heap, buf: buffer.Buffer, line: &l [int], n: int, target: bool) -> [heap] buffer.Buffer {
+    var out = buf;
+    var j = 0;
+    while j + 1 < n {
+        out = buffer.push_nat(heap, buffer.push(heap, buffer.push_nat(heap, buffer.append(heap, out, "cz_"), line[j]), byte_of('_')), line[j + 1]);
+        out = buffer.push(heap, out, byte_of(','));
+        j = j + 1;
+    }
+    j = 0;
+    while j < n {
+        out = buffer.push_nat(heap, buffer.append(heap, out, "g1_"), line[j]);
+        if j + 1 < n || target {
+            out = buffer.push(heap, out, byte_of(','));
+        }
+        j = j + 1;
+    }
+    if target {
+        out = buffer.append(heap, out, "logS");
+    }
+    return buffer.push(heap, out, byte_of(10));
+}
+
+// The name of column `j` (a `cz_a_b` or a `g1_q`) of a line of `n` qubits into a new buffer.
+fn column_name[&h, &l](heap: &!h Heap, line: &l [int], n: int, j: int) -> [heap] buffer.Buffer {
+    if j + 1 < n {
+        return buffer.push_nat(heap, buffer.push(heap, buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 24), "cz_"), line[j]), byte_of('_')), line[j + 1]);
+    }
+    return buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 16), "g1_"), line[j - (n - 1)]);
+}
+
+// The rows of the CSV for the circuits with (k % 5 == 0) == test: the gate counts, and `logS` for the training set.
+fn put_rows[&h, &f, &g](heap: &!h Heap, buf: buffer.Buffer, feats: &f [float], logs: &g [float], count: int, ncols: int, test: bool) -> [heap] buffer.Buffer {
+    var out = buf;
+    var k = 0;
+    while k < count {
+        if k % 5 == 0 == test {
+            var j = 0;
+            while j < ncols {
+                out = buffer.push_nat(heap, out, truncate(feats[k * 16 + j]));
+                if j + 1 < ncols || !test {
+                    out = buffer.push(heap, out, byte_of(','));
+                }
+                j = j + 1;
+            }
+            if !test {
+                region r {
+                    let scratch = alloc_slice[r](32, byte_of(0));
+                    let w = fmt.float_into(scratch, logs[k]);
+                    out = buffer.append(heap, out, scratch[0..w]);
+                }
+            }
+            out = buffer.push(heap, out, byte_of(10));
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// Fill `line` (the qubits), `feats` (16 floats per circuit: the `cz` counts of the n-1 pairs, then the `sx`/`x` counts of the n qubits), `logs` (log S) and `surv` (S) from the job. 0, or 2 after a refusal.
+fn extract[&i, &a, &b, &l, &f, &g, &s](io: &!i Io, src: &a [byte], tape: &b [int], n: int, count: int, shots: int, line: &!l [int], feats: &!f [float], logs: &!g [float], surv: &!s [float]) -> [err_write] int {
+    let line_node = json.get(src, tape, 0, "line");
+    let rows = json.get(src, tape, 0, "circuits");
+    var j = 0;
+    while j < n {
+        line[j] = json.to_int(src, tape, json.at(tape, line_node, j));
+        j = j + 1;
+    }
+    var status = 0;
+    region r {
+        let zeros_key = alloc_slice[r](n, byte_of('0'));
+        var k = 0;
+        while k < count {
+            let row = json.at(tape, rows, k);
+            let counts = json.get(src, tape, row, "device");
+            let zn = json.get(src, tape, counts, zeros_key[0..n]);
+            var zeros = 0.5;
+            if zn >= 0 {
+                zeros = json.to_float(src, tape, zn);
+            }
+            if zeros < 0.5 {
+                zeros = 0.5;
+            }
+            surv[k] = zeros / float_of(shots);
+            logs[k] = math.log(zeros / float_of(shots));
+            let gates = json.get(src, tape, row, "gates");
+            let czs = json.get(src, tape, gates, "cz");
+            let ones = json.get(src, tape, gates, "sx_x");
+            if gates < 0 || czs < 0 || ones < 0 {
+                status = files.refuse(io, "a circuit has no gate counts (the job is not a `--set rates` run)");
+            }
+            var pj = 0;
+            while pj + 1 < n && status == 0 {
+                var lo = line[pj];
+                var hi = line[pj + 1];
+                if hi < lo {
+                    lo = line[pj + 1];
+                    hi = line[pj];
+                }
+                let key = alloc_slice[r](24, byte_of(0));
+                var w = common.digits_into(key, 0, lo);
+                key[w] = byte_of('-');
+                w = common.digits_into(key, w + 1, hi);
+                let cn = json.get(src, tape, czs, key[0..w]);
+                if cn >= 0 {
+                    feats[k * 16 + pj] = json.to_float(src, tape, cn);
+                }
+                pj = pj + 1;
+            }
+            var qj = 0;
+            while qj < n && status == 0 {
+                let key2 = alloc_slice[r](12, byte_of(0));
+                let w2 = common.digits_into(key2, 0, line[qj]);
+                let on = json.get(src, tape, ones, key2[0..w2]);
+                if on >= 0 {
+                    feats[k * 16 + (n - 1) + qj] = json.to_float(src, tape, on);
+                }
+                qj = qj + 1;
+            }
+            k = k + 1;
+        }
+    }
+    return status;
+}
+
+// root mean square error of `pred[k]` against `want[k]` over the circuits with k % 5 == 0; `as_s` takes exp of the prediction and compares it with S.
+fn rmse[&p, &w](pred: &p [float], want: &w [float], count: int, as_s: bool) -> [] float {
+    var sum = 0.0;
+    var m = 0;
+    var k = 0;
+    while k < count {
+        if k % 5 == 0 {
+            var x = pred[k];
+            if as_s {
+                x = math.exp(x);
+            }
+            sum = sum + (x - want[k]) * (x - want[k]);
+            m = m + 1;
+        }
+        k = k + 1;
+    }
+    return math.sqrt(sum / float_of(m));
+}
+
+// The coefficients and the intercept of `ml fit`'s answer into `coef` (the columns in order, the intercept at 15).
+fn read_fit[&h, &i, &s, &l, &o](heap: &!h Heap, io: &!i Io, text: &s [byte], line: &l [int], n: int, coef: &!o [float]) -> [heap, err_write] int {
+    var status = 0;
+    var matched = 0;
+    region g {
+        let tape = alloc_slice[g](json.tape_len(text), 0);
+        if json.parse(text, tape) <= 0 {
+            status = files.refuse(io, "ml printed something that is not JSON");
+        } else {
+            let summary = json.get(text, tape, json.get(text, tape, 0, "data"), "summary");
+            let cs = json.get(text, tape, summary, "coefficients");
+            if summary < 0 || cs < 0 {
+                status = files.refuse(io, "ml's answer has no coefficients");
+            } else {
+                coef[15] = common.float_of_token(json.string_view(text, tape, json.get(text, tape, summary, "intercept")));
+                var i0 = 0;
+                while i0 < json.count(tape, cs) {
+                    let item = json.at(tape, cs, i0);
+                    let name = json.string_view(text, tape, json.get(text, tape, item, "name"));
+                    var j = 0;
+                    while j < 2 * n - 1 {
+                        let want = column_name(heap, line, n, j);
+                        borrow want as &wr in {
+                            if bytes.equal(name, buffer.bytes(wr)) {
+                                coef[j] = common.float_of_token(json.string_view(text, tape, json.get(text, tape, item, "value")));
+                                matched = matched + 1;
+                            }
+                        }
+                        buffer.drop(heap, want);
+                        j = j + 1;
+                    }
+                    i0 = i0 + 1;
+                }
+            }
+        }
+    }
+    if status == 0 && matched != 2 * n - 1 {
+        status = files.refuse(io, "ml's coefficients are not the columns that were fitted");
+    }
+    return status;
+}
+
+// The predictions of `ml predict` for the held-out circuits (every fifth, by index) into `fitted[k]`; how many there were, or -1.
+fn read_predictions[&i, &s, &o](io: &!i Io, text: &s [byte], count: int, fitted: &!o [float]) -> [err_write] int {
+    var got = 0 - 1;
+    region g {
+        let tape = alloc_slice[g](json.tape_len(text), 0);
+        if json.parse(text, tape) <= 0 {
+            files.refuse(io, "ml printed something that is not JSON");
+        } else {
+            let rows = json.get(text, tape, json.get(text, tape, 0, "data"), "rows");
+            var want = 0;
+            var k = 0;
+            while k < count {
+                if k % 5 == 0 {
+                    want = want + 1;
+                }
+                k = k + 1;
+            }
+            if rows < 0 || json.count(tape, rows) != want {
+                files.refuse(io, "ml predicted another number of circuits than were held out");
+            } else {
+                var t = 0;
+                k = 0;
+                while k < count {
+                    if k % 5 == 0 {
+                        let row = json.at(tape, rows, t);
+                        fitted[k] = common.float_of_token(json.string_view(text, tape, json.at(tape, row, 0)));
+                        t = t + 1;
+                    }
+                    k = k + 1;
+                }
+                got = want;
+            }
+        }
+    }
+    return got;
+}
+
+fn put_column[&h, &l](heap: &!h Heap, w: json.Writer, line: &l [int], n: int, j: int) -> [heap] json.Writer {
+    let name = column_name(heap, line, n, j);
+    var out = w;
+    borrow name as &nr in {
+        out = json.put_key(heap, out, buffer.bytes(nr));
+    }
+    buffer.drop(heap, name);
+    return out;
+}
+
+// The answer, to the file and to standard output.
+fn write_answer[&h, &i, &f, &p, &o, &l, &c, &e, &g, &s, &b, &d, &z, &v, &u](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), job_name: &p [byte], out_path: &o [byte], line: &l [int], n: int, count: int, coef: &c [float], fitted: &e [float], published: &g [float], base: &s [float], logs: &b [float], surv: &d [float], dev: &v [float], czp: &u [int]) -> [heap, io_write, err_write, fs_write("")] int {
+    var status = 0;
+    var w = json.writer(heap, 8192);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "job");
+    w = json.put_string(heap, w, job_name);
+    var held = 0;
+    var k = 0;
+    while k < count {
+        if k % 5 == 0 {
+            held = held + 1;
+        }
+        k = k + 1;
+    }
+    w = json.put_key(heap, w, "fit_circuits");
+    w = json.put_int(heap, w, count - held);
+    w = json.put_key(heap, w, "held_out");
+    w = json.put_int(heap, w, held);
+    w = json.put_key(heap, w, "intercept");
+    w = json.put_float(heap, w, coef[15]);
+    w = json.put_key(heap, w, "coefficients");
+    w = json.begin_object(heap, w);
+    var j = 0;
+    while j < 2 * n - 1 {
+        w = put_column(heap, w, line, n, j);
+        w = json.put_float(heap, w, coef[j]);
+        j = j + 1;
+    }
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "lambda_fitted");
+    w = json.begin_object(heap, w);
+    j = 0;
+    io.write_all(io, "gate            fitted lambda  published\n");
+    while j < 2 * n - 1 {
+        w = put_column(heap, w, line, n, j);
+        w = json.put_float(heap, w, 1.0 - math.exp(coef[j]));
+        j = j + 1;
+    }
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "lambda_published");
+    w = json.begin_object(heap, w);
+    j = 0;
+    while j < 2 * n - 1 {
+        var lam = 0.0 - 1.0;
+        if j + 1 < n {
+            let e0 = props.find_cz(dev, czp, line[j], line[j + 1]);
+            if e0 >= 0 {
+                lam = dev[props.cz_entry(e0)];
+            }
+        } else {
+            lam = dev[props.gate1(line[j - (n - 1)])];
+        }
+        w = put_column(heap, w, line, n, j);
+        w = json.put_float(heap, w, lam);
+        let name = column_name(heap, line, n, j);
+        borrow name as &nr in {
+            io.write_all(io, "  ");
+            io.write_all(io, buffer.bytes(nr));
+            io.write_all(io, "  ");
+        }
+        buffer.drop(heap, name);
+        common.say_float(io, 1.0 - math.exp(coef[j]));
+        io.write_all(io, "  ");
+        common.say_float(io, lam);
+        io.newline(io);
+        j = j + 1;
+    }
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "held_out_error");
+    w = json.begin_array(heap, w);
+    var m = 0;
+    while m < 3 {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "predictor");
+        var a1 = 0.0;
+        var a2 = 0.0;
+        if m == 0 {
+            w = json.put_string(heap, w, "ml fit (this run)");
+            a1 = rmse(fitted, logs, count, false);
+            a2 = rmse(fitted, surv, count, true);
+        } else if m == 1 {
+            w = json.put_string(heap, w, "published calibration");
+            a1 = rmse(published, logs, count, false);
+            a2 = rmse(published, surv, count, true);
+        } else {
+            w = json.put_string(heap, w, "training mean");
+            a1 = rmse(base, logs, count, false);
+            a2 = rmse(base, surv, count, true);
+        }
+        w = json.put_key(heap, w, "rmse_log_s");
+        w = json.put_float(heap, w, a1);
+        w = json.put_key(heap, w, "rmse_s");
+        w = json.put_float(heap, w, a2);
+        w = json.end_object(heap, w);
+        io.write_all(io, "  held out, predictor ");
+        io.write_all(io, "");
+        common.say_float(io, a1);
+        io.write_all(io, "  ");
+        common.say_float(io, a2);
+        io.newline(io);
+        m = m + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.end_object(heap, w);
+    let text = buffer.push(heap, json.finish(w), byte_of(10));
+    borrow text as &tr in {
+        if fs_write(fs, out_path, buffer.bytes(tr)) < 0 {
+            status = files.refuse(io, "cannot write the result");
+        } else {
+            io.write_all(io, "wrote ");
+            io.write_all(io, out_path);
+            io.newline(io);
+        }
+    }
+    buffer.drop(heap, text);
+    return status;
+}
+
+// The regression, the predictions and the answer. 0, or 2 after a refusal.
+fn analyze[&h, &i, &f, &x, &c, &m, &t, &l, &e, &g, &s, &d, &u, &o, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ml: &m [byte], tmp: &t [byte], line: &l [int], n: int, feats: &e [float], logs: &g [float], surv: &s [float], count: int, dev: &d [float], czp: &u [int], job_name: &p [byte], out_path: &o [byte]) -> [heap, io_write, err_write, fs_write(""), exec(""), clock, poll] int {
+    var status = 0;
+    let ncols = 2 * n - 1;
+    var train = put_header(heap, buffer.empty(heap, 4096), line, n, true);
+    train = put_rows(heap, train, feats, logs, count, ncols, false);
+    var test = put_header(heap, buffer.empty(heap, 1024), line, n, false);
+    test = put_rows(heap, test, feats, logs, count, ncols, true);
+    let train_path = files.joined(heap, tmp, "rates-train.csv");
+    let test_path = files.joined(heap, tmp, "rates-test.csv");
+    let model_path = files.joined(heap, tmp, "rates.ml");
+    borrow train as &tr in {
+        borrow train_path as &tp in {
+            if fs_write(fs, buffer.bytes(tp), buffer.bytes(tr)) < 0 {
+                status = files.refuse_with(io, "cannot write", buffer.bytes(tp));
+            }
+        }
+    }
+    borrow test as &te in {
+        borrow test_path as &sp in {
+            if fs_write(fs, buffer.bytes(sp), buffer.bytes(te)) < 0 {
+                status = files.refuse_with(io, "cannot write", buffer.bytes(sp));
+            }
+        }
+    }
+    let fitted = box_slice(heap, 400, 0.0);
+    let published = box_slice(heap, 400, 0.0);
+    let base = box_slice(heap, 400, 0.0);
+    let coef = box_slice(heap, 16, 0.0);
+    var held = 0;
+    if status == 0 {
+        var argv = buffer.append(heap, buffer.empty(heap, 256), "fit\0--model\0linear\0--l2\00.001\0--target\0logS\0--output\0");
+        borrow model_path as &mp in {
+            argv = buffer.push(heap, buffer.append(heap, argv, buffer.bytes(mp)), byte_of(0));
+        }
+        borrow train_path as &tp2 in {
+            argv = buffer.push(heap, buffer.append(heap, argv, buffer.bytes(tp2)), byte_of(0));
+        }
+        borrow argv as &ar in {
+            let (rc, out, err) = files.run(heap, io, exec, clock, ml, buffer.bytes(ar), "");
+            if rc != 0 {
+                status = files.refuse(io, "ml fit failed");
+                borrow out as &o0 in {
+                    io.error_all(io, buffer.bytes(o0));
+                }
+            } else {
+                borrow out as &o1 in {
+                    borrow mut coef as &!cw in {
+                        status = read_fit(heap, io, buffer.bytes(o1), line, n, contents(cw));
+                    }
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+        buffer.drop(heap, argv);
+    }
+    if status == 0 {
+        var argv2 = buffer.append(heap, buffer.empty(heap, 256), "predict\0--model-file\0");
+        borrow model_path as &mp2 in {
+            argv2 = buffer.push(heap, buffer.append(heap, argv2, buffer.bytes(mp2)), byte_of(0));
+        }
+        borrow test_path as &sp2 in {
+            argv2 = buffer.push(heap, buffer.append(heap, argv2, buffer.bytes(sp2)), byte_of(0));
+        }
+        borrow argv2 as &ar2 in {
+            let (rc, out, err) = files.run(heap, io, exec, clock, ml, buffer.bytes(ar2), "");
+            if rc != 0 {
+                status = files.refuse(io, "ml predict failed");
+                borrow out as &o2 in {
+                    io.error_all(io, buffer.bytes(o2));
+                }
+            } else {
+                borrow out as &o3 in {
+                    borrow mut fitted as &!fw in {
+                        held = read_predictions(io, buffer.bytes(o3), count, contents(fw));
+                    }
+                }
+                if held < 0 {
+                    status = 2;
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+        buffer.drop(heap, argv2);
+    }
+    if status == 0 {
+        // the published calibration's prediction: the read-out, then log(1 - lambda) per gate
+        var readout = 0.0;
+        var q = 0;
+        while q < n {
+            readout = readout + math.log(1.0 - dev[props.p01(line[q])]);
+            q = q + 1;
+        }
+        var total = 0.0;
+        var trained = 0;
+        var k = 0;
+        while k < count {
+            if k % 5 != 0 {
+                total = total + logs[k];
+                trained = trained + 1;
+            }
+            k = k + 1;
+        }
+        k = 0;
+        while k < count && status == 0 {
+            var s = readout;
+            var j = 0;
+            while j < 2 * n - 1 && status == 0 {
+                var lam = 0.0 - 1.0;
+                if j + 1 < n {
+                    let e = props.find_cz(dev, czp, line[j], line[j + 1]);
+                    if e >= 0 {
+                        lam = dev[props.cz_entry(e)];
+                    }
+                } else {
+                    lam = dev[props.gate1(line[j - (n - 1)])];
+                }
+                if lam < 0.0 {
+                    status = files.refuse(io, "the calibration has no entry for a gate of the line");
+                } else {
+                    s = s + feats[k * 16 + j] * math.log(1.0 - lam);
+                }
+                j = j + 1;
+            }
+            borrow mut published as &!pw in {
+                borrow mut base as &!bw in {
+                    contents(pw)[k] = s;
+                    contents(bw)[k] = total / float_of(trained);
+                }
+            }
+            k = k + 1;
+        }
+    }
+    if status == 0 {
+        borrow coef as &cr in {
+            borrow fitted as &fr in {
+                borrow published as &pr in {
+                    borrow base as &br in {
+                        status = write_answer(heap, io, fs, job_name, out_path, line, n, count, contents(cr), contents(fr), contents(pr), contents(br), logs, surv, dev, czp);
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, fitted);
+    unbox_slice(heap, published);
+    unbox_slice(heap, base);
+    unbox_slice(heap, coef);
+    buffer.drop(heap, train);
+    buffer.drop(heap, test);
+    buffer.drop(heap, train_path);
+    buffer.drop(heap, test_path);
+    buffer.drop(heap, model_path);
+    return status;
+}
+
+// The whole analysis for a job that is a `--set rates` run; consumes the job. 0, or 2 after a refusal.
+pub fn run[&h, &i, &f, &x, &c, &m, &t, &d, &u, &p, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ml: &m [byte], tmp: &t [byte], job_name: &p [byte], js: buffer.Buffer, jt: Box[[int]], dev: &d [float], czp: &u [int], out_path: &o [byte]) -> [heap, io_write, err_write, fs_write(""), exec(""), clock, poll] int {
+    var status = 0;
+    let line = box_slice(heap, 8, 0);
+    let feats = box_slice(heap, 400 * 16, 0.0);
+    let logs = box_slice(heap, 400, 0.0);
+    let surv = box_slice(heap, 400, 0.0);
+    borrow js as &jsr in {
+        borrow mut jt as &!jtw in {
+            let a = buffer.bytes(jsr);
+            let b = contents(jtw);
+            let line_node = json.get(a, b, 0, "line");
+            let rows = json.get(a, b, 0, "circuits");
+            let shots = json.to_int(a, b, json.get(a, b, 0, "shots"));
+            if line_node < 0 || !json.is_array(b, line_node) || rows < 0 || json.count(b, rows) < 10 || json.count(b, rows) > 400 || shots < 1 {
+                status = files.refuse(io, "the job is not a `--set rates` run (no line, or fewer than 10 or more than 400 circuits)");
+            } else if json.count(b, line_node) < 2 || json.count(b, line_node) > 8 {
+                status = files.refuse(io, "the line must have 2 to 8 qubits");
+            } else {
+                let n = json.count(b, line_node);
+                let count = json.count(b, rows);
+                borrow mut line as &!lw in {
+                    borrow mut feats as &!fw in {
+                        borrow mut logs as &!gw in {
+                            borrow mut surv as &!sw in {
+                                status = extract(io, a, b, n, count, shots, contents(lw), contents(fw), contents(gw), contents(sw));
+                            }
+                        }
+                    }
+                }
+                if status == 0 {
+                    borrow line as &lr in {
+                        borrow feats as &fr in {
+                            borrow logs as &gr in {
+                                borrow surv as &sr in {
+                                    status = analyze(heap, io, fs, exec, clock, ml, tmp, contents(lr), n, contents(fr), contents(gr), contents(sr), count, dev, czp, job_name, out_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, line);
+    unbox_slice(heap, feats);
+    unbox_slice(heap, logs);
+    unbox_slice(heap, surv);
+    buffer.drop(heap, js);
+    unbox_slice(heap, jt);
+    return status;
+}

@@ -96,7 +96,7 @@ Total-variation distance from the exact ideal distribution (the floor is what pe
 circuit; `hw_spike.py` is fixed, the recorded file is left as it was written. The `cz`
 column above is the count of `cz` in the transpiled circuits.)
 
-**`qsim`** is `scripts/hw_model.py`: the transpiled circuits read back from the job and the device's properties,
+**`qsim`** is `hw model` (`tools/hw/`, cancho; `scripts/hw_model.py` is the Python reference it agrees with to 1e-9): the transpiled circuits read back from the job and the device's properties,
 converted gate by gate as in `calibration.md` (`rz` free; `sx`/`x`/`cz` with their duration, T1/T2 decay and the depolarizing
 rate left after the decay is taken out; readout error per qubit), run on the exact density matrix. It is exact, so it has
 no sampling floor; Aer's and the device's columns are 2000-shot samples. The calibration is the one fetched after the job (08:10 that

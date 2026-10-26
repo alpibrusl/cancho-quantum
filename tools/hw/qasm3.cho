@@ -1,0 +1,194 @@
+edition 7;
+
+module hw.qasm3;
+
+import hw.files;
+import std.bytes;
+
+// The OpenQASM 3 that `hw_model.py fetch` writes (`qiskit.qasm3.dumps` of a transpiled circuit on physical qubits) as a list of operations, for the native gates of
+// the IBM devices: `rz(angle) $q;`, `sx $q;`, `x $q;`, `cz $a, $b;`, `barrier ...;` and `meas[i] = measure $q;`. The header lines (`OPENQASM`, `include`, `bit[n] meas;`) are skipped; any
+// other line is refused. An angle is a rational multiple of pi, as qiskit writes one (`pi/2`, `-3*pi/4`, `-pi`, `3*pi`): it becomes a numerator over 2^20, rounded half to even, as `hw_model.py` writes it.
+//
+// ops (ints): ops[0] is the count; operation k is the five ints at 1 + 5k: kind, a, b, argument, unused.
+//   kind 0 `rz`: a the qubit, argument the numerator over 2^20; 1 `sx`, 2 `x`: a; 3 `cz`: a and b; 4 `barrier`; 5 `measure`: a the qubit, argument the classical bit.
+
+pub fn den() -> [] int {
+    return 1048576;
+}
+
+pub fn kind_rz() -> [] int {
+    return 0;
+}
+
+pub fn lines_in[&s](text: &s [byte]) -> [] int {
+    return bytes.count_byte(text, 10) + 1;
+}
+
+// the number after `$` at the start of `text`, ending at a non-digit; -1 if there is none. `end` is where it stopped (in `at[0]`).
+fn qubit_at[&s, &o](text: &s [byte], from: int, at: &!o [int]) -> [] int {
+    var k = from;
+    if k >= len(text) || int_of(text[k]) != '$' {
+        return 0 - 1;
+    }
+    k = k + 1;
+    var v = 0;
+    var n = 0;
+    while k < len(text) && int_of(text[k]) >= '0' && int_of(text[k]) <= '9' && n < 6 {
+        v = v * 10 + (int_of(text[k]) - '0');
+        k = k + 1;
+        n = n + 1;
+    }
+    at[0] = k;
+    if n == 0 {
+        return 0 - 1;
+    }
+    return v;
+}
+
+// An angle `[-][N*]pi[/D]` as round(N / D * 2^20) half to even, or -1073741824 if it is not of that form.
+fn angle[&s](text: &s [byte]) -> [] int {
+    let bad = 0 - 1073741824;
+    var k = 0;
+    var neg = false;
+    if k < len(text) && int_of(text[k]) == '-' {
+        neg = true;
+        k = k + 1;
+    }
+    var n = 1;
+    var j = k;
+    var v = 0;
+    while j < len(text) && int_of(text[j]) >= '0' && int_of(text[j]) <= '9' {
+        v = v * 10 + (int_of(text[j]) - '0');
+        j = j + 1;
+    }
+    if j > k {
+        if j >= len(text) || int_of(text[j]) != '*' {
+            return bad;
+        }
+        n = v;
+        k = j + 1;
+    }
+    if k + 2 > len(text) || int_of(text[k]) != 'p' || int_of(text[k + 1]) != 'i' {
+        return bad;
+    }
+    k = k + 2;
+    var d = 1;
+    if k < len(text) {
+        if int_of(text[k]) != '/' {
+            return bad;
+        }
+        k = k + 1;
+        var w = 0;
+        var m = k;
+        while m < len(text) && int_of(text[m]) >= '0' && int_of(text[m]) <= '9' {
+            w = w * 10 + (int_of(text[m]) - '0');
+            m = m + 1;
+        }
+        if m != len(text) || m == k || w == 0 {
+            return bad;
+        }
+        d = w;
+    }
+    let scaled = n * den();
+    var q = scaled / d;
+    let r = scaled % d;
+    if 2 * r > d || 2 * r == d && q % 2 == 1 {
+        q = q + 1;
+    }
+    if neg {
+        return 0 - q;
+    }
+    return q;
+}
+
+fn push[&o](ops: &!o [int], kind: int, a: int, b: int, arg: int) -> [] int {
+    let n = ops[0];
+    ops[1 + 5 * n] = kind;
+    ops[2 + 5 * n] = a;
+    ops[3 + 5 * n] = b;
+    ops[4 + 5 * n] = arg;
+    ops[0] = n + 1;
+    return 0;
+}
+
+// Parse `text` into `ops` (which must have room for 1 + 5 * lines_in(text) ints). 0, or 2 after a refusal.
+pub fn parse[&i, &s, &o](io: &!i Io, text: &s [byte], ops: &!o [int]) -> [err_write] int {
+    ops[0] = 0;
+    var status = 0;
+    var from = 0;
+    var at = 0;
+    region r {
+        let stop = alloc_slice[r](1, 0);
+        while at <= len(text) && status == 0 {
+            if at == len(text) || int_of(text[at]) == 10 {
+                let ln = text[from..at];
+                from = at + 1;
+                if len(ln) == 0 || bytes.starts_with(ln, "OPENQASM") || bytes.starts_with(ln, "include") || bytes.starts_with(ln, "bit[") {
+                    status = 0;
+                } else if bytes.starts_with(ln, "rz(") {
+                    var close = 3;
+                    while close < len(ln) && int_of(ln[close]) != ')' {
+                        close = close + 1;
+                    }
+                    let num = angle(ln[3..close]);
+                    let a = qubit_at(ln, close + 2, stop);
+                    if close >= len(ln) || num == 0 - 1073741824 || a < 0 || int_of(ln[close + 1]) != ' ' {
+                        status = files.refuse(io, "an rz angle is not a multiple of pi in the form qiskit writes");
+                    } else {
+                        push(ops, 0, a, 0, num);
+                    }
+                } else if bytes.starts_with(ln, "sx $") {
+                    let a = qubit_at(ln, 3, stop);
+                    if a < 0 {
+                        status = files.refuse(io, "a malformed sx");
+                    } else {
+                        push(ops, 1, a, 0, 0);
+                    }
+                } else if bytes.starts_with(ln, "x $") {
+                    let a = qubit_at(ln, 2, stop);
+                    if a < 0 {
+                        status = files.refuse(io, "a malformed x");
+                    } else {
+                        push(ops, 2, a, 0, 0);
+                    }
+                } else if bytes.starts_with(ln, "cz $") {
+                    let a = qubit_at(ln, 3, stop);
+                    var b = 0 - 1;
+                    if a >= 0 && stop[0] + 2 < len(ln) && int_of(ln[stop[0]]) == ',' {
+                        b = qubit_at(ln, stop[0] + 2, stop);
+                    }
+                    if a < 0 || b < 0 {
+                        status = files.refuse(io, "a malformed cz");
+                    } else {
+                        push(ops, 3, a, b, 0);
+                    }
+                } else if bytes.starts_with(ln, "barrier") {
+                    push(ops, 4, 0 - 1, 0, 0);
+                } else if bytes.starts_with(ln, "meas[") {
+                    var k = 5;
+                    var c = 0;
+                    while k < len(ln) && int_of(ln[k]) >= '0' && int_of(ln[k]) <= '9' {
+                        c = c * 10 + (int_of(ln[k]) - '0');
+                        k = k + 1;
+                    }
+                    let marker = bytes.find(ln, "measure ");
+                    var a = 0 - 1;
+                    if marker >= 0 {
+                        a = qubit_at(ln, marker + 8, stop);
+                    }
+                    if a < 0 || c > 62 {
+                        status = files.refuse(io, "a malformed measure");
+                    } else {
+                        push(ops, 5, a, 0, c);
+                    }
+                } else {
+                    status = files.refuse(io, "a gate that is not native (rz, sx, x, cz) in a circuit");
+                }
+                at = at + 1;
+            } else {
+                at = at + 1;
+            }
+        }
+    }
+    return status;
+}

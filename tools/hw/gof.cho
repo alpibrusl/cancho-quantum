@@ -1,0 +1,214 @@
+edition 7;
+
+module hw.gof;
+
+import hw.files;
+import std.buffer;
+import std.io;
+import std.json;
+
+// Does a distribution explain the counts? `hw_gof.py`'s chi-square goodness-of-fit test, with cancho-stats' `stats test chisq --expected` as the arithmetic.
+//
+// An outcome whose expected count is 5 or more is a level; all the others (seen or not) are pooled into one level `other`, which is dropped if its expected count is below 5 as well and its
+// mass is then given to the largest level; a level that the counts never show cannot be named to `stats` (it takes its levels from the file), so its mass is given to the largest level that is
+// seen. The proportions are written as decimals of at most 9 places that add up to exactly 1 (the rounding difference goes to the largest). The statistic, degrees of freedom and p-value are
+// `stats`': result[0], result[1], result[2]. 0, or 2 after a refusal.
+
+fn put_decimal[&h](heap: &!h Heap, buf: buffer.Buffer, units: int) -> [heap] buffer.Buffer {
+    // units / 10^9 with nine places
+    var out = buffer.push_nat(heap, buf, units / 1000000000);
+    out = buffer.push(heap, out, byte_of('.'));
+    var d = 100000000;
+    var rest = units % 1000000000;
+    while d >= 1 {
+        out = buffer.push(heap, out, byte_of('0' + rest / d));
+        rest = rest % d;
+        d = d / 10;
+    }
+    return out;
+}
+
+fn put_bits[&h](heap: &!h Heap, buf: buffer.Buffer, idx: int, n: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    var b = n - 1;
+    while b >= 0 {
+        out = buffer.push(heap, out, byte_of('0' + (idx >> b & 1)));
+        b = b - 1;
+    }
+    return out;
+}
+
+pub fn test[&h, &i, &f, &x, &c, &s, &t, &q, &p, &r](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, stats: &s [byte], tmp: &t [byte], counts: &q [float], probs: &p [float], n: int, result: &!r [float]) -> [heap, err_write, fs_write(""), exec(""), clock, poll] int {
+    let size = 1 << n;
+    var shots = 0.0;
+    var k = 0;
+    while k < size {
+        shots = shots + counts[k];
+        k = k + 1;
+    }
+    if !(shots > 0.0) {
+        return files.refuse(io, "no counts to test");
+    }
+    var status = 0;
+    region r {
+        // levels: mass[k] for k < size, and mass[size] for `other`; level[k] 1 if k is a level of its own
+        let mass = alloc_slice[r](1025, 0.0);
+        let seen = alloc_slice[r](1025, 0.0);
+        let level = alloc_slice[r](1025, 0);
+        var sum_levels = 0.0;
+        var top = 0 - 1;
+        k = 0;
+        while k < size {
+            if probs[k] * shots >= 5.0 {
+                level[k] = 1;
+                mass[k] = probs[k];
+                sum_levels = sum_levels + probs[k];
+                if top < 0 || probs[k] > mass[top] {
+                    top = k;
+                }
+            }
+            k = k + 1;
+        }
+        if top < 0 {
+            status = files.refuse(io, "the model gives no outcome an expected count of 5");
+        } else {
+            var other = 1.0 - sum_levels;
+            if other * shots < 5.0 {
+                mass[top] = mass[top] + other;
+                other = 0.0;
+            }
+            var pool = top;
+            if other > 0.0 {
+                pool = size;
+                mass[size] = other;
+                level[size] = 1;
+            }
+            k = 0;
+            while k < size {
+                if level[k] == 1 {
+                    seen[k] = seen[k] + counts[k];
+                } else {
+                    seen[pool] = seen[pool] + counts[k];
+                }
+                k = k + 1;
+            }
+            // the largest level that is seen (the first of the largest, as `max` takes it: the levels in order, `other` last)
+            var top_seen = 0 - 1;
+            k = 0;
+            while k <= size {
+                if level[k] == 1 && seen[k] > 0.0 {
+                    if top_seen < 0 || mass[k] > mass[top_seen] {
+                        top_seen = k;
+                    }
+                }
+                k = k + 1;
+            }
+            k = 0;
+            while k <= size {
+                if level[k] == 1 && !(seen[k] > 0.0) {
+                    mass[top_seen] = mass[top_seen] + mass[k];
+                    mass[k] = 0.0;
+                    level[k] = 0;
+                }
+                k = k + 1;
+            }
+            // units of 1e-9, the difference to the largest
+            let units = alloc_slice[r](1025, 0);
+            var total_units = 0;
+            var biggest = 0 - 1;
+            k = 0;
+            while k <= size {
+                if level[k] == 1 {
+                    units[k] = files.round_even(mass[k] * 1000000000.0);
+                    total_units = total_units + units[k];
+                    if biggest < 0 || units[k] > units[biggest] {
+                        biggest = k;
+                    }
+                }
+                k = k + 1;
+            }
+            units[biggest] = units[biggest] + (1000000000 - total_units);
+            var csv = buffer.append(heap, buffer.empty(heap, 4096), "outcome\n");
+            var expected = buffer.empty(heap, 256);
+            var first = true;
+            k = 0;
+            while k <= size {
+                if level[k] == 1 {
+                    if !first {
+                        expected = buffer.push(heap, expected, byte_of(','));
+                    }
+                    first = false;
+                    expected = put_decimal(heap, expected, units[k]);
+                    var rep = truncate(seen[k]);
+                    while rep > 0 {
+                        if k == size {
+                            csv = buffer.append(heap, csv, "other");
+                        } else {
+                            csv = put_bits(heap, csv, k, n);
+                        }
+                        csv = buffer.push(heap, csv, byte_of(10));
+                        rep = rep - 1;
+                    }
+                }
+                k = k + 1;
+            }
+            let path = files.joined(heap, tmp, "gof.csv");
+            var argv = buffer.append(heap, buffer.empty(heap, 256), "test\0chisq\0--cols\0outcome\0--expected\0");
+            borrow expected as &er in {
+                argv = buffer.push(heap, buffer.append(heap, argv, buffer.bytes(er)), byte_of(0));
+            }
+            borrow path as &pr in {
+                argv = buffer.push(heap, buffer.append(heap, argv, buffer.bytes(pr)), byte_of(0));
+                borrow csv as &cr in {
+                    if fs_write(fs, buffer.bytes(pr), buffer.bytes(cr)) < 0 {
+                        status = files.refuse_with(io, "cannot write", buffer.bytes(pr));
+                    }
+                }
+            }
+            if status == 0 {
+                borrow argv as &ar in {
+                    let (rc, out, err) = files.run(heap, io, exec, clock, stats, buffer.bytes(ar), "");
+                    if rc != 0 {
+                        status = files.refuse(io, "stats refused the test");
+                        borrow out as &o0 in {
+                            io.error_all(io, buffer.bytes(o0));
+                        }
+                    } else {
+                        borrow out as &o1 in {
+                            status = read_answer(io, buffer.bytes(o1), result);
+                        }
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+            }
+            buffer.drop(heap, csv);
+            buffer.drop(heap, expected);
+            buffer.drop(heap, argv);
+            buffer.drop(heap, path);
+        }
+    }
+    return status;
+}
+
+fn read_answer[&i, &s, &r](io: &!i Io, text: &s [byte], result: &!r [float]) -> [err_write] int {
+    var status = 0;
+    region g {
+        let tape = alloc_slice[g](json.tape_len(text), 0);
+        if json.parse(text, tape) <= 0 {
+            status = files.refuse(io, "stats printed something that is not JSON");
+        } else {
+            let data = json.get(text, tape, 0, "data");
+            let tests = json.get(text, tape, data, "tests");
+            let first = json.at(tape, tests, 0);
+            if data < 0 || tests < 0 || first < 0 {
+                status = files.refuse(io, "stats answered no test");
+            } else {
+                result[0] = json.to_float(text, tape, json.get(text, tape, first, "statistic"));
+                result[1] = json.to_float(text, tape, json.get(text, tape, first, "df"));
+                result[2] = json.to_float(text, tape, json.get(text, tape, first, "p_value"));
+            }
+        }
+    }
+    return status;
+}

@@ -1,0 +1,390 @@
+edition 7;
+
+module hw.predict;
+
+import hw.common;
+import hw.files;
+import hw.gof;
+import hw.model;
+import hw.props;
+import hw.qasm3;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// `hw predict`: does a calibration made just before a run predict the run? (`hw_predict.py`; the argument is in docs/rates-regression.md, last section.)
+// The model of `hw model` is run on each circuit with the published calibration, with the read-out errors of a scan (`hw_spike.py check`) instead for the qubits it measured,
+// with each gate's published error replaced by a fitted lambda (`hw_rates.py`'s `lambda_fitted`: `g1_<qubit>` for the `sx` and `x` of a qubit, `cz_<a>_<b>` for a pair), and with both. For each,
+// the total-variation distance from the device's counts and the chi-square p-value (`hw gof`) are printed and written to JOB-predict.json. Nothing is fitted to the job's own counts.
+
+// The node of device qubit `q` in a scan's `qubits` object, or -1.
+fn scan_entry[&s, &t](src: &s [byte], tape: &t [int], q: int) -> [] int {
+    let qs = json.get(src, tape, 0, "qubits");
+    if qs < 0 || !json.is_object(tape, qs) {
+        return 0 - 1;
+    }
+    var j = qs + 1;
+    var left = json.count(tape, qs);
+    while left > 0 {
+        if files.digits(json.string_view(src, tape, j)) == q {
+            return j + 1;
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    return 0 - 1;
+}
+
+// The lambda of `key` in the rates' `lambda_fitted`, or -1.
+fn lambda_of[&s, &t, &k](src: &s [byte], tape: &t [int], key: &k [byte]) -> [] float {
+    let obj = json.get(src, tape, 0, "lambda_fitted");
+    if obj < 0 {
+        return 0.0 - 1.0;
+    }
+    let node = json.get(src, tape, obj, key);
+    if node < 0 || !json.is_number(tape, node) {
+        return 0.0 - 1.0;
+    }
+    return json.to_float(src, tape, node);
+}
+
+fn key1[&h](heap: &!h Heap, q: int) -> [heap] buffer.Buffer {
+    return buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 16), "g1_"), q);
+}
+
+fn key2[&h](heap: &!h Heap, a: int, b: int) -> [heap] buffer.Buffer {
+    return buffer.push_nat(heap, buffer.push(heap, buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 24), "cz_"), a), byte_of('_')), b);
+}
+
+// `out` as a copy of `dev` with the scan's read-out errors (when `scan` is not empty) and the fitted gate errors (when `rates` is not empty).
+fn variant[&h, &d, &c, &a, &b, &e, &f, &o](heap: &!h Heap, dev: &d [float], czp: &c [int], scan_src: &a [byte], scan: &b [int], rates_src: &e [byte], rates: &f [int], use_scan: bool, use_rates: bool, out: &!o [float]) -> [heap] int {
+    var k = 0;
+    while k < len(dev) {
+        out[k] = dev[k];
+        k = k + 1;
+    }
+    if use_scan {
+        var q = 0;
+        while q < props.max_qubits() {
+            let node = scan_entry(scan_src, scan, q);
+            if node >= 0 {
+                out[props.p01(q)] = json.to_float(scan_src, scan, json.get(scan_src, scan, node, "idle_reads_1"));
+                out[props.p10(q)] = json.to_float(scan_src, scan, json.get(scan_src, scan, node, "after_x_reads_0"));
+            }
+            q = q + 1;
+        }
+    }
+    if use_rates {
+        var q = 0;
+        while q < props.max_qubits() {
+            let key = key1(heap, q);
+            borrow key as &kr in {
+                let lam = lambda_of(rates_src, rates, buffer.bytes(kr));
+                if lam >= 0.0 {
+                    if dev[props.gate1(q)] >= 0.0 {
+                        out[props.gate1(q)] = lam;
+                    }
+                    if dev[props.gate1(q) + 2] >= 0.0 {
+                        out[props.gate1(q) + 2] = lam;
+                    }
+                }
+            }
+            buffer.drop(heap, key);
+            q = q + 1;
+        }
+        var z = 0;
+        while z < czp[0] {
+            let a1 = czp[1 + 2 * z];
+            let b1 = czp[2 + 2 * z];
+            let key = key2(heap, a1, b1);
+            let key_back = key2(heap, b1, a1);
+            borrow key as &kr2 in {
+                borrow key_back as &kb in {
+                    var lam = lambda_of(rates_src, rates, buffer.bytes(kr2));
+                    if lam < 0.0 {
+                        lam = lambda_of(rates_src, rates, buffer.bytes(kb));
+                    }
+                    if lam >= 0.0 {
+                        out[props.cz_entry(z)] = lam;
+                    }
+                }
+            }
+            buffer.drop(heap, key);
+            buffer.drop(heap, key_back);
+            z = z + 1;
+        }
+    }
+    return 0;
+}
+
+fn label_of(v: int, use_scan: bool, use_rates: bool) -> [] &static [byte] {
+    if v == 0 {
+        return "calibration";
+    }
+    if use_scan && use_rates {
+        if v == 1 {
+            return "+ scan";
+        }
+        if v == 2 {
+            return "+ rates";
+        }
+        return "+ scan + rates";
+    }
+    if use_scan {
+        return "+ scan";
+    }
+    return "+ rates";
+}
+
+// All circuits, all variants. Consumes the documents.
+pub fn all[&h, &i, &f, &x, &c, &q, &s, &t, &d, &u, &w0](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], stats: &s [byte], tmp: &t [byte], js: buffer.Buffer, jt: Box[[int]], cs: buffer.Buffer, ct: Box[[int]], ss: buffer.Buffer, st: Box[[int]], rs: buffer.Buffer, rt: Box[[int]], use_scan: bool, use_rates: bool, dev: &d [float], czp: &u [int], out_path: &w0 [byte]) -> [heap, io_write, err_write, fs_write(""), exec(""), clock, poll] int {
+    var status = 0;
+    var variants = 1;
+    if use_scan {
+        variants = variants + 1;
+    }
+    if use_rates {
+        variants = variants + 1;
+    }
+    if use_scan && use_rates {
+        variants = variants + 1;
+    }
+    let devs = box_slice(heap, variants * props.dev_size(), 0.0);
+    let scores = box_slice(heap, variants * 64 * 2, 0.0);
+    let ops = box_slice(heap, 64, 0);
+    let phys = box_slice(heap, model.phys_size(), 0);
+    let measured = box_slice(heap, model.measured_size(), 0);
+    let dist = box_slice(heap, 1024, 0.0);
+    let counts = box_slice(heap, 1024, 0.0);
+    let normal = box_slice(heap, 1024, 0.0);
+    let result = box_slice(heap, 4, 0.0);
+    var count = 0;
+    borrow js as &jsr in {
+        borrow mut jt as &!jtw in {
+            borrow cs as &csr in {
+                borrow mut ct as &!ctw in {
+                    borrow ss as &ssr in {
+                        borrow mut st as &!stw in {
+                            borrow rs as &rsr in {
+                                borrow mut rt as &!rtw in {
+                                    let a = buffer.bytes(jsr);
+                                    let b = contents(jtw);
+                                    let c2 = buffer.bytes(csr);
+                                    let d2 = contents(ctw);
+                                    let ssrc = buffer.bytes(ssr);
+                                    let stape = contents(stw);
+                                    let rsrc = buffer.bytes(rsr);
+                                    let rtape = contents(rtw);
+                                    // the variants' devices
+                                    borrow mut devs as &!dw in {
+                                        let all_devs = contents(dw);
+                                        var v = 0;
+                                        while v < variants {
+                                            let want_scan = use_scan && use_rates && (v == 1 || v == 3) || use_scan && !use_rates && v == 1;
+                                            let want_rates = use_scan && use_rates && (v == 2 || v == 3) || !use_scan && use_rates && v == 1;
+                                            variant(heap, dev, czp, ssrc, stape, rsrc, rtape, want_scan, want_rates, all_devs[v * props.dev_size()..(v + 1) * props.dev_size()]);
+                                            v = v + 1;
+                                        }
+                                    }
+                                    let rows = json.get(a, b, 0, "circuits");
+                                    let crows = json.get(c2, d2, 0, "circuits");
+                                    if rows < 0 || crows < 0 || json.count(d2, crows) != json.count(b, rows) || json.count(b, rows) > 64 {
+                                        status = files.refuse(io, "the job and its -circuits.json do not list the same circuits (at most 64)");
+                                    }
+                                    count = json.count(b, rows);
+                                    io.write_all(io, "circuit    ");
+                                    var v2 = 0;
+                                    while v2 < variants {
+                                        io.write_all(io, label_of(v2, use_scan, use_rates));
+                                        io.write_all(io, " (distance, p)   ");
+                                        v2 = v2 + 1;
+                                    }
+                                    io.newline(io);
+                                    var k = 0;
+                                    while k < count && status == 0 {
+                                        let row = json.at(b, rows, k);
+                                        let n = json.to_int(a, b, json.get(a, b, row, "qubits"));
+                                        let qasm = common.text_of(heap, c2, d2, json.get(c2, d2, json.at(d2, crows, k), "qasm3"));
+                                        var lines = 1;
+                                        borrow qasm as &qr in {
+                                            lines = qasm3.lines_in(buffer.bytes(qr));
+                                        }
+                                        let circuit_ops = box_slice(heap, 1 + 5 * lines, 0);
+                                        if n < 1 || n > 10 {
+                                            status = files.refuse(io, "a circuit must have 1 to 10 classical bits");
+                                        }
+                                        borrow mut circuit_ops as &!ow in {
+                                            borrow qasm as &qr2 in {
+                                                if status == 0 {
+                                                    status = qasm3.parse(io, buffer.bytes(qr2), contents(ow));
+                                                }
+                                            }
+                                        }
+                                        borrow mut counts as &!cw in {
+                                            borrow mut normal as &!nw in {
+                                                let _c = common.read_dist(a, b, json.get(a, b, row, "device"), n, false, contents(cw));
+                                                let _n = common.read_dist(a, b, json.get(a, b, row, "device"), n, true, contents(nw));
+                                            }
+                                        }
+                                        common.say_name(io, json.string_view(a, b, json.get(a, b, row, "circuit")));
+                                        var v3 = 0;
+                                        while v3 < variants && status == 0 {
+                                            borrow circuit_ops as &cor in {
+                                                borrow devs as &dr in {
+                                                    borrow mut phys as &!pw in {
+                                                        borrow mut measured as &!mw in {
+                                                            borrow mut dist as &!ew in {
+                                                                borrow counts as &cr in {
+                                                                    borrow normal as &nr in {
+                                                                        borrow mut result as &!rw in {
+                                                                            status = model.predict(heap, io, exec, clock, qsim, contents(cor), contents(dr)[v3 * props.dev_size()..(v3 + 1) * props.dev_size()], czp, contents(pw), contents(mw), contents(ew));
+                                                                            if status == 0 {
+                                                                                status = gof.test(heap, io, fs, exec, clock, stats, tmp, contents(cr), contents(ew), n, contents(rw));
+                                                                            }
+                                                                            if status == 0 {
+                                                                                let tv = model.tvd(contents(ew), contents(nr), 1 << n);
+                                                                                borrow mut scores as &!sw in {
+                                                                                    contents(sw)[(v3 * 64 + k) * 2] = tv;
+                                                                                    contents(sw)[(v3 * 64 + k) * 2 + 1] = contents(rw)[2];
+                                                                                }
+                                                                                common.say_float(io, tv);
+                                                                                io.write_all(io, "  ");
+                                                                                common.say_float(io, contents(rw)[2]);
+                                                                                io.write_all(io, "    ");
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            v3 = v3 + 1;
+                                        }
+                                        io.newline(io);
+                                        buffer.drop(heap, qasm);
+                                        unbox_slice(heap, circuit_ops);
+                                        k = k + 1;
+                                    }
+                                    if status == 0 {
+                                        borrow scores as &scr in {
+                                            status = write_summary(heap, io, fs, out_path, a, b, variants, use_scan, use_rates, count, contents(scr));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, devs);
+    unbox_slice(heap, scores);
+    unbox_slice(heap, ops);
+    unbox_slice(heap, phys);
+    unbox_slice(heap, measured);
+    unbox_slice(heap, dist);
+    unbox_slice(heap, counts);
+    unbox_slice(heap, normal);
+    unbox_slice(heap, result);
+    buffer.drop(heap, js);
+    unbox_slice(heap, jt);
+    buffer.drop(heap, cs);
+    unbox_slice(heap, ct);
+    buffer.drop(heap, ss);
+    unbox_slice(heap, st);
+    buffer.drop(heap, rs);
+    unbox_slice(heap, rt);
+    return status;
+}
+
+fn write_summary[&h, &i, &f, &q, &a, &b, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), out_path: &q [byte], js: &a [byte], jt: &b [int], variants: int, use_scan: bool, use_rates: bool, count: int, scores: &s [float]) -> [heap, io_write, err_write, fs_write("")] int {
+    var status = 0;
+    var w = json.writer(heap, 8192);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "summary");
+    w = json.begin_object(heap, w);
+    if count >= 0 {
+        var v = 0;
+        while v < variants {
+            w = json.put_key(heap, w, label_of(v, use_scan, use_rates));
+            w = json.begin_object(heap, w);
+            var sum = 0.0;
+            var ok = 0;
+            var k = 0;
+            while k < count {
+                sum = sum + scores[(v * 64 + k) * 2];
+                if scores[(v * 64 + k) * 2 + 1] > 0.05 {
+                    ok = ok + 1;
+                }
+                k = k + 1;
+            }
+            w = json.put_key(heap, w, "mean_tvd");
+            w = json.put_float(heap, w, sum / float_of(count));
+            w = json.put_key(heap, w, "p_above_0.05");
+            w = json.put_int(heap, w, ok);
+            w = json.put_key(heap, w, "circuits");
+            w = json.put_int(heap, w, count);
+            w = json.end_object(heap, w);
+            io.write_all(io, "  ");
+            io.write_all(io, label_of(v, use_scan, use_rates));
+            io.write_all(io, ": mean distance ");
+            common.say_float(io, sum / float_of(count));
+            io.write_all(io, ", not rejected (p > 0.05): ");
+            var t = buffer.push_nat(heap, buffer.empty(heap, 8), ok);
+            borrow t as &tr in {
+                io.write_all(io, buffer.bytes(tr));
+            }
+            buffer.drop(heap, t);
+            io.write_all(io, " of ");
+            var t2 = buffer.push_nat(heap, buffer.empty(heap, 8), count);
+            borrow t2 as &tr2 in {
+                io.write_all(io, buffer.bytes(tr2));
+            }
+            buffer.drop(heap, t2);
+            io.newline(io);
+            v = v + 1;
+        }
+    }
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "rows");
+    w = json.begin_object(heap, w);
+    if count >= 0 {
+        var v = 0;
+        while v < variants {
+            w = json.put_key(heap, w, label_of(v, use_scan, use_rates));
+            w = json.begin_array(heap, w);
+            var k = 0;
+            while k < count {
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "circuit");
+                w = json.put_string(heap, w, json.string_view(js, jt, json.get(js, jt, json.at(jt, json.get(js, jt, 0, "circuits"), k), "circuit")));
+                w = json.put_key(heap, w, "tvd");
+                w = json.put_float(heap, w, scores[(v * 64 + k) * 2]);
+                w = json.put_key(heap, w, "p_value");
+                w = json.put_float(heap, w, scores[(v * 64 + k) * 2 + 1]);
+                w = json.end_object(heap, w);
+                k = k + 1;
+            }
+            w = json.end_array(heap, w);
+            v = v + 1;
+        }
+    }
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    let text = buffer.push(heap, json.finish(w), byte_of(10));
+    borrow text as &tr3 in {
+        if fs_write(fs, out_path, buffer.bytes(tr3)) < 0 {
+            status = files.refuse(io, "cannot write the result");
+        } else {
+            io.write_all(io, "wrote ");
+            io.write_all(io, out_path);
+            io.newline(io);
+        }
+    }
+    buffer.drop(heap, text);
+    return status;
+}

@@ -1,0 +1,453 @@
+edition 7;
+
+module hw.model;
+
+import hw.common;
+import hw.files;
+import hw.props;
+import hw.qasm3;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+import std.math;
+
+// `hw_model.py`'s model of a device run, in cancho (docs/calibration.md, gate by gate):
+//
+//   * `rz` is a virtual gate: a rotation, no noise, no time.
+//   * `sx` is `rx 1/2` (the same up to a global phase), `x` stays `x`, `cz` stays `cz`.
+//   * After a gate of duration d, `wait` on its qubits (T1/T2 decay during the gate), then depolarizing noise with the probability the calibration implies once that
+//     decay is taken out: 3/2 (r - r_relax) for one qubit, 5/4 (r - r_relax) for two, r the published gate error, r_relax the average infidelity of the decay alone.
+//   * A qubit that waits for a partner or for a barrier decays too (ASAP schedule, written out as `wait`s).
+//   * Read-out: the exact distribution comes from `dm k` + `probs`, and the asymmetric read-out error (prob_meas1_prep0, prob_meas0_prep1) is applied to it here, qubit by qubit.
+//
+// r_relax is the average gate infidelity of thermal relaxation (T1, T2, duration): with a = exp(-d/T1) and b = exp(-d/T2) the process fidelity of one qubit is (1 + 2b + a)/4 and
+// the average fidelity (2 F + 1)/3; of two qubits the product of the two process fidelities, and (4 F + 1)/5. (`hw_model.py` gets the same numbers from qiskit's `thermal_relaxation_error`
+// and `average_gate_fidelity`: they agree to 1e-12, `scripts/check_hw.py`.)
+
+pub fn relax1(t1: float, t2: float, ns: float) -> [] float {
+    let a = math.exp(0.0 - ns / (t1 * 1000.0));
+    let b = math.exp(0.0 - ns / (t2 * 1000.0));
+    let fpro = (1.0 + 2.0 * b + a) / 4.0;
+    return 1.0 - (2.0 * fpro + 1.0) / 3.0;
+}
+
+fn fpro1(t1: float, t2: float, ns: float) -> [] float {
+    let a = math.exp(0.0 - ns / (t1 * 1000.0));
+    let b = math.exp(0.0 - ns / (t2 * 1000.0));
+    return (1.0 + 2.0 * b + a) / 4.0;
+}
+
+pub fn relax2(t1a: float, t2a: float, t1b: float, t2b: float, ns: float) -> [] float {
+    let f = fpro1(t1a, t2a, ns) * fpro1(t1b, t2b, ns);
+    return 1.0 - (4.0 * f + 1.0) / 5.0;
+}
+
+// ---- the `.qc` text -----------------------------------------------------------------------------------------------
+
+fn put_int[&h](heap: &!h Heap, buf: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    if n < 0 {
+        return buffer.push_nat(heap, buffer.push(heap, buf, byte_of('-')), 0 - n);
+    }
+    return buffer.push_nat(heap, buf, n);
+}
+
+fn line[&h](heap: &!h Heap, buf: buffer.Buffer, name: &static [byte], a: int, b: int, c: int, count: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buf, name);
+    var k = 0;
+    while k < count {
+        out = buffer.push(heap, out, byte_of(' '));
+        var v = a;
+        if k == 1 {
+            v = b;
+        } else if k == 2 {
+            v = c;
+        }
+        out = put_int(heap, out, v);
+        k = k + 1;
+    }
+    return buffer.push(heap, out, byte_of(10));
+}
+
+fn line4[&h](heap: &!h Heap, buf: buffer.Buffer, name: &static [byte], a: int, b: int, c: int, d: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buf, name);
+    out = put_int(heap, buffer.push(heap, out, byte_of(' ')), a);
+    out = put_int(heap, buffer.push(heap, out, byte_of(' ')), b);
+    out = put_int(heap, buffer.push(heap, out, byte_of(' ')), c);
+    out = put_int(heap, buffer.push(heap, out, byte_of(' ')), d);
+    return buffer.push(heap, out, byte_of(10));
+}
+
+// Wait qubit `idx` until time `t`.
+fn idle_to[&h, &c](heap: &!h Heap, buf: buffer.Buffer, clock: &!c [int], idx: int, t: int) -> [heap] buffer.Buffer {
+    var out = buf;
+    let d = t - clock[idx];
+    if d > 0 {
+        out = line(heap, out, "wait", idx, d, 0, 2);
+    }
+    if t > clock[idx] {
+        clock[idx] = t;
+    }
+    return out;
+}
+
+// What `build` found: phys[0] is how many physical qubits the circuit uses, phys[1..] them in increasing order; measured[c] is the physical qubit of classical bit c (-1 if none),
+// and measured[63] how many bits are measured.
+pub fn phys_size() -> [] int {
+    return 320;
+}
+
+pub fn measured_size() -> [] int {
+    return 64;
+}
+
+// The `.qc` text for the circuit in `ops`, from the device in `dev`/`czp`. `phys` and `measured` are filled. `st[0]` is 0, or 2 after a refusal.
+pub fn build[&h, &i, &o, &d, &c, &p, &m](heap: &!h Heap, io: &!i Io, ops: &o [int], dev: &d [float], czp: &c [int], phys: &!p [int], measured: &!m [int]) -> [heap, err_write] (buffer.Buffer, int) {
+    var status = 0;
+    var text = buffer.empty(heap, 1024);
+    // the qubits used, in increasing order
+    var q = 0;
+    while q < props.max_qubits() {
+        phys[100 + q] = 0;
+        q = q + 1;
+    }
+    var k = 0;
+    while k < ops[0] {
+        let kind = ops[1 + 5 * k];
+        if kind != 4 {
+            phys[100 + ops[2 + 5 * k]] = 1;
+            if kind == 3 {
+                phys[100 + ops[3 + 5 * k]] = 1;
+            }
+        }
+        k = k + 1;
+    }
+    var n = 0;
+    q = 0;
+    while q < props.max_qubits() {
+        if phys[100 + q] == 1 {
+            n = n + 1;
+            phys[n] = q;
+            phys[100 + q] = n - 1;
+        }
+        q = q + 1;
+    }
+    phys[0] = n;
+    var c0 = 0;
+    while c0 < 64 {
+        measured[c0] = 0 - 1;
+        c0 = c0 + 1;
+    }
+    measured[63] = 0;
+    if n < 1 || n > 10 {
+        status = files.refuse(io, "a circuit must use 1 to 10 qubits");
+        return (text, status);
+    }
+    text = line(heap, text, "dm", n, 0, 0, 1);
+    region r {
+        let clock = alloc_slice[r](12, 0);
+        var j = 0;
+        while j < n {
+            let pq = phys[1 + j];
+            if dev[props.t1(pq)] <= 0.0 || dev[props.t2(pq)] <= 0.0 {
+                status = files.refuse(io, "a qubit the circuit uses has no T1 or T2 in the calibration");
+            } else {
+                text = line(heap, text, "coher", j, files.round_even(dev[props.t1(pq)] * 1000.0), files.round_even(props.t2_effective(dev, pq) * 1000.0), 3);
+            }
+            j = j + 1;
+        }
+        k = 0;
+        while k < ops[0] && status == 0 {
+            let kind = ops[1 + 5 * k];
+            let a = ops[2 + 5 * k];
+            let b = ops[3 + 5 * k];
+            let arg = ops[4 + 5 * k];
+            if kind == 0 {
+                text = line(heap, text, "rz", phys[100 + a], arg, qasm3.den(), 3);
+            } else if kind == 1 || kind == 2 {
+                var base = props.gate1(a);
+                if kind == 2 {
+                    base = base + 2;
+                }
+                let err = dev[base];
+                let ns = dev[base + 1];
+                if err < 0.0 || ns < 0.0 {
+                    status = files.refuse(io, "a gate the circuit uses (sx or x) has no entry in the calibration");
+                } else {
+                    let idx = phys[100 + a];
+                    if kind == 1 {
+                        text = line(heap, text, "rx", idx, 1, 2, 3);
+                    } else {
+                        text = line(heap, text, "x", idx, 0, 0, 1);
+                    }
+                    let d = files.round_even(ns);
+                    text = line(heap, text, "wait", idx, d, 0, 2);
+                    clock[idx] = clock[idx] + d;
+                    var pdep = 1.5 * (err - relax1(dev[props.t1(a)], props.t2_effective(dev, a), ns));
+                    if pdep < 0.0 {
+                        pdep = 0.0;
+                    }
+                    if pdep > 0.0 {
+                        text = line(heap, text, "depol", idx, files.round_even(pdep * 1000000.0), 1000000, 3);
+                    }
+                }
+            } else if kind == 3 {
+                let e = props.find_cz(dev, czp, a, b);
+                if e < 0 {
+                    status = files.refuse(io, "a cz the circuit uses has no entry in the calibration");
+                } else {
+                    let err = dev[props.cz_entry(e)];
+                    let ns = dev[props.cz_entry(e) + 1];
+                    let ia = phys[100 + a];
+                    let ib = phys[100 + b];
+                    var start = clock[ia];
+                    if clock[ib] > start {
+                        start = clock[ib];
+                    }
+                    text = idle_to(heap, text, clock, ia, start);
+                    text = idle_to(heap, text, clock, ib, start);
+                    text = line(heap, text, "cz", ia, ib, 0, 2);
+                    let d = files.round_even(ns);
+                    text = line(heap, text, "wait", ia, d, 0, 2);
+                    text = line(heap, text, "wait", ib, d, 0, 2);
+                    clock[ia] = clock[ia] + d;
+                    clock[ib] = clock[ib] + d;
+                    var pdep = 1.25 * (err - relax2(dev[props.t1(a)], props.t2_effective(dev, a), dev[props.t1(b)], props.t2_effective(dev, b), ns));
+                    if pdep < 0.0 {
+                        pdep = 0.0;
+                    }
+                    if pdep > 0.0 {
+                        text = line4(heap, text, "depol2", ia, ib, files.round_even(pdep * 1000000.0), 1000000);
+                    }
+                }
+            } else if kind == 4 {
+                var t = 0;
+                var m2 = 0;
+                while m2 < n {
+                    if clock[m2] > t {
+                        t = clock[m2];
+                    }
+                    m2 = m2 + 1;
+                }
+                m2 = 0;
+                while m2 < n {
+                    text = idle_to(heap, text, clock, m2, t);
+                    m2 = m2 + 1;
+                }
+            } else {
+                measured[arg] = a;
+                if arg + 1 > measured[63] {
+                    measured[63] = arg + 1;
+                }
+            }
+            k = k + 1;
+        }
+    }
+    text = buffer.append(heap, text, "probs\n");
+    return (text, status);
+}
+
+// ---- running it -------------------------------------------------------------------------------------------------
+
+// Run the `.qc` text in `qsim` and read its `prob <bits> <p>` lines into `dist` (over the compact qubits, qubit 0 the lowest bit; size 2^n). 0, or 2 after a refusal.
+pub fn simulate[&h, &i, &x, &c, &s, &t, &d](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &s [byte], text: &t [byte], n: int, dist: &!d [float]) -> [heap, err_write, exec(""), clock, poll] int {
+    var status = 0;
+    let (rc, out, err) = files.run(heap, io, exec, clock, qsim, "", text);
+    if rc != 0 {
+        status = files.refuse(io, "qsim failed on a circuit");
+        borrow err as &er in {
+            io.error_all(io, buffer.bytes(er));
+        }
+    } else {
+        var z = 0;
+        while z < len(dist) {
+            dist[z] = 0.0;
+            z = z + 1;
+        }
+        borrow out as &or in {
+            let all = buffer.bytes(or);
+            var from = 0;
+            var at = 0;
+            while at <= len(all) {
+                if at == len(all) || int_of(all[at]) == 10 {
+                    let ln = all[from..at];
+                    from = at + 1;
+                    if bytes.starts_with(ln, "prob ") {
+                        var sp = 5;
+                        while sp < len(ln) && int_of(ln[sp]) != ' ' {
+                            sp = sp + 1;
+                        }
+                        var idx = 0;
+                        var b = 5;
+                        while b < sp {
+                            idx = idx * 2 + (int_of(ln[b]) - '0');
+                            b = b + 1;
+                        }
+                        if idx >= 0 && idx < len(dist) && sp + 1 <= len(ln) {
+                            dist[idx] = common.float_of_token(ln[sp + 1..len(ln)]);
+                        }
+                    }
+                }
+                at = at + 1;
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return status;
+}
+
+// Apply each measured qubit's read-out error to `dist` (over the compact qubits) and put the result over the classical bits into `out` (bit c of an index is the measurement of
+// physical qubit measured[c]); every used qubit must be measured exactly once. 0, or 2 after a refusal.
+pub fn confuse[&i, &d, &v, &p, &m, &o](io: &!i Io, dist: &d [float], n: int, dev: &v [float], phys: &p [int], measured: &m [int], out: &!o [float]) -> [err_write] int {
+    if measured[63] != n {
+        return files.refuse(io, "an unmeasured qubit would need marginalising (not every used qubit is measured)");
+    }
+    var c = 0;
+    while c < n {
+        if measured[c] < 0 {
+            return files.refuse(io, "the measured classical bits are not 0..n-1");
+        }
+        c = c + 1;
+    }
+    let size = 1 << n;
+    region r {
+        let vec = alloc_slice[r](1024, 0.0);
+        let pos = alloc_slice[r](12, 0);
+        var j = 0;
+        while j < size {
+            vec[j] = dist[j];
+            j = j + 1;
+        }
+        var q = 0;
+        while q < n {
+            let e0 = dev[props.p01(phys[1 + q])];
+            let e1 = dev[props.p10(phys[1 + q])];
+            let bit = 1 << q;
+            var i0 = 0;
+            while i0 < size {
+                if i0 & bit == 0 {
+                    let a = vec[i0];
+                    let b = vec[i0 | bit];
+                    vec[i0] = (1.0 - e0) * a + e1 * b;
+                    vec[i0 | bit] = e0 * a + (1.0 - e1) * b;
+                }
+                i0 = i0 + 1;
+            }
+            q = q + 1;
+        }
+        // compact index of each measured qubit
+        var c2 = 0;
+        while c2 < n {
+            var m = 0;
+            while m < n {
+                if phys[1 + m] == measured[c2] {
+                    pos[c2] = m;
+                }
+                m = m + 1;
+            }
+            c2 = c2 + 1;
+        }
+        var z = 0;
+        while z < size {
+            out[z] = 0.0;
+            z = z + 1;
+        }
+        var jj = 0;
+        while jj < size {
+            var target = 0;
+            var cc = 0;
+            while cc < n {
+                target = target | (jj >> pos[cc] & 1) << cc;
+                cc = cc + 1;
+            }
+            out[target] = out[target] + vec[jj];
+            jj = jj + 1;
+        }
+    }
+    return 0;
+}
+
+pub fn tvd[&a, &b](p: &a [float], q: &b [float], size: int) -> [] float {
+    var s = 0.0;
+    var k = 0;
+    while k < size {
+        var d = p[k] - q[k];
+        if d < 0.0 {
+            d = 0.0 - d;
+        }
+        s = s + d;
+        k = k + 1;
+    }
+    return 0.5 * s;
+}
+
+// Build the circuit in `ops`, run it and put the model's distribution over the classical bits into `out` (size at least 2^n). `phys` and `measured` are filled as in `build`. 0, or 2 after a refusal.
+pub fn predict[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], ops: &o [int], dev: &d [float], czp: &u [int], phys: &!p [int], measured: &!m [int], out: &!r [float]) -> [heap, err_write, exec(""), clock, poll] int {
+    let (text, status0) = build(heap, io, ops, dev, czp, phys, measured);
+    var status = status0;
+    let compact = box_slice(heap, 1024, 0.0);
+    if status == 0 {
+        borrow mut compact as &!cw in {
+            borrow text as &tr in {
+                status = simulate(heap, io, exec, clock, qsim, buffer.bytes(tr), phys[0], contents(cw));
+            }
+        }
+    }
+    if status == 0 {
+        borrow compact as &cr in {
+            status = confuse(io, contents(cr), phys[0], dev, phys, measured, out);
+        }
+    }
+    buffer.drop(heap, text);
+    unbox_slice(heap, compact);
+    return status;
+}
+
+// Only the layout of the circuit in `ops`: `phys` (the qubits it uses) and `measured` (the physical qubit of each classical bit), filled as `build` does, without the calibration.
+pub fn layout[&o, &p, &m](ops: &o [int], phys: &!p [int], measured: &!m [int]) -> [] int {
+    var q = 0;
+    while q < props.max_qubits() {
+        phys[100 + q] = 0;
+        q = q + 1;
+    }
+    var k = 0;
+    while k < ops[0] {
+        let kind = ops[1 + 5 * k];
+        if kind != 4 {
+            phys[100 + ops[2 + 5 * k]] = 1;
+            if kind == 3 {
+                phys[100 + ops[3 + 5 * k]] = 1;
+            }
+        }
+        k = k + 1;
+    }
+    var n = 0;
+    q = 0;
+    while q < props.max_qubits() {
+        if phys[100 + q] == 1 {
+            n = n + 1;
+            phys[n] = q;
+            phys[100 + q] = n - 1;
+        }
+        q = q + 1;
+    }
+    phys[0] = n;
+    var c0 = 0;
+    while c0 < 64 {
+        measured[c0] = 0 - 1;
+        c0 = c0 + 1;
+    }
+    measured[63] = 0;
+    k = 0;
+    while k < ops[0] {
+        if ops[1 + 5 * k] == 5 {
+            measured[ops[4 + 5 * k]] = ops[2 + 5 * k];
+            if ops[4 + 5 * k] + 1 > measured[63] {
+                measured[63] = ops[4 + 5 * k] + 1;
+            }
+        }
+        k = k + 1;
+    }
+    return n;
+}
