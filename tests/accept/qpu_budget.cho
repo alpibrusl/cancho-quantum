@@ -1,0 +1,141 @@
+// A counted backend (`src/qpu.cho`, M4's first slice): 100 shots may be spent in all; a Bell pair is run 40 shots at a time.
+// Two runs are accepted, the third asks for more than is left and NOTHING is submitted: the answer is `Exhausted(20)`, which the program
+// matches on. The capability is then narrowed to 10 (accepted), a narrowing to 10 of what is 10 is refused (it would grant nothing new),
+// the 10 are run, and `close` says what was spent: 80 by the first capability and 10 by its child, with the 10 that the narrowing gave up lost. The counts of every accepted run add up to its shots, and the bits of a Bell pair agree.
+//~ STDOUT run 40 left 60
+//~ STDOUT run 40 left 20
+//~ STDOUT exhausted 20
+//~ STDOUT counts 80 disagree 0
+//~ STDOUT narrowed 10
+//~ STDOUT refused 10
+//~ STDOUT run 10 left 0
+//~ STDOUT spent 90 and 10 lost in the narrowing
+//~ EXIT 0
+
+import qc.gates;
+import qc.profile;
+import qc.qpu;
+import qc.state;
+import std.io;
+
+fn bell[&s](st: &!s [float]) -> [] int {
+    state.reset(st);
+    gates.h(st, 2, 0);
+    gates.cx(st, 2, 0, 1);
+    return 0;
+}
+
+fn total[&c](counts: &c [int]) -> [] int {
+    var s = 0;
+    var i = 0;
+    while i < len(counts) {
+        s = s + counts[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// One run of `shots`, said in a line: what it did, and what is left.
+fn once[&a, &s, &r, &c, &i](q: &!a qpu.Qpu, st: &s [float], rng: &!r [int], counts: &!c [int], io: &!i Io, shots: int) -> [io_write] int {
+    match qpu.run(q, st, 2, rng, counts, shots) {
+        qpu.Ran::Ok(done) => {
+            io.write_all(io, "run ");
+            io.print_int(io, done);
+            io.write_all(io, " left ");
+            io.print_int(io, qpu.left(q));
+            io.newline(io);
+        }
+        qpu.Ran::Exhausted(left) => {
+            io.write_all(io, "exhausted ");
+            io.print_int(io, left);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+fn session[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(2), 0.0);
+    region r {
+        let rng = alloc_slice[r](profile.size(), 0);
+        profile.init(rng, 12345);
+        let counts = alloc_slice[r](4, 0);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            bell(st);
+            var q = qpu.open(0, 100);
+            borrow mut q as &!b in {
+                once(b, st, rng, counts, io, 40);
+                once(b, st, rng, counts, io, 40);
+                once(b, st, rng, counts, io, 40);
+            }
+            io.write_all(io, "counts ");
+            io.print_int(io, total(counts));
+            io.write_all(io, " disagree ");
+            io.print_int(io, counts[1] + counts[2]);
+            io.newline(io);
+            var before = 0;
+            borrow q as &qb in {
+                before = qpu.left(qb);
+            }
+            match qpu.shrink(q, 10) {
+                qpu.Narrowed::Narrower(small) => {
+                    var b0 = 0;
+                    borrow small as &sb in {
+                        b0 = qpu.bound(sb);
+                    }
+                    io.write_all(io, "narrowed ");
+                    io.print_int(io, b0);
+                    io.newline(io);
+                    match qpu.shrink(small, 10) {
+                        qpu.Narrowed::Narrower(never) => {
+                            io.write_all(io, "BUG: narrowed to itself\n");
+                            let n0 = qpu.close(never);
+                        }
+                        qpu.Narrowed::Refused(same) => {
+                            var b1 = 0;
+                            borrow same as &sm in {
+                                b1 = qpu.bound(sm);
+                            }
+                            io.write_all(io, "refused ");
+                            io.print_int(io, b1);
+                            io.newline(io);
+                            var again = same;
+                            borrow mut again as &!b2 in {
+                                once(b2, st, rng, counts, io, 10);
+                            }
+                            let spent = qpu.close(again);
+                            io.write_all(io, "spent ");
+                            io.print_int(io, 80 + spent);
+                            io.write_all(io, " and ");
+                            io.print_int(io, before - 10);
+                            io.write_all(io, " lost in the narrowing\n");
+                        }
+                    }
+                }
+                qpu.Narrowed::Refused(same) => {
+                    io.write_all(io, "BUG: not narrowed\n");
+                    let n1 = qpu.close(same);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = session(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

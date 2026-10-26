@@ -1,0 +1,109 @@
+module qc.qpu;
+
+import qc.measure;
+import qc.state;
+import std.test;
+
+// A counted quantum backend (M4, first slice): what `docs/capability-budget.md` of the compiler repository proposes as the capability
+// `Qpu(backend, n)`, written as a library with the compiler's `res` types, so that the design can be tried before the compiler has it.
+//
+//   * A `Qpu` is a `res`: it cannot be copied, and it cannot be dropped. The only function here that ends one is `close`, which says how
+//     many shots it spent. A program that forgets to give the capability back does not compile (`linear-value-unconsumed`).
+//   * `run` takes it as `&!`, because it carries a counter. Each call subtracts its shots from what is left; if they are more than is
+//     left NOTHING IS SUBMITTED and the answer is `Ran::Exhausted(left)`. Spending a budget to zero is the expected end of a loop, not an
+//     attack, so it is a value the program matches on (the design's §2), not a trap.
+//   * `shrink` and `halve` attenuate: a budget is never raised. They consume the capability they narrow and give back the smaller one(s).
+//     The remainder is lost, as in the design's §3.1. A request that would raise it answers `Narrowed::Refused` with the capability
+//     unchanged (the design refuses it at check time; here the amounts are values, so it is a run-time answer).
+//
+// What this is not: the backend is `qsim`'s own sampler, so a program applies its gates to a state vector as it always did and the Qpu
+// "submits" by drawing `shots` outcomes from it. The compiler does not know what a `Qpu` is, so nothing is checked at check time (no
+// `shots-exceed-bound`, no `limit` in `cancho authority`), and `cancho authority` prints nothing about a budget. The claim here is the
+// design's own: a declared upper bound, enforced by the capability's counter. It is not a proof about a program.
+
+pub res struct Qpu {
+    backend: int,
+    bound: int,
+    left: int,
+}
+
+pub enum Ran {
+    Ok(int),
+    Exhausted(int),
+}
+
+pub enum Narrowed {
+    Narrower(Qpu),
+    Refused(Qpu),
+}
+
+pub enum Halves {
+    Two(Qpu, Qpu),
+    Refused(Qpu),
+}
+
+// The most shots one call may ask for: the sampler draws into one region.
+pub fn most() -> [] int {
+    return 4096;
+}
+
+// A new capability for backend number `backend` that may spend at most `bound` shots, ever. The root of a program's budget: the one thing
+// that mints a `Qpu` (a `pub res struct` can be built from any module, `docs/m2-results.md` R2: as for `Qubit`, "only `open` mints" is a convention).
+pub fn open(backend: int, bound: int) -> [] Qpu {
+    test.assert(bound >= 1);
+    return Qpu { backend: backend, bound: bound, left: bound };
+}
+
+pub fn left[&a](q: &a Qpu) -> [] int {
+    return q.left;
+}
+
+pub fn bound[&a](q: &a Qpu) -> [] int {
+    return q.bound;
+}
+
+// Run the register `st` of `n` qubits `shots` times: the number of times each outcome came out is added to `counts[outcome]` (the slice must hold 2^n),
+// and the shots are subtracted from what is left. `shots` outside 1..=4096 and a `counts` that is too short are programming errors and trap, as an
+// index outside a register does in `gates.cho`.
+pub fn run[&a, &s, &r, &c](q: &!a Qpu, st: &s [float], n: int, rng: &!r [int], counts: &!c [int], shots: int) -> [] Ran {
+    test.assert(shots >= 1 && shots <= most());
+    test.assert(len(counts) >= state.amplitudes_for(n));
+    if shots > q.left {
+        return Ran::Exhausted(q.left);
+    }
+    q.left = q.left - shots;
+    region rg {
+        let picks = alloc_slice[rg](shots, 0);
+        measure.sample(st, n, rng, picks);
+        var k = 0;
+        while k < shots {
+            counts[picks[k]] = counts[picks[k]] + 1;
+            k = k + 1;
+        }
+    }
+    return Ran::Ok(shots);
+}
+
+// The capability narrowed to `k` shots, `0 < k < left`: a budget is attenuated, never raised, and narrowing to what it already is grants nothing (`capability-budget.md` rule N1).
+pub fn shrink(q: Qpu, k: int) -> [] Narrowed {
+    let Qpu { backend, bound, left } = q;
+    if k > 0 && k < left {
+        return Narrowed::Narrower(Qpu { backend: backend, bound: k, left: k });
+    }
+    return Narrowed::Refused(Qpu { backend: backend, bound: bound, left: left });
+}
+
+// Two children whose budgets add up to at most what is left (rule N2). The remainder is lost.
+pub fn halve(q: Qpu, k1: int, k2: int) -> [] Halves {
+    let Qpu { backend, bound, left } = q;
+    if k1 > 0 && k2 > 0 && k1 + k2 <= left {
+        return Halves::Two(Qpu { backend: backend, bound: k1, left: k1 }, Qpu { backend: backend, bound: k2, left: k2 });
+    }
+    return Halves::Refused(Qpu { backend: backend, bound: bound, left: left });
+}
+
+// Give the capability back: how many shots it spent.
+pub fn close(q: Qpu) -> [] int {
+    let Qpu { backend, bound, left } = q;
+    return bound - left;
+}

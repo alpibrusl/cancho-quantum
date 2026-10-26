@@ -1,0 +1,111 @@
+// Splitting a budget (`qpu.halve`, rule N2 of `docs/capability-budget.md`): 60 + 30 out of 100 is accepted (the 10 left over are lost), 60 + 60 is
+// refused and the capability comes back unchanged. The two children spend separately: the first runs 40 and is then refused another 40, the second
+// runs 30. Their totals, 40 and 30, are at most the 100 they came from: that is the one claim that matters.
+//~ STDOUT 60 and 60 refused, 100 still there
+//~ STDOUT split 60 and 30
+//~ STDOUT first: ran 40, then exhausted with 20 left
+//~ STDOUT second: ran 30
+//~ STDOUT spent 40 and 30
+//~ EXIT 0
+
+import qc.gates;
+import qc.profile;
+import qc.qpu;
+import qc.state;
+import std.io;
+
+fn run_once[&a, &s, &r, &c](q: &!a qpu.Qpu, st: &s [float], rng: &!r [int], counts: &!c [int], shots: int) -> [] int {
+    match qpu.run(q, st, 1, rng, counts, shots) {
+        qpu.Ran::Ok(done) => {
+            return done;
+        }
+        qpu.Ran::Exhausted(left) => {
+            return 0 - left;
+        }
+    }
+}
+
+fn session[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let amp = box_slice(heap, state.floats_for(1), 0.0);
+    region r {
+        let rng = alloc_slice[r](profile.size(), 0);
+        profile.init(rng, 7);
+        let counts = alloc_slice[r](2, 0);
+        borrow mut amp as &!w in {
+            let st = contents(w);
+            state.reset(st);
+            gates.h(st, 1, 0);
+            let root = qpu.open(0, 100);
+            match qpu.halve(root, 60, 60) {
+                qpu.Halves::Two(x, y) => {
+                    io.write_all(io, "BUG: 60 + 60 out of 100\n");
+                    let sx = qpu.close(x);
+                    let sy = qpu.close(y);
+                }
+                qpu.Halves::Refused(back) => {
+                    var kept = 0;
+                    borrow back as &bb in {
+                        kept = qpu.left(bb);
+                    }
+                    io.write_all(io, "60 and 60 refused, ");
+                    io.print_int(io, kept);
+                    io.write_all(io, " still there\n");
+                    match qpu.halve(back, 60, 30) {
+                        qpu.Halves::Two(first, second) => {
+                            io.write_all(io, "split 60 and 30\n");
+                            var f = first;
+                            var g = second;
+                            var a1 = 0;
+                            var a2 = 0;
+                            borrow mut f as &!fb in {
+                                a1 = run_once(fb, st, rng, counts, 40);
+                                a2 = run_once(fb, st, rng, counts, 40);
+                            }
+                            var b1 = 0;
+                            borrow mut g as &!gb in {
+                                b1 = run_once(gb, st, rng, counts, 30);
+                            }
+                            io.write_all(io, "first: ran ");
+                            io.print_int(io, a1);
+                            io.write_all(io, ", then exhausted with ");
+                            io.print_int(io, 0 - a2);
+                            io.write_all(io, " left\n");
+                            io.write_all(io, "second: ran ");
+                            io.print_int(io, b1);
+                            io.newline(io);
+                            let s1 = qpu.close(f);
+                            let s2 = qpu.close(g);
+                            io.write_all(io, "spent ");
+                            io.print_int(io, s1);
+                            io.write_all(io, " and ");
+                            io.print_int(io, s2);
+                            io.newline(io);
+                        }
+                        qpu.Halves::Refused(again) => {
+                            io.write_all(io, "BUG: 60 + 30 refused\n");
+                            let s3 = qpu.close(again);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, amp);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = session(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
