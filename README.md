@@ -33,6 +33,8 @@ such a profile; and `qcconv`, which writes a `.qc` circuit as a compiled cancho 
 test and site tooling: the Qiskit and Aer references that act as independent oracles, the checks and the landing-page builder. `scripts/noise_profile.py`, `calibration_import.py`, `qc_to_cho.py` and `qc_to_qasm.py` are reference
 implementations the cancho tools are differentially tested against, not what you run.
 
+The hardware analysis (`tools/hw/`, one program: `hw model|gof|mitigate|predict|rates JOB`) is cancho too; it needs files, process spawning and the clock (not narrowed), and uses cancho-stats and cancho-ml by spawning their `stats` and `ml` binaries. `scripts/hw_*.py` remain as the reference it is compared with (`scripts/check_hw.py`). Still Python: submitting to IBM (`hw_spike.py`, `hw_model.py fetch`: Qiskit and a key), `hw_fit.py` (needs scipy), `hw_summary.py`.
+
 ```sh
 cancho build tools/qprofile.cho --std -o qprofile
 cancho build tools/qcalib.cho --std -o qcalib
