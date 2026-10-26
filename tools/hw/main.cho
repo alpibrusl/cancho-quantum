@@ -11,6 +11,9 @@ edition 7;
 //     hw rates JOB.json [--ml PATH] [--tmp PREFIX]
 //                                            gate error rates by regression (cancho-ml's `ml`) from a `hw_spike.py run --set rates` job, tested on circuits left out, against the
 //                                            published calibration: writes JOB-rates.json (`hw_rates.py`)
+//     hw fit JOB.json [--fit-circuits LIST] [--test JOB.json...] [--free LIST] [--tag T] [--opt PATH] [--qsim PATH] [--self PATH]
+//                                            four scale factors of the model fitted to some circuits of a job by cancho-opt's `opt minimize` (Nelder-Mead) on `hw misfit` (which `hw fit` starts for each
+//                                            evaluation), and tested on the other circuits and on other runs: writes fit-[TAG-]JOB.json (`hw_fit.py`; not ported: `--per-qubit-readout`)
 //     hw gof JOB.json [--stats PATH] [--tmp PREFIX]
 //                                            a chi-square test of each circuit's counts against JOB-qsim.json's distribution, with cancho-stats' `stats`: writes JOB-gof.json (`hw_gof.py`)
 //
@@ -20,6 +23,7 @@ edition 7;
 
 import hw.common;
 import hw.files;
+import hw.fit;
 import hw.gof;
 import hw.model;
 import hw.predict;
@@ -64,7 +68,7 @@ fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: 
         borrow mut phys as &!pw in {
             borrow mut measured as &!mw in {
                 if status == 0 {
-                    let (text, st) = model.build(heap, io, contents(or), dev, czp, contents(pw), contents(mw));
+                    let (text, st) = model.build(heap, io, contents(or), dev, czp, contents(pw), contents(mw), 1.0, 1.0, 1.0);
                     status = st;
                     if status == 0 {
                         borrow mut model_dist as &!dw in {
@@ -78,7 +82,7 @@ fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: 
                 if status == 0 {
                     borrow model_dist as &dr in {
                         borrow mut shown as &!sw in {
-                            status = model.confuse(io, contents(dr), contents(pw)[0], dev, contents(pw), contents(mw), contents(sw));
+                            status = model.confuse(io, contents(dr), contents(pw)[0], dev, contents(pw), contents(mw), contents(sw), 0.0 - 1.0);
                         }
                     }
                 }
@@ -954,10 +958,14 @@ fn main(world: World) -> [] int {
                                 status = predict_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "mitigate") {
                                 status = mitigate_command(h, i, f, x, c, g);
+                            } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "fit") {
+                                status = fit.fit_command(h, i, f, x, c, g);
+                            } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "misfit") {
+                                status = fit.misfit_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "gof") {
                                 status = gof_command(h, i, f, x, c, g);
                             } else {
-                                status = files.refuse(i, "the commands are: model, gof, mitigate, predict, rates");
+                                status = files.refuse(i, "the commands are: model, gof, mitigate, predict, rates, fit");
                             }
                         }
                     }
