@@ -26,6 +26,8 @@
 - `python3 scripts/check_qasm.py`: OpenQASM files agree between Qiskit's parser and qsim (needs qiskit).
 - `python3 scripts/check_diff.py`: amplitudes against Qiskit (needs qiskit, numpy).
 - `python3 scripts/check_determinism.py [--arm64]`: byte-identical output across builds.
+- `QSIM=... ML=... python3 scripts/rates_sim.py`: gate error rates recovered by `ml fit --model linear` from simulated mirror circuits, against known answers (cancho-ml; docs/rates-regression.md).
+- `STATS=... python3 scripts/hw_gof.py JOB.json`: chi-square test (cancho-stats) of a hardware run against the model (docs/hardware.md, last section).
 - `python3 scripts/check_mitigate.py`: `tools/qmitigate.cho` (read-out error mitigation of measured counts) against its Python reference and the physics.
 - `python3 scripts/check_hw_spike.py`: the pre-flight read-out check of `scripts/hw_spike.py` finds broken qubits (offline).
 - `python3 scripts/hw_summary.py --check`: the hardware numbers on the landing page match docs/data/hardware/.

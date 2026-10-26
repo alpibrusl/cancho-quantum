@@ -269,6 +269,7 @@ pub fn tile_hardware[&h, &i, &f, &u, &v, &n, &q, &x, &d](heap: &!h Heap, io: &!i
             facts.set_float(names, ints, floats, "t900.x10", jf(a, at, json.get(a, at, 0, "drift_ratio_max")));
             page1.set_buf(heap, names, ints, texts, "t900.x11", text.put_esc(heap, buffer.empty(heap, 16), json.string_view(a, at, json.get(a, at, 0, "healthy_device"))));
             facts.set_float(names, ints, floats, "t900.x12", jf(a, at, json.get(a, at, 0, "stuck_percent")));
+            facts.set_int(names, ints, "t900.x13", ji(a, at, json.get(a, at, 0, "shots")));
         }
     }
     files.unload(heap, hs, ht);

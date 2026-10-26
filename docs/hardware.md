@@ -147,8 +147,10 @@ qubits 60-62 gave `000` 96% of the time. The calibration published for qubit 0 t
 
 What the numbers say:
 
-- **On kingston away from the bad qubit, the device matches the calibration-fitted model** (Aer, and `qsim` with it) to within
-  0.03 on every circuit, up to 32 `cz`. The model's noise is the whole story there, at this size.
+- **On kingston away from the bad qubit, the device is close to the calibration-fitted model** (Aer, and `qsim` with it): within
+  0.03 in total-variation distance on every circuit, up to 32 `cz`. *(Corrected 2026-10-26, after the chi-square test of the last section:
+  this said "the device matches the model; the model's noise is the whole story there". A distance of 0.02 is small, but at 2000 shots it is
+  detectable: the counts are statistically inconsistent with the model on every circuit of every run, kingston's included.)*
 - **On fez the device is 1.3 to 2.9 times worse than the model, on both placements.** So the fez gap of the first round is not
   specific to qubits 0-6, nor to the circuits: it follows the device on this day. It is not a general failure of the noise model.
 - **The gap on fez does not grow cleanly with width** (ghzm7 on qubits 0-6 is the worst at 0.54 against 0.19; from 60 it is
@@ -178,7 +180,7 @@ TVD from all zeros, device / Aer / `qsim`; "before" is the device's value in the
 | rmir5_d4 | 0.259 / 0.317 / 0.310 | 0.341 | 0.086 / 0.093 / 0.081 | 0.081 |
 | rmir5_d8 | 0.307 / 0.369 / 0.370 | 0.390 | 0.113 / 0.125 / 0.121 | 0.125 |
 
-- **Kingston repeats**: device and model are unchanged within shot noise, and the model matches the device again.
+- **Kingston repeats**: device and model are unchanged within the distance's sampling noise, and the model is close to the device again (*corrected: "matches"; see the last section*).
 - **Fez moved both ways at once.** The device improved by 20 to 30% from the second round, while its own calibration got *worse*:
   Aer's prediction for `ghzm3` went from 0.098 to 0.222. The model that under-predicted the device by up to 2.9 times in the morning now
   over-predicts it by 1.2 to 1.6 times. So a fresher calibration did not close the gap on fez; the calibration numbers of this device
@@ -189,7 +191,8 @@ TVD from all zeros, device / Aer / `qsim`; "before" is the device's value in the
   gate errors of this calibration the two diverge more; not explained).
 
 What this settles: at this size, on a healthy device, the noise model (depolarizing after the decay is subtracted, T1/T2, readout)
-is enough: kingston, twice. On fez it is not reliable in either direction. What it does not settle: the cause. A test would run the same
+is close: kingston, twice, within 0.03 (*corrected 2026-10-26: this said "is enough"; the chi-square test of the last section shows the counts are
+not consistent with it, only near it*). On fez it is not reliable in either direction. What it does not settle: the cause. A test would run the same
 circuits on fez every hour for a day and plot device against model; if the model's error follows the calibration's jumps, the right fix is to
 estimate error rates from the circuits themselves (a short mirror calibration run before the real one), not a better model.
 
@@ -266,7 +269,7 @@ for the later rounds, the distance between the model's distribution and the devi
 - **Global factors do not work.** The fit trades decay against depolarizing (decay x15, two-qubit depolarizing x0.07: not physical),
   and what it learns does not carry over to the circuits left out. The calibration's rates are not simply off by a common factor.
 - **Per-qubit read-out does.** The fit moved qubit 60's from 0.031 to 0.18 (61: 0.031 to 0.053; the others barely moved) and the held-out
-  circuits of the same job dropped from 0.17-0.20 to 0.04-0.09, near what sampling allows. The model is not wrong in its physics on fez; it was given a wrong
+  circuits of the same job dropped from 0.17-0.20 to 0.04-0.09, near what sampling allows (*corrected: the chi-square test below says not near enough*). The model is not wrong in its physics on fez; it was given a wrong
   number for one qubit.
 - **It does not last.** An hour later, with a new calibration and the qubit reading differently, the same numbers help nothing (0.10 to
   0.17 before and after). So a correction of this kind has to be measured just before the job it is for, which is what the scan is.
@@ -280,3 +283,44 @@ share the qubits and the minute of the fit. The test that does not share them is
 of the qubits just before a mirror run and see whether the model, given the scan's read-out errors and nothing fitted, lands within sampling noise of the
 device. Run it on a job whose scan was taken before it; `hw_scan_model.py` was tested here only with a made-up scan (one qubit's value set from the fit above),
 which checks the plumbing and is not a result.
+
+## Is the model consistent with the counts? A chi-square test (`scripts/hw_gof.py`, with cancho-stats)
+
+Every comparison above is a total-variation distance read against a guessed floor ("0.01 to 0.05 at 2000 shots"). A test knows how much distance 2000 shots
+of the model itself would give. `scripts/hw_gof.py` runs `stats test chisq --expected` (the `stats` command of
+[cancho-stats](https://github.com/alpibrusl/cancho-stats), built from its pinned compiler) on each circuit's counts against `qsim`'s distribution: an outcome whose
+expected count is 5 or more is a level, the rest are pooled. Two controls first: 120 runs of 2000 shots drawn from the model itself gave p < 0.05 in 5.0% of them and
+p < 0.001 in none (median p 0.39), and the statistic of one real case, computed by hand, is the tool's (121.1 on 4 degrees of freedom).
+
+| run (2000 shots, six mirror circuits unless noted) | circuits with p < 0.05 | p < 0.001 | median p |
+|---|---|---|---|
+| kingston, morning, from qubit 60 | 6 of 6 | 6 | 2e-12 |
+| kingston, after the 10:43 recalibration (two rounds) | 6 of 6 each | 6 each | 1e-13, 2e-8 |
+| fez, qubits 0-6 | 6 of 6 | 6 | 3e-123 |
+| fez, from 60, morning and the two later rounds | 6 of 6 each | 6 each | 4e-196, 2e-40, 2e-109 |
+| fez, first spike set (Bell, GHZ, Toffoli, QFT, random) | 6 of 7 | 6 | 9e-30 |
+
+**The calibration-based model is rejected by the counts on every run, on both devices.** On kingston the cause is a distance of 0.02: for `ghzm3` the model
+puts 1953 of 2000 shots on all zeros, the device returned 1913, 5.9 standard deviations. So "within 0.03" and "inconsistent at p = 1e-25" are both true.
+Where this changes what was said: the kingston result is *close*, not *matches*, and the calibration-based model's distribution is about 0.02 (kingston) and 0.16 to 0.20
+(fez, before the fit) away from what the device returns in total variation, and neither is shot noise.
+
+What the fits of `hw_fit.py` do to this (fez and kingston, morning, fitted on `ghzm3`, `rmir5_d2`, `rmir5_d4` with per-qubit read-out and the two-qubit factor):
+
+| fez | calibration: chi-square, p | fitted: chi-square, df, p |
+|---|---|---|
+| ghzm3 (fitted) | 1316, 1e-282 | 14.9, 6, 0.021 |
+| rmir5_d2 (fitted) | 1473, 5e-314 | 26.8, 10, 0.003 |
+| rmir5_d4 (fitted) | 1014, 2e-208 | 49.9, 17, 4e-5 |
+| ghzm5 (held out) | 938, 4e-196 | 39.7, 16, 9e-4 |
+| ghzm7 (held out) | 962, 2e-195 | 88.0, 25, 6e-9 |
+| rmir5_d8 (held out) | 776, 2e-151 | 86.8, 29, 1e-7 |
+
+On kingston the same fit brings every circuit down (for example `rmir5_d2` 66 to 13, p = 0.12; `rmir5_d4` 24.5 to 13.8, p = 0.18) except the deepest, `rmir5_d8`, which stays
+rejected (59 to 45 on 19 degrees of freedom). So on fez the fit removes 89 to 99% of the chi-square and still leaves five of the six circuits rejected: one qubit's read-out
+was most of what was wrong, not all. (The fit section above says the held-out circuits came "near what sampling allows"; the p-values show they did not: 0.04 to 0.09 is
+above it.)
+
+Limits: `stats` takes its levels from the data, so a level that the counts never show cannot be named; its expected mass is given to the largest level (this
+can only make the test less sensitive). The test says the model is not exact, not what is missing. With 2000 shots a difference of a few percent in a probability is already
+significant; with 200 it would not be.

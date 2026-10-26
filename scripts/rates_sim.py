@@ -33,15 +33,16 @@ TRUE_2Q = [0.006, 0.010, 0.004, 0.015]                      # after cz, for the 
 TRUE_RO = [(0.010, 0.020), (0.015, 0.025), (0.008, 0.018), (0.030, 0.040), (0.012, 0.022)]   # P(read 1 | 0), P(read 0 | 1)
 
 
-def circuit(rnd, layers):
+def circuit(rnd, layers, cz_probability=0.6):
     """(forward ops, counts) of a random circuit of `layers` layers: each layer is a random native gate on every qubit, then cz on a random set of disjoint neighbouring pairs."""
     ops, n1, n2 = [], [0] * N, [0] * (N - 1)
     for _ in range(layers):
         for q in range(N):
-            g = rnd.choice(["sx", "sx", "x"])
-            ops.append((g, q, 0))
-            n1[q] += 1
-        pairs = [p for p in range(N - 1) if rnd.random() < 0.6]
+            if rnd.random() < 0.7:      # a qubit that is left out of a layer has no gate and no gate noise: without this every qubit
+                g = rnd.choice(["sx", "sx", "x"])   # has the same count of one-qubit gates in every circuit, and their rates cannot be told apart
+                ops.append((g, q, 0))
+                n1[q] += 1
+        pairs = [p for p in range(N - 1) if rnd.random() < cz_probability]
         used = set()
         for p in pairs:
             if p not in used and p + 1 not in used:
@@ -94,13 +95,19 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--shots", type=int, default=0, help="0: the exact survival; N: a sample of N shots")
     ap.add_argument("--l2", default="0.001")
+    ap.add_argument("--oneq", action="store_true", help="add circuits with one-qubit gates only (every third)")
+    ap.add_argument("--scale1", type=float, default=1.0, help="multiply the true one-qubit rates (their signal is small next to the two-qubit rates')")
     args = ap.parse_args()
+    for q in range(N):
+        TRUE_1Q[q] *= args.scale1
     qsim, ml = os.environ.get("QSIM", "qsim"), os.environ.get("ML", "ml")
     rnd = random.Random(args.seed)
     rows = []
     for i in range(args.circuits):
-        layers = rnd.randint(1, 12)
-        fwd, n1, n2 = circuit(rnd, layers)
+        if args.oneq and i % 3 == 0:        # every third circuit: no cz, many one-qubit gates, so that their small rates show above the noise
+            fwd, n1, n2 = circuit(rnd, rnd.randint(10, 60), 0.0)
+        else:
+            fwd, n1, n2 = circuit(rnd, rnd.randint(1, 12))
         ops = fwd + inverse(fwd)
         s = survival(qsim, ops)
         if args.shots:
