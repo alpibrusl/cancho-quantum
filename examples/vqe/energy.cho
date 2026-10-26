@@ -1,0 +1,90 @@
+edition 7;
+
+// `vqe-energy`: the objective of `examples/vqe`. Reads the angles of the ansatz on standard input (numbers separated by white space, 4 per layer and 4 more: so 8, 12, 16, ...), prints the energy
+// of the state they prepare. It reads no file and writes nothing but the answer: `cancho authority` on it names no capability beyond standard input and output.
+import qc.gates;
+import qc.state;
+import std.fmt;
+import std.io;
+import vqe.model;
+
+fn is_blank(c: int) -> [] bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+fn refuse[&i, &r](io: &!i Io, what: &r [byte]) -> [err_write] int {
+    io.error_all(io, "vqe-energy: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+fn run[&i](io: &!i Io) -> [io_read, io_write, err_write] int {
+    var status = 0;
+    region r {
+        let theta = alloc_slice[r](64, 0.0);
+        let st = alloc_slice[r](32, 0.0);
+        let tok = alloc_slice[r](64, byte_of(0));
+        var count = 0;
+        var used = 0;
+        var c = getchar(io);
+        while c >= 0 && status == 0 {
+            if is_blank(c) {
+                if used > 0 {
+                    let (ok, v) = model.number(tok[0..used]);
+                    if !ok || count >= 64 {
+                        status = refuse(io, "the input holds something that is not a finite number, or more than 64 of them");
+                    } else {
+                        theta[count] = v;
+                        count = count + 1;
+                    }
+                    used = 0;
+                }
+            } else if used < 64 {
+                tok[used] = byte_of(c);
+                used = used + 1;
+            } else {
+                status = refuse(io, "a number is longer than 64 characters");
+            }
+            c = getchar(io);
+        }
+        if status == 0 && used > 0 {
+            let (ok2, v2) = model.number(tok[0..used]);
+            if !ok2 || count >= 64 {
+                status = refuse(io, "the input holds something that is not a finite number, or more than 64 of them");
+            } else {
+                theta[count] = v2;
+                count = count + 1;
+            }
+        }
+        if status == 0 && (count < model.qubits() * 2 || count % model.qubits() != 0) {
+            status = refuse(io, "the number of angles must be 4 per layer plus 4 (8, 12, 16, ...)");
+        }
+        if status == 0 {
+            let e = model.energy(st, theta[0..count], count / model.qubits() - 1);
+            let out = alloc_slice[r](32, byte_of(0));
+            let n = fmt.float_into(out, e);
+            io.write_all(io, out[0..n]);
+            io.newline(io);
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut io as &!i in {
+        status = run(i);
+    }
+    release(io);
+    return status;
+}

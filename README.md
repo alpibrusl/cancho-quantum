@@ -69,6 +69,8 @@ with `--arm64`), and the output bytes must match
 is read by Qiskit's parser and by `qsim` and must mean the reference, and
 the circuits are written back out by Qiskit and fed to `qsim`. 120 seeded random circuits of `sx`, `sxdg`, `id`, `u2`, `u3`, `u`, `cx` and `h` (the gates of a device's basis and of a general rotation) are written by Qiskit and must give its statevector to 1e-12; three deliberate bugs in the reader (`sx` as `sx` dagger, the order of the `u3` rotations, the angle of `u2`) are each caught.
 
+`examples/vqe/` is a variational quantum eigensolver (`vqe`, `vqe-energy`) built on `opt minimize` from cancho-opt; `scripts/check_vqe.py` checks it against numpy and scipy (`examples/vqe/README.md`).
+
 `scripts/check_noise.py` averages noisy runs over thousands of seeds and compares the result with an exact density-matrix calculation.
 
 `scripts/check_schedule.py` checks `sched` against Qiskit's ASAP scheduler.
