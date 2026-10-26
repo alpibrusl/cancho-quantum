@@ -1,6 +1,6 @@
 # Gate error rates by regression (`ml fit --model linear`), tested with known answers
 
-**Status (2026-10-26): tested on simulated circuits only; not run on a device.** Tags: **[measured]** printed by `scripts/rates_sim.py`, **[choice]**, **[open]**.
+**Status (2026-10-26): tested on simulated circuits and on a fake device; not run on a real device.** The device run is issue #12, part B. Tags: **[measured]** printed by `scripts/rates_sim.py`, **[choice]**, **[open]**.
 
 ## The question
 
@@ -44,3 +44,23 @@ see that. The read-out is better measured by the scan of `hw_spike.py check`.
 
 `ml` (cancho-ml) is built with the compiler it pins, `0207556`: `cargo build --release -p cancho` there (1.5 minutes), `cancho install`, `cancho build --bin ml` (40 seconds). `stats` (cancho-stats) pins a different
 compiler, `a4572ea`. Neither builds with the compiler this repository uses, and each refuses to build with another (`this project was written for cancho ...`).
+
+## The device run, and its test on a fake device **[measured]**
+
+`scripts/hw_spike.py run --set rates` writes 300 random mirror circuits of native gates (`sx`, `x`, `cz`; a third with one-qubit gates only; the generator is `scripts/rates_lib.py`, shared with `rates_sim.py`, whose results did not change) on a
+line of 5 connected qubits from `--start`, after the pre-flight read-out scan, in jobs of 100 circuits, 2000 shots each, and records for each circuit its counts and the gates
+the *transpiled* circuit asks of each physical qubit and pair (`sx`/`x` per qubit; `rz` is free). `scripts/hw_rates.py JOB` fits `ml fit --model linear` on four fifths of the circuits and predicts the fifth left out with
+`ml predict`, against the published calibration (its `lambda` is the published gate error, its intercept the read-out) and a training-mean baseline.
+
+On `FakeFez` (Aer with the fake device's own noise model standing in for the hardware: the "device" *is* the calibration, so this is a null check of the pipeline and of the conversions, not a result):
+
+| gate | fitted lambda | published |
+|---|---|---|
+| cz 60-61, 61-62, 62-63, 63-56 | 0.0027, 0.0042, 0.0082, 0.0052 | 0.0036, 0.0035, 0.0074, 0.0056 |
+| one-qubit, qubits 60, 61, 62, 63, 56 | 0.00025, 0.00027, 0.00029, 0.00087, 0.00003 | 0.00017, 0.00036, 0.00031, 0.00074, 0.00024 |
+
+Held-out circuits (60 of 300), root mean square error of log S: fitted 0.0127, published 0.0128, training mean 0.0564. As it should be when the truth is the calibration: the regression finds the published rates to within
+what 240 circuits of 2000 shots allow (the two-qubit ones to 6 to 25%, the one-qubit ones are smaller than the noise), and neither beats the other. The test on a device is whether the fitted rates predict the held-out circuits
+**better** than the published ones; on fez, where one qubit's read-out was off by a factor of six, the read-out intercept is what should differ.
+
+`ml predict` returns the predicted `log S`; nothing else of cancho-stats or cancho-ml is needed.
