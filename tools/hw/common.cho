@@ -1,0 +1,119 @@
+edition 7;
+
+module hw.common;
+
+import std.buffer;
+import std.bytes;
+import std.fmt;
+import std.io;
+import std.json;
+
+// Helpers the `hw` commands share: strings and distributions out of a parsed JSON document, and a few lines of output.
+
+// The string at `node` decoded into a new buffer.
+pub fn text_of[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
+    let need = json.string_length(src, tape, node);
+    let raw = box_slice(heap, need + 1, byte_of(0));
+    var out = buffer.empty(heap, 16);
+    borrow mut raw as &!rw in {
+        let r = contents(rw);
+        let got = json.string_into(src, tape, node, r);
+        if got > 0 {
+            out = buffer.append(heap, out, r[0..got]);
+        }
+    }
+    unbox_slice(heap, raw);
+    return out;
+}
+
+// An object of bitstring: number read into `out` (index = the bits, qubit 0 lowest), as they are (`normalize` false: probabilities) or divided by their sum (counts).
+pub fn read_dist[&s, &t, &o](src: &s [byte], tape: &t [int], obj: int, n: int, normalize: bool, out: &!o [float]) -> [] int {
+    var z = 0;
+    while z < len(out) {
+        out[z] = 0.0;
+        z = z + 1;
+    }
+    if obj < 0 || !json.is_object(tape, obj) {
+        return 0;
+    }
+    var total = 0.0;
+    var j = obj + 1;
+    var left = json.count(tape, obj);
+    while left > 0 {
+        let key = json.string_view(src, tape, j);
+        var idx = 0;
+        var b = 0;
+        var width = 0;
+        while b < len(key) {
+            if int_of(key[b]) == '0' || int_of(key[b]) == '1' {
+                idx = idx * 2 + (int_of(key[b]) - '0');
+                width = width + 1;
+            }
+            b = b + 1;
+        }
+        let v = json.to_float(src, tape, j + 1);
+        if idx < len(out) && width == n {
+            out[idx] = out[idx] + v;
+            total = total + v;
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    if normalize && total > 0.0 {
+        var k = 0;
+        while k < len(out) {
+            out[k] = out[k] / total;
+            k = k + 1;
+        }
+    }
+    return 0;
+}
+
+pub fn put_bits[&h](heap: &!h Heap, w: json.Writer, idx: int, n: int) -> [heap] json.Writer {
+    var out = w;
+    region r {
+        let name = alloc_slice[r](n + 1, byte_of(0));
+        var b = 0;
+        while b < n {
+            var bit = 48;
+            if idx >> n - 1 - b & 1 == 1 {
+                bit = 49;
+            }
+            name[b] = byte_of(bit);
+            b = b + 1;
+        }
+        out = json.put_key(heap, out, name[0..n]);
+    }
+    return out;
+}
+
+// A float in the shortest form that reads back (`1.2e-3`), on standard output.
+pub fn say_float[&i](io: &!i Io, x: float) -> [io_write] int {
+    region r {
+        let scratch = alloc_slice[r](32, byte_of(0));
+        let n = fmt.float_into(scratch, x);
+        if n > 0 {
+            io.write_all(io, scratch[0..n]);
+        }
+    }
+    return 0;
+}
+
+pub fn say_name[&i, &s](io: &!i Io, name: &s [byte]) -> [io_write] int {
+    io.write_all(io, "  ");
+    io.write_all(io, name);
+    io.write_all(io, "  ");
+    return 0;
+}
+
+// The value of `--flag VALUE` among the arguments, or an empty slice.
+pub fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), flag) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}

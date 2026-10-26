@@ -6,6 +6,8 @@ edition 7;
 //     hw mitigate JOB.json [--qmitigate PATH] [--readout SCAN.json]
 //                                            read-out error mitigation (`tools/qmitigate.cho`) of each circuit's counts with the calibration's errors, or those of a
 //                                            `hw_spike.py check` scan: writes JOB-mitigated.json (`hw_mitigate.py`)
+//     hw predict JOB.json [--scan SCAN.json] [--rates RATES.json] [--qsim PATH] [--stats PATH] [--tmp PREFIX]
+//                                            the model with the calibration, with a scan's read-out, with fitted gate rates, and with both, against the counts: writes JOB-predict.json (`hw_predict.py`)
 //     hw gof JOB.json [--stats PATH] [--tmp PREFIX]
 //                                            a chi-square test of each circuit's counts against JOB-qsim.json's distribution, with cancho-stats' `stats`: writes JOB-gof.json (`hw_gof.py`)
 //
@@ -13,9 +15,11 @@ edition 7;
 // Qiskit and an IBM key, and are the one thing here that stays Python). `--qsim` is the `qsim` to run the circuits in (default `qsim`, found on PATH).
 // The Python scripts remain as the reference implementations: `scripts/check_hw.py` runs both on the committed runs and compares the numbers.
 
+import hw.common;
 import hw.files;
 import hw.gof;
 import hw.model;
+import hw.predict;
 import hw.props;
 import hw.qasm3;
 import std.buffer;
@@ -24,100 +28,12 @@ import std.fmt;
 import std.io;
 import std.json;
 
-fn flag_value[&g](args: &g Args, flag: &static [byte]) -> [args] &static [byte] {
-    var k = 1;
-    while k + 1 < arg_count(args) {
-        if bytes.equal(arg(args, k), flag) {
-            return arg(args, k + 1);
-        }
-        k = k + 1;
-    }
-    return arg(args, 0)[0..0];
-}
-
-// The string at `node` decoded into a new buffer.
-fn text_of[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
-    let need = json.string_length(src, tape, node);
-    let raw = box_slice(heap, need + 1, byte_of(0));
-    var out = buffer.empty(heap, 16);
-    borrow mut raw as &!rw in {
-        let r = contents(rw);
-        let got = json.string_into(src, tape, node, r);
-        if got > 0 {
-            out = buffer.append(heap, out, r[0..got]);
-        }
-    }
-    unbox_slice(heap, raw);
-    return out;
-}
-
-// An object of bitstring: number read into `out` (index = the bits, qubit 0 lowest), as they are (`normalize` false: probabilities) or divided by their sum (counts).
-fn read_dist[&s, &t, &o](src: &s [byte], tape: &t [int], obj: int, n: int, normalize: bool, out: &!o [float]) -> [] int {
-    var z = 0;
-    while z < len(out) {
-        out[z] = 0.0;
-        z = z + 1;
-    }
-    if obj < 0 || !json.is_object(tape, obj) {
-        return 0;
-    }
-    var total = 0.0;
-    var j = obj + 1;
-    var left = json.count(tape, obj);
-    while left > 0 {
-        let key = json.string_view(src, tape, j);
-        var idx = 0;
-        var b = 0;
-        var width = 0;
-        while b < len(key) {
-            if int_of(key[b]) == '0' || int_of(key[b]) == '1' {
-                idx = idx * 2 + (int_of(key[b]) - '0');
-                width = width + 1;
-            }
-            b = b + 1;
-        }
-        let v = json.to_float(src, tape, j + 1);
-        if idx < len(out) && width == n {
-            out[idx] = out[idx] + v;
-            total = total + v;
-        }
-        j = json.skip(tape, j + 1);
-        left = left - 1;
-    }
-    if normalize && total > 0.0 {
-        var k = 0;
-        while k < len(out) {
-            out[k] = out[k] / total;
-            k = k + 1;
-        }
-    }
-    return 0;
-}
-
-fn put_bits[&h](heap: &!h Heap, w: json.Writer, idx: int, n: int) -> [heap] json.Writer {
-    var out = w;
-    region r {
-        let name = alloc_slice[r](n + 1, byte_of(0));
-        var b = 0;
-        while b < n {
-            var bit = 48;
-            if idx >> n - 1 - b & 1 == 1 {
-                bit = 49;
-            }
-            name[b] = byte_of(bit);
-            b = b + 1;
-        }
-        out = json.put_key(heap, out, name[0..n]);
-    }
-    return out;
-}
-
 // One circuit of the job as a JSON object (`hw_model.py run`'s row): the model's distribution against the device's counts and Aer's.
 fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], js: &a [byte], jt: &b [int], row: int, cs: &d [byte], ct: &z [int], crow: int, dev: &r [float], czp: &u [int], w: json.Writer) -> [heap, err_write, exec(""), clock, poll] (json.Writer, int) {
     var out = w;
     var status = 0;
     let n = json.to_int(js, jt, json.get(js, jt, row, "qubits"));
-    let qasm = text_of(heap, cs, ct, json.get(cs, ct, crow, "qasm3"));
+    let qasm = common.text_of(heap, cs, ct, json.get(cs, ct, crow, "qasm3"));
     var lines = 1;
     borrow qasm as &qr in {
         lines = qasm3.lines_in(buffer.bytes(qr));
@@ -168,9 +84,9 @@ fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: 
     borrow mut ideal as &!iw in {
         borrow mut device as &!vw in {
             borrow mut aer as &!aw in {
-                let _i = read_dist(js, jt, json.get(js, jt, row, "ideal"), n, false, contents(iw));
-                let _d = read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(vw));
-                let _a = read_dist(js, jt, json.get(js, jt, row, "aer_noise"), n, true, contents(aw));
+                let _i = common.read_dist(js, jt, json.get(js, jt, row, "ideal"), n, false, contents(iw));
+                let _d = common.read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(vw));
+                let _a = common.read_dist(js, jt, json.get(js, jt, row, "aer_noise"), n, true, contents(aw));
             }
         }
     }
@@ -211,7 +127,7 @@ fn row_json[&h, &i, &x, &c, &q, &a, &b, &d, &z, &r, &u, &v](heap: &!h Heap, io: 
                             var e = 0;
                             while e < size {
                                 if contents(sr)[e] > 0.000000000001 {
-                                    out = put_bits(heap, out, e, n);
+                                    out = common.put_bits(heap, out, e, n);
                                     out = json.put_float(heap, out, contents(sr)[e]);
                                 }
                                 e = e + 1;
@@ -310,7 +226,7 @@ fn model_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs("
         return files.refuse(io, "hw model JOB.json [--qsim PATH]");
     }
     let job_path = arg(args, 2);
-    var qsim = flag_value(args, "--qsim");
+    var qsim = common.flag_value(args, "--qsim");
     if len(qsim) == 0 {
         qsim = "qsim";
     }
@@ -382,18 +298,6 @@ fn model_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs("
     return status;
 }
 
-// A float in the shortest form that reads back (`1.2e-3`), on standard output.
-fn say_float[&i](io: &!i Io, x: float) -> [io_write] int {
-    region r {
-        let scratch = alloc_slice[r](32, byte_of(0));
-        let n = fmt.float_into(scratch, x);
-        if n > 0 {
-            io.write_all(io, scratch[0..n]);
-        }
-    }
-    return 0;
-}
-
 // `hw gof`: the counts of each circuit of the job tested against the model's distribution in JOB-qsim.json.
 fn gof_rows[&h, &i, &f, &x, &c, &a, &b, &d, &z, &q, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, stats: &q [byte], tmp: &t [byte], js: &a [byte], jt: &b [int], ms: &d [byte], mt: &z [int], w: json.Writer) -> [heap, io_write, err_write, fs_write(""), exec(""), clock, poll] (json.Writer, int) {
     var out = w;
@@ -417,8 +321,8 @@ fn gof_rows[&h, &i, &f, &x, &c, &a, &b, &d, &z, &q, &t](heap: &!h Heap, io: &!i 
             borrow mut counts as &!cw in {
                 borrow mut model as &!mw in {
                     borrow mut result as &!rw in {
-                        let _c = read_dist(js, jt, json.get(js, jt, row, "device"), n, false, contents(cw));
-                        let _m = read_dist(ms, mt, json.get(ms, mt, mrow, "qsim"), n, false, contents(mw));
+                        let _c = common.read_dist(js, jt, json.get(js, jt, row, "device"), n, false, contents(cw));
+                        let _m = common.read_dist(ms, mt, json.get(ms, mt, mrow, "qsim"), n, false, contents(mw));
                         status = gof.test(heap, io, fs, exec, clock, stats, tmp, contents(cw), contents(mw), n, contents(rw));
                         if status == 0 {
                             out = json.begin_object(heap, out);
@@ -434,11 +338,11 @@ fn gof_rows[&h, &i, &f, &x, &c, &a, &b, &d, &z, &q, &t](heap: &!h Heap, io: &!i 
                             io.write_all(io, "  ");
                             io.write_all(io, json.string_view(js, jt, json.get(js, jt, row, "circuit")));
                             io.write_all(io, "  chi-square ");
-                            say_float(io, contents(rw)[0]);
+                            common.say_float(io, contents(rw)[0]);
                             io.write_all(io, "  df ");
-                            say_float(io, contents(rw)[1]);
+                            common.say_float(io, contents(rw)[1]);
                             io.write_all(io, "  p ");
-                            say_float(io, contents(rw)[2]);
+                            common.say_float(io, contents(rw)[2]);
                             io.newline(io);
                         }
                     }
@@ -458,11 +362,11 @@ fn gof_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs("")
         return files.refuse(io, "hw gof JOB.json [--stats PATH] [--tmp PREFIX]");
     }
     let job_path = arg(args, 2);
-    var stats = flag_value(args, "--stats");
+    var stats = common.flag_value(args, "--stats");
     if len(stats) == 0 {
         stats = "stats";
     }
-    var tmp = flag_value(args, "--tmp");
+    var tmp = common.flag_value(args, "--tmp");
     if len(tmp) == 0 {
         tmp = "/tmp/hw-";
     }
@@ -630,7 +534,7 @@ fn mitigate_rows[&h, &i, &x, &c, &q, &a, &b, &v, &w, &y, &u, &k0](heap: &!h Heap
     while k < json.count(jt, rows) && status == 0 {
         let row = json.at(jt, rows, k);
         let n = json.to_int(js, jt, json.get(js, jt, row, "qubits"));
-        let qasm = text_of(heap, cs, ct, json.get(cs, ct, json.at(ct, crows, k), "qasm3"));
+        let qasm = common.text_of(heap, cs, ct, json.get(cs, ct, json.at(ct, crows, k), "qasm3"));
         var lines = 1;
         borrow qasm as &qr in {
             lines = qasm3.lines_in(buffer.bytes(qr));
@@ -685,7 +589,7 @@ fn mitigate_rows[&h, &i, &x, &c, &q, &a, &b, &v, &w, &y, &u, &k0](heap: &!h Heap
                             } else {
                                 clipped = json.to_float(text, tape, json.get(text, tape, 0, "clipped"));
                                 borrow mut after as &!aw in {
-                                    let _a = read_dist(text, tape, json.get(text, tape, 0, "probabilities"), n, false, contents(aw));
+                                    let _a = common.read_dist(text, tape, json.get(text, tape, 0, "probabilities"), n, false, contents(aw));
                                 }
                             }
                         }
@@ -698,8 +602,8 @@ fn mitigate_rows[&h, &i, &x, &c, &q, &a, &b, &v, &w, &y, &u, &k0](heap: &!h Heap
         if status == 0 {
             borrow mut ideal as &!iw in {
                 borrow mut device as &!dw in {
-                    let _i = read_dist(js, jt, json.get(js, jt, row, "ideal"), n, false, contents(iw));
-                    let _d = read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(dw));
+                    let _i = common.read_dist(js, jt, json.get(js, jt, row, "ideal"), n, false, contents(iw));
+                    let _d = common.read_dist(js, jt, json.get(js, jt, row, "device"), n, true, contents(dw));
                 }
             }
             borrow ideal as &ir in {
@@ -744,10 +648,10 @@ fn mitigate_rows[&h, &i, &x, &c, &q, &a, &b, &v, &w, &y, &u, &k0](heap: &!h Heap
                                 }
                                 out = json.end_object(heap, out);
                                 out = json.end_object(heap, out);
-                                say_name(io, json.string_view(js, jt, json.get(js, jt, row, "circuit")));
-                                say_float(io, model.tvd(contents(ir), contents(dr), size));
+                                common.say_name(io, json.string_view(js, jt, json.get(js, jt, row, "circuit")));
+                                common.say_float(io, model.tvd(contents(ir), contents(dr), size));
                                 io.write_all(io, " -> ");
-                                say_float(io, model.tvd(contents(ir), contents(fr), size));
+                                common.say_float(io, model.tvd(contents(ir), contents(fr), size));
                                 io.newline(io);
                             }
                         }
@@ -769,23 +673,16 @@ fn mitigate_rows[&h, &i, &x, &c, &q, &a, &b, &v, &w, &y, &u, &k0](heap: &!h Heap
     return (out, status);
 }
 
-fn say_name[&i, &s](io: &!i Io, name: &s [byte]) -> [io_write] int {
-    io.write_all(io, "  ");
-    io.write_all(io, name);
-    io.write_all(io, "  ");
-    return 0;
-}
-
 fn mitigate_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), exec(""), clock, poll, args] int {
     if arg_count(args) < 3 {
         return files.refuse(io, "hw mitigate JOB.json [--qmitigate PATH] [--readout SCAN.json]");
     }
     let job_path = arg(args, 2);
-    var tool = flag_value(args, "--qmitigate");
+    var tool = common.flag_value(args, "--qmitigate");
     if len(tool) == 0 {
         tool = "qmitigate";
     }
-    let scan_path = flag_value(args, "--readout");
+    let scan_path = common.flag_value(args, "--readout");
     let cut = files.stem_len(job_path);
     let circuits_path = files.joined(heap, job_path[0..cut], "-circuits.json");
     let props_path = files.joined(heap, job_path[0..cut], "-props.json");
@@ -894,6 +791,97 @@ fn mitigate_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f F
     return status;
 }
 
+fn predict_command[&h, &i, &f, &x, &c, &g](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, fs_read(""), fs_write(""), exec(""), clock, poll, args] int {
+    if arg_count(args) < 3 {
+        return files.refuse(io, "hw predict JOB.json [--scan SCAN.json] [--rates RATES.json] [--qsim PATH] [--stats PATH] [--tmp PREFIX]");
+    }
+    let job_path = arg(args, 2);
+    var qsim = common.flag_value(args, "--qsim");
+    if len(qsim) == 0 {
+        qsim = "qsim";
+    }
+    var stats = common.flag_value(args, "--stats");
+    if len(stats) == 0 {
+        stats = "stats";
+    }
+    var tmp = common.flag_value(args, "--tmp");
+    if len(tmp) == 0 {
+        tmp = "/tmp/hw-";
+    }
+    let scan_path = common.flag_value(args, "--scan");
+    let rates_path = common.flag_value(args, "--rates");
+    let cut = files.stem_len(job_path);
+    let circuits_path = files.joined(heap, job_path[0..cut], "-circuits.json");
+    let props_path = files.joined(heap, job_path[0..cut], "-props.json");
+    let out_path = files.joined(heap, job_path[0..cut], "-predict.json");
+    var status = 0;
+    let dev = box_slice(heap, props.dev_size(), 0.0);
+    let czp = box_slice(heap, 2 * props.max_cz() + 1, 0);
+    borrow props_path as &pp in {
+        borrow mut dev as &!dw in {
+            borrow mut czp as &!cw in {
+                status = props.load(heap, io, fs, buffer.bytes(pp), contents(dw), contents(cw));
+            }
+        }
+    }
+    let (js, jt, s1) = files.load_json(heap, io, fs, job_path);
+    var cs = buffer.empty(heap, 16);
+    var ct = box_slice(heap, 8, 0);
+    var ss = buffer.empty(heap, 16);
+    var st = box_slice(heap, 8, 0);
+    var rs = buffer.empty(heap, 16);
+    var rt = box_slice(heap, 8, 0);
+    if status == 0 {
+        status = s1;
+    }
+    if status == 0 {
+        borrow circuits_path as &cp in {
+            let (cs2, ct2, s2) = files.load_json(heap, io, fs, buffer.bytes(cp));
+            buffer.drop(heap, cs);
+            unbox_slice(heap, ct);
+            cs = cs2;
+            ct = ct2;
+            status = s2;
+        }
+    }
+    if status == 0 && len(scan_path) > 0 {
+        let (ss2, st2, s3) = files.load_json(heap, io, fs, scan_path);
+        buffer.drop(heap, ss);
+        unbox_slice(heap, st);
+        ss = ss2;
+        st = st2;
+        status = s3;
+    }
+    if status == 0 && len(rates_path) > 0 {
+        let (rs2, rt2, s4) = files.load_json(heap, io, fs, rates_path);
+        buffer.drop(heap, rs);
+        unbox_slice(heap, rt);
+        rs = rs2;
+        rt = rt2;
+        status = s4;
+    }
+    if status == 0 {
+        borrow dev as &dr in {
+            borrow czp as &cr in {
+                borrow out_path as &op in {
+                    status = predict.all(heap, io, fs, exec, clock, qsim, stats, tmp, js, jt, cs, ct, ss, st, rs, rt, len(scan_path) > 0, len(rates_path) > 0, contents(dr), contents(cr), buffer.bytes(op));
+                }
+            }
+        }
+    } else {
+        files.unload_json(heap, js, jt);
+        files.unload_json(heap, cs, ct);
+        files.unload_json(heap, ss, st);
+        files.unload_json(heap, rs, rt);
+    }
+    unbox_slice(heap, dev);
+    unbox_slice(heap, czp);
+    buffer.drop(heap, circuits_path);
+    buffer.drop(heap, props_path);
+    buffer.drop(heap, out_path);
+    return status;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
     release(ffi);
@@ -908,12 +896,14 @@ fn main(world: World) -> [] int {
                         borrow mut io as &!i in {
                             if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "model") {
                                 status = model_command(h, i, f, x, c, g);
+                            } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "predict") {
+                                status = predict_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "mitigate") {
                                 status = mitigate_command(h, i, f, x, c, g);
                             } else if arg_count(g) >= 2 && bytes.equal(arg(g, 1), "gof") {
                                 status = gof_command(h, i, f, x, c, g);
                             } else {
-                                status = files.refuse(i, "the commands are: model, gof, mitigate");
+                                status = files.refuse(i, "the commands are: model, gof, mitigate, predict");
                             }
                         }
                     }

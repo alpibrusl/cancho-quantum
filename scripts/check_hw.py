@@ -19,7 +19,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 HW = os.path.join(ROOT, "docs", "data", "hardware")
-FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "files props qasm3 model gof main".split()]
+FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "common files props qasm3 model gof predict main".split()]
 
 
 def build():
@@ -164,6 +164,60 @@ def check_mitigate(hw, qm):
     return ok
 
 
+def check_predict(hw, qsim):
+    stats = os.environ.get("STATS")
+    if not stats:
+        print("skip hw predict: STATS (a built cancho-stats `stats`) is not set")
+        return True
+    stem = os.path.join(HW, "ibm_kingston-2026-10-26-mirror-from60")
+    job = stage(stem, [".json", "-circuits.json", "-props.json"])
+    d = os.path.dirname(job)
+    # a made-up scan (the calibration's read-out, qubit 60's changed) and made-up rates (the published gate errors times 1.7): only the arithmetic is tested, not a device
+    props = json.load(open(stem + "-props.json"))
+    qubits = {}
+    for i, items in enumerate(props["qubits"]):
+        v = {x["name"]: x["value"] for x in items}
+        qubits[str(i)] = {"idle_reads_1": v.get("prob_meas1_prep0", 0.0), "after_x_reads_0": v.get("prob_meas0_prep1", 0.0)}
+    qubits["60"]["idle_reads_1"] = 0.0831
+    lam = {}
+    for g in props["gates"]:
+        p = {x["name"]: x["value"] for x in g["parameters"]}
+        if g["gate"] == "sx":
+            lam[f"g1_{g['qubits'][0]}"] = p["gate_error"] * 1.7
+        if g["gate"] == "cz":
+            lam[f"cz_{g['qubits'][0]}_{g['qubits'][1]}"] = p["gate_error"] * 1.7
+    json.dump({"device": "x", "date": "MADE UP", "qubits": qubits}, open(os.path.join(d, "scan.json"), "w"))
+    json.dump({"job": "MADE UP", "lambda_fitted": lam}, open(os.path.join(d, "rates.json"), "w"))
+    env = dict(os.environ, QSIM=qsim, STATS=stats)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "hw_predict.py"), job, "--scan", os.path.join(d, "scan.json"), "--rates", os.path.join(d, "rates.json")], capture_output=True, text=True, env=env)
+    if r.returncode:
+        print("FAIL hw predict: the Python reference failed:", r.stderr[-300:])
+        return False
+    want = json.load(open(job[:-5] + "-predict.json"))
+    r = subprocess.run([hw, "predict", job, "--scan", os.path.join(d, "scan.json"), "--rates", os.path.join(d, "rates.json"), "--qsim", qsim, "--stats", stats, "--tmp", os.path.join(d, "t-")], capture_output=True, text=True)
+    if r.returncode:
+        print("FAIL hw predict:", r.stderr[-300:])
+        return False
+    got = json.load(open(job[:-5] + "-predict.json"))
+    worst, bad = 0.0, []
+    for name, rows in want["rows"].items():
+        mine = got["rows"].get(name)
+        if mine is None or len(mine) != len(rows):
+            bad.append(name)
+            continue
+        for x, y in zip(mine, rows):
+            worst = max(worst, abs(x["tvd"] - y["tvd"]), abs(x["p_value"] - y["p_value"]) / max(1e-300, abs(y["p_value"])))
+    for name, y in want["summary"].items():
+        x = got["summary"].get(name)
+        if x is None or x["p_above_0.05"] != y["p_above_0.05"] or abs(x["mean_tvd"] - y["mean_tvd"]) > 1e-9:
+            bad.append(name + " summary")
+    ok = not bad and worst <= 1e-9
+    print(f"{'ok  ' if ok else 'FAIL'} hw predict (4 variants, a made-up scan and rates) agrees with hw_predict.py: worst difference {worst:.1e}")
+    for b in bad:
+        print("   ", b)
+    return ok
+
+
 def build_tool(name):
     out = os.path.join(tempfile.mkdtemp(prefix=name + "-"), name)
     r = subprocess.run([os.environ.get("CANCHO", "cancho"), "build", os.path.join(ROOT, "tools", name + ".cho"), "--std", "-o", out], capture_output=True, text=True)
@@ -174,7 +228,7 @@ def build_tool(name):
 
 def main():
     hw, qsim = build(), qsim_exe()
-    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate"))]
+    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate")), check_predict(hw, qsim)]
     sys.exit(0 if all(results) else 1)
 
 
