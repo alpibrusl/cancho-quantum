@@ -28,6 +28,8 @@ import sys
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 OUT = os.path.join(ROOT, "docs", "data", "hardware")
 CIRCUITS = ["bell", "ghz3", "ghz5", "ghz7", "toffoli", "qft4", "random5"]
@@ -212,7 +214,79 @@ def used_qubits(isa):
     return used
 
 
+def gate_counts(t):
+    """What the transpiled circuit `t` asks of each physical qubit and pair: `sx` and `x` per qubit (`rz` is virtual and free), `cz` per pair."""
+    one, two = {}, {}
+    for inst in t.data:
+        name = inst.operation.name
+        qs = [t.find_bit(q).index for q in inst.qubits]
+        if name in ("sx", "x"):
+            one[qs[0]] = one.get(qs[0], 0) + 1
+        elif name == "cz":
+            key = f"{min(qs)}-{max(qs)}"
+            two[key] = two.get(key, 0) + 1
+    return {"sx_x": {str(q): v for q, v in sorted(one.items())}, "cz": two}
+
+
+def run_rates(args):
+    """`--set rates`: many random mirror circuits of native gates on one line of qubits, for the gate-rate regression of docs/rates-regression.md."""
+    import random
+
+    from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+    import rates_lib
+
+    n = args.width
+    backend, stand_in = open_backend(args)
+    start = args.start if args.start is not None else 0
+    line = line_from(backend, start, n)
+    print("device:", backend.name, "qubits:", backend.num_qubits, "line:", line, "circuits:", args.circuits)
+    rnd = random.Random(args.seed)
+    design = rates_lib.design(rnd, n, args.circuits)
+    circuits = [rates_lib.qiskit_circuit(ops, n) for ops, _, _ in design]
+    # level 0: the transpiler only maps the gates onto the device's (they are native up to `sxdg`, which becomes rz sx rz) and keeps the circuit as it is
+    pm = generate_preset_pass_manager(backend=backend, optimization_level=0, seed_transpiler=args.seed, initial_layout=line)
+    isa = pm.run(circuits)
+    if not args.no_preflight:
+        print(f"pre-flight: {len(line)} qubits, read idle and after X")
+        bad, weak = report_scan(scan(backend, line, 1000, stand_in))
+        if bad:
+            raise SystemExit(f"qubits {bad} are broken: choose another --start, or run with --no-preflight to measure them anyway")
+    if stand_in:
+        from qiskit_aer import AerSimulator
+        from qiskit_aer.noise import NoiseModel
+
+        sim = AerSimulator(noise_model=NoiseModel.from_backend(backend), seed_simulator=2)
+        counts = [sim.run(c, shots=args.shots).result().get_counts() for c in isa]
+        job_ids = []
+    else:
+        from qiskit_ibm_runtime import SamplerV2
+
+        counts, job_ids = [], []
+        for k in range(0, len(isa), 100):       # jobs of 100 circuits
+            job = SamplerV2(mode=backend).run(isa[k:k + 100], shots=args.shots)
+            job_ids.append(job.job_id())
+            print("job", job.job_id(), f"({k + 1} to {min(k + 100, len(isa))}) submitted; waiting")
+            counts += [r.data.meas.get_counts() for r in job.result()]
+    rows = []
+    for i, (c, t) in enumerate(zip(counts, isa)):
+        rows.append({"circuit": f"r{i:03d}", "qubits": n, "ideal": {"0" * n: 1.0}, "device": pad(c, n), "transpiled": {"two_qubit_gates": sum(1 for g in t.data if g.operation.name == "cz"), "ops": dict(t.count_ops())},
+                     "gates": gate_counts(t)})
+    when = datetime.datetime.now(datetime.timezone.utc)
+    doc = {"device": backend.name, "date": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "shots": args.shots, "job_id": job_ids[0] if job_ids else None, "job_ids": job_ids,
+           "stand_in": stand_in, "note": "NOT hardware: Aer with the fake device's noise stands in for it" if stand_in else "real device", "set": "rates",
+           "line": line, "seed": args.seed, "circuits": rows}
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, f"{backend.name}-{when.strftime('%Y-%m-%d-%H%M')}-rates-from{start}{'-standin' if stand_in else ''}.json")
+    json.dump(doc, open(path, "w"), indent=1)
+    if stand_in:       # a real run's calibration is fetched afterwards (hw_model.py fetch); a stand-in has it at once
+        json.dump(backend.properties().to_dict(), open(path[: -len(".json")] + "-props.json", "w"), default=str)
+    print("wrote", os.path.relpath(path, ROOT))
+
+
 def run(args):
+    if args.set == "rates":
+        return run_rates(args)
     from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
     from qiskit_aer import AerSimulator
     from qiskit_aer.noise import NoiseModel
@@ -306,7 +380,9 @@ def main():
     r.add_argument("--backend", help="device name (default: the least busy real device with 7 or more qubits)")
     r.add_argument("--fake", help="a fake device class (e.g. FakePerth): test the script without an account")
     r.add_argument("--shots", type=int, default=2000)
-    r.add_argument("--set", choices=["spike", "mirror"], default="spike", help="spike: the seven circuits of tests/qasm; mirror: circuits followed by their inverse")
+    r.add_argument("--set", choices=["spike", "mirror", "rates"], default="spike", help="spike: the seven circuits of tests/qasm; mirror: circuits followed by their inverse; rates: many random native-gate mirror circuits for the gate-rate regression")
+    r.add_argument("--circuits", type=int, default=300, help="with --set rates: how many circuits")
+    r.add_argument("--width", type=int, default=5, help="with --set rates: how many qubits on the line")
     r.add_argument("--seed", type=int, default=1, help="transpiler seed (another seed can mean another placement)")
     r.add_argument("--start", type=int, help="place each circuit on a line of connected qubits beginning here (default: the transpiler chooses)")
     r.add_argument("--no-preflight", action="store_true", help="skip the read-out check of the qubits the circuits use (it costs one more job of two circuits)")
