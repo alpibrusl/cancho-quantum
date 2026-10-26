@@ -23,7 +23,7 @@
 - `python3 scripts/check_types.py`: 24 accept/reject fixtures.
 - `python3 scripts/check_noise.py`: noisy runs averaged over many seeds against an exact density-matrix calculation (needs qiskit).
 - `python3 scripts/check_profile.py`: the noise-profile converter and its use, against Qiskit.
-- `python3 scripts/check_qasm.py`: OpenQASM files agree between Qiskit's parser and qsim (needs qiskit).
+- `python3 scripts/check_qasm.py`: OpenQASM files agree between Qiskit's parser and qsim, and random circuits of sx sxdg id u2 u3 u cx h written by Qiskit give its statevector (needs qiskit).
 - `python3 scripts/check_diff.py`: amplitudes against Qiskit (needs qiskit, numpy).
 - `python3 scripts/check_determinism.py [--arm64]`: byte-identical output across builds.
 - `QSIM=... ML=... python3 scripts/rates_sim.py`: gate error rates recovered by `ml fit --model linear` from simulated mirror circuits, against known answers (cancho-ml; docs/rates-regression.md).

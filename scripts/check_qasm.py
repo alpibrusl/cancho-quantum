@@ -24,6 +24,7 @@ import tempfile
 
 import numpy as np
 from qiskit import QuantumCircuit, qasm2
+from qiskit.circuit.library import U2Gate
 from qiskit.quantum_info import Statevector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +69,50 @@ def compare(got, want):
 def run(exe, text):
     r = subprocess.run([exe], input=text, capture_output=True, text=True)
     return r.returncode, r.stdout
+
+
+def check_native(exe):
+    """`sx`, `sxdg`, `id`, `u2`, `u3` and `u`, which Qiskit writes for the gates of a device's basis and for a general rotation: random circuits of them (and `cx`) on 1 to 4 qubits,
+    angles that are rational multiples of pi, written by Qiskit's own `qasm2.dumps` and read by `qsim`, against Qiskit's statevector to 1e-12. A file whose angle Qiskit prints as a
+    decimal is counted, not failed, as in the main check."""
+    rng = np.random.default_rng(20261026)
+    ok = bad = refused = 0
+    for case in range(120):
+        n = int(rng.integers(1, 5))
+        qc = QuantumCircuit(n)
+        for _ in range(int(rng.integers(3, 12))):
+            q = int(rng.integers(0, n))
+            kind = rng.choice(["sx", "sxdg", "id", "u2", "u3", "u", "cx", "h"])
+            ang = lambda: math.pi * int(rng.integers(-8, 9)) / int(rng.choice([1, 2, 3, 4, 8]))
+            if kind == "cx":
+                if n > 1:
+                    t = int(rng.choice([k for k in range(n) if k != q]))
+                    qc.cx(q, t)
+            elif kind in ("sx", "sxdg", "id", "h"):
+                getattr(qc, kind)(q)
+            elif kind == "u2":
+                qc.append(U2Gate(ang(), ang()), [q])
+            else:
+                qc.u(ang(), ang(), ang(), q)
+        text = qasm2.dumps(qc)
+        code, out = run(exe, text)
+        if code == 3:
+            refused += 1
+            continue
+        if code != 0:
+            bad += 1
+            print(f"FAIL native case {case}: qsim exit {code}\n{text}")
+            continue
+        got = parse(out)[2]
+        sv = Statevector(qc).data
+        worst = max(abs(complex(*got.get(i, (0.0, 0.0))) - sv[i]) for i in range(len(sv)))
+        if worst > TOL:
+            bad += 1
+            print(f"FAIL native case {case}: worst amplitude error {worst:.2e}\n{text}")
+        else:
+            ok += 1
+    print(f"{'ok  ' if not bad else 'FAIL'} native gates (sx sxdg id u2 u3 u): {ok} random circuits agree with Qiskit to {TOL}; {refused} refused for a decimal angle; {bad} wrong")
+    return bad == 0 and ok > 0
 
 
 def main():
@@ -122,7 +167,8 @@ def main():
         f.write("\n")
     print(f"\n{len(names) - len(failed)} of {len(names)} files read by both parsers; "
           f"Qiskit-written QASM: {accepted} run, {refused} refused for a decimal angle")
-    sys.exit(1 if failed else 0)
+    native = check_native(exe)
+    sys.exit(1 if failed or not native else 0)
 
 
 if __name__ == "__main__":

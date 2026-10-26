@@ -26,7 +26,7 @@ import std.process;
 fn qsim_sources[&h](heap: &!h Heap, argv: buffer.Buffer) -> [heap] buffer.Buffer {
     var a = argv;
     a = buffer.append(heap, a, "src/complex.cho\0src/density.cho\0src/dump.cho\0src/gates.cho\0src/main.cho\0src/measure.cho\0");
-    a = buffer.append(heap, a, "src/noise.cho\0src/profile.cho\0src/qasm.cho\0src/qubit.cho\0src/reader.cho\0src/state.cho\0");
+    a = buffer.append(heap, a, "src/noise.cho\0src/profile.cho\0src/qasm.cho\0src/qpu.cho\0src/qubit.cho\0src/reader.cho\0src/state.cho\0");
     return a;
 }
 
