@@ -19,7 +19,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 HW = os.path.join(ROOT, "docs", "data", "hardware")
-FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "files props qasm3 model main".split()]
+FILES = [os.path.join(ROOT, "tools", "hw", f"{m}.cho") for m in "files props qasm3 model gof main".split()]
 
 
 def build():
@@ -100,9 +100,81 @@ def check_relax():
     return ok
 
 
+def stage(stem_path, suffixes):
+    d = tempfile.mkdtemp(prefix="hwrun-")
+    for suffix in suffixes:
+        shutil.copy(stem_path + suffix, os.path.join(d, os.path.basename(stem_path) + suffix))
+    return os.path.join(d, os.path.basename(stem_path) + ".json")
+
+
+def check_gof(hw):
+    stats = os.environ.get("STATS")
+    if not stats:
+        print("skip hw gof: STATS (a built cancho-stats `stats`) is not set")
+        return True
+    want = {}
+    for r in json.load(open(os.path.join(HW, "gof.json"))):
+        want.setdefault(r["file"], []).append(r)
+    worst, runs, bad = 0.0, 0, []
+    for name, rows in sorted(want.items()):
+        stem = os.path.join(HW, name[:-5])
+        job = stage(stem, [".json", "-qsim.json"])
+        r = subprocess.run([hw, "gof", job, "--stats", stats, "--tmp", os.path.join(os.path.dirname(job), "t-")], capture_output=True, text=True)
+        if r.returncode:
+            bad.append((name, r.stderr.strip()[:200]))
+            continue
+        got = json.load(open(job[:-5] + "-gof.json"))["rows"]
+        runs += 1
+        for x, y in zip(got, rows):
+            if x["circuit"] != y["circuit"] or float(x["df"]) != float(y["df"]):
+                bad.append((name, x["circuit"] + ": circuit or degrees of freedom differ"))
+                continue
+            worst = max(worst, abs(x["statistic"] - float(y["statistic"])) / max(1.0, abs(float(y["statistic"]))))
+            worst = max(worst, abs(x["p_value"] - float(y["p_value"])) / max(1e-300, abs(float(y["p_value"]))))
+    ok = not bad and worst <= 1e-9 and runs > 0
+    print(f"{'ok  ' if ok else 'FAIL'} hw gof on {runs} committed runs: statistic, degrees of freedom and p-value agree with hw_gof.py (worst relative difference {worst:.1e})")
+    for b in bad:
+        print("   ", b)
+    return ok
+
+
+def check_mitigate(hw, qm):
+    worst, runs, bad = 0.0, 0, []
+    for want_path in sorted(glob.glob(os.path.join(HW, "*-mitigated.json"))):
+        stem = want_path[: -len("-mitigated.json")]
+        job = stage(stem, [".json", "-circuits.json", "-props.json"])
+        r = subprocess.run([hw, "mitigate", job, "--qmitigate", qm], capture_output=True, text=True)
+        if r.returncode:
+            bad.append((os.path.basename(stem), r.stderr.strip()[:200]))
+            continue
+        got, want = json.load(open(job[:-5] + "-mitigated.json"))["rows"], json.load(open(want_path))["rows"]
+        runs += 1
+        for x, y in zip(got, want):
+            if x["circuit"] != y["circuit"] or x["physical_qubits"] != y["physical_qubits"]:
+                bad.append((os.path.basename(stem), x["circuit"] + ": circuit or physical qubits differ"))
+                continue
+            for k in ("tvd_before", "tvd_after", "clipped"):
+                worst = max(worst, abs(x[k] - y[k]))
+            for k, v in y["readout_errors"].items():
+                worst = max(worst, abs(x["readout_errors"][k][0] - v[0]), abs(x["readout_errors"][k][1] - v[1]))
+    ok = not bad and worst <= 1e-9 and runs > 0
+    print(f"{'ok  ' if ok else 'FAIL'} hw mitigate on {runs} committed runs: distances before and after, the clipped mass and the read-out errors agree with hw_mitigate.py to {worst:.1e}")
+    for b in bad:
+        print("   ", b)
+    return ok
+
+
+def build_tool(name):
+    out = os.path.join(tempfile.mkdtemp(prefix=name + "-"), name)
+    r = subprocess.run([os.environ.get("CANCHO", "cancho"), "build", os.path.join(ROOT, "tools", name + ".cho"), "--std", "-o", out], capture_output=True, text=True)
+    if r.returncode:
+        sys.exit(f"cannot build tools/{name}.cho:\n" + r.stderr[-800:])
+    return out
+
+
 def main():
     hw, qsim = build(), qsim_exe()
-    results = [check_relax(), check_model(hw, qsim)]
+    results = [check_relax(), check_model(hw, qsim), check_gof(hw), check_mitigate(hw, build_tool("qmitigate"))]
     sys.exit(0 if all(results) else 1)
 
 

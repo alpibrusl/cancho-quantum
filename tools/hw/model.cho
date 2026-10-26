@@ -401,3 +401,73 @@ pub fn tvd[&a, &b](p: &a [float], q: &b [float], size: int) -> [] float {
     }
     return 0.5 * s;
 }
+
+// Build the circuit in `ops`, run it and put the model's distribution over the classical bits into `out` (size at least 2^n). `phys` and `measured` are filled as in `build`. 0, or 2 after a refusal.
+pub fn predict[&h, &i, &x, &c, &q, &o, &d, &u, &p, &m, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, qsim: &q [byte], ops: &o [int], dev: &d [float], czp: &u [int], phys: &!p [int], measured: &!m [int], out: &!r [float]) -> [heap, err_write, exec(""), clock, poll] int {
+    let (text, status0) = build(heap, io, ops, dev, czp, phys, measured);
+    var status = status0;
+    let compact = box_slice(heap, 1024, 0.0);
+    if status == 0 {
+        borrow mut compact as &!cw in {
+            borrow text as &tr in {
+                status = simulate(heap, io, exec, clock, qsim, buffer.bytes(tr), phys[0], contents(cw));
+            }
+        }
+    }
+    if status == 0 {
+        borrow compact as &cr in {
+            status = confuse(io, contents(cr), phys[0], dev, phys, measured, out);
+        }
+    }
+    buffer.drop(heap, text);
+    unbox_slice(heap, compact);
+    return status;
+}
+
+// Only the layout of the circuit in `ops`: `phys` (the qubits it uses) and `measured` (the physical qubit of each classical bit), filled as `build` does, without the calibration.
+pub fn layout[&o, &p, &m](ops: &o [int], phys: &!p [int], measured: &!m [int]) -> [] int {
+    var q = 0;
+    while q < props.max_qubits() {
+        phys[100 + q] = 0;
+        q = q + 1;
+    }
+    var k = 0;
+    while k < ops[0] {
+        let kind = ops[1 + 5 * k];
+        if kind != 4 {
+            phys[100 + ops[2 + 5 * k]] = 1;
+            if kind == 3 {
+                phys[100 + ops[3 + 5 * k]] = 1;
+            }
+        }
+        k = k + 1;
+    }
+    var n = 0;
+    q = 0;
+    while q < props.max_qubits() {
+        if phys[100 + q] == 1 {
+            n = n + 1;
+            phys[n] = q;
+            phys[100 + q] = n - 1;
+        }
+        q = q + 1;
+    }
+    phys[0] = n;
+    var c0 = 0;
+    while c0 < 64 {
+        measured[c0] = 0 - 1;
+        c0 = c0 + 1;
+    }
+    measured[63] = 0;
+    k = 0;
+    while k < ops[0] {
+        if ops[1 + 5 * k] == 5 {
+            measured[ops[4 + 5 * k]] = ops[2 + 5 * k];
+            if ops[4 + 5 * k] + 1 > measured[63] {
+                measured[63] = ops[4 + 5 * k] + 1;
+            }
+        }
+        k = k + 1;
+    }
+    return n;
+}
