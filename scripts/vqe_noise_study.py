@@ -4,7 +4,7 @@
     CANCHO=... OPT=... python3 scripts/vqe_noise_study.py [--layers 3] [--seeds 5]
 
 For each setting, `vqe --shots S` is run with seeds 1 to N; `true_error` is the exact energy at the angles found minus the exact ground state energy (not what the optimiser saw, which noise makes optimistic: it can lie below the ground
-state energy, and which a read-out error makes pessimistic unless mitigated; the column `reported - exact` shows both). Nelder-Mead runs one `opt` run of at most 4000 evaluations, BFGS one run with a gradient tolerance of 1e-6 (the noise usually stops it first: `converged` false is "precision loss").
+state energy, and which a read-out error makes pessimistic unless mitigated; the column `reported - exact` shows both). SPSA runs 200 or 800 iterations with the driver's defaults `--a 0.3 --c 0.2` (chosen with the seeds 101 to 104, not those of the table). Nelder-Mead runs one `opt` run of at most 4000 evaluations, BFGS one run with a gradient tolerance of 1e-6 (the noise usually stops it first: `converged` false is "precision loss").
 """
 import json
 import os
@@ -34,11 +34,11 @@ def main():
     settings = [(S, 0.0, False) for S in (100, 1000, 4096)] + [(1000, 0.03, False), (1000, 0.03, True)]
     print(f"| method | shots per basis | read-out error | mitigated | median true error | worst true error | median (what the optimiser reported - exact) | median shots spent | converged |")
     print("|---|---|---|---|---|---|---|---|---|")
-    for method in ("bfgs", "nelder-mead"):
+    for label, method, extra in (("bfgs", "bfgs", []), ("nelder-mead", "nelder-mead", []), ("spsa, 200 iterations", "spsa", ["--maxiter", "200"]), ("spsa, 800 iterations", "spsa", ["--maxiter", "800"])):
         for S, ro, mit in settings:
             res = []
             for seed in range(1, seeds + 1):
-                args = [driver, "--method", method, "--layers", layers, "--opt", OPT, "--energy", energy, "--gradient", gradient, "--sampled", sampled, "--shots", str(S), "--seed", str(seed), "--restarts", "1", "--maxfev", "4000"]
+                args = [driver, "--method", method, "--layers", layers, "--opt", OPT, "--energy", energy, "--gradient", gradient, "--sampled", sampled, "--shots", str(S), "--seed", str(seed), "--restarts", "1", "--maxfev", "4000", *extra]
                 if ro:
                     args += ["--readout", str(ro)]
                 if mit:
@@ -48,7 +48,7 @@ def main():
                     sys.exit(f"vqe failed: {r.stderr[-300:]}")
                 res.append(json.loads(r.stdout))
             errs = [x["true_error"] for x in res]
-            print(f"| {method} | {S} | {ro} | {'yes' if mit else 'no'} | {statistics.median(errs):.3f} | {max(errs):.3f} | {statistics.median(x['error'] for x in res):+.3f} | {statistics.median(x['shots'] for x in res):,.0f} | {sum(x['converged'] for x in res)} of {seeds} |")
+            print(f"| {label} | {S} | {ro} | {'yes' if mit else 'no'} | {statistics.median(errs):.3f} | {max(errs):.3f} | {statistics.median(x['error'] for x in res):+.3f} | {statistics.median(x['shots'] for x in res):,.0f} | {sum(x['converged'] for x in res)} of {seeds} |")
 
 
 main()

@@ -5,7 +5,7 @@ The ground state energy of a transverse-field Ising chain of four qubits,
     H = - Z0 Z1 - Z1 Z2 - Z2 Z3 - (X0 + X1 + X2 + X3)        (the critical field)
 
 found the way a quantum computer would be asked to: prepare a parametrised state, measure its energy, change the parameters, repeat. Here the "measurement" is exact (the state vector of
-`qsim`'s own `gates`), and the optimiser is [cancho-opt](https://github.com/alpibrusl/cancho-opt)'s `opt minimize`: BFGS with the exact parameter-shift gradient (the default), or Nelder-Mead. Five small programs:
+`qsim`'s own `gates`), and the optimiser is [cancho-opt](https://github.com/alpibrusl/cancho-opt)'s `opt minimize`: BFGS with the exact parameter-shift gradient (the default), Nelder-Mead, or SPSA (`--method spsa`, for the sampled energy). Five small programs:
 
 | program | does |
 |---|---|
@@ -49,12 +49,13 @@ with it to 1e-11. With 3 layers the ansatz contains the ground state and both fi
 
 ## Checks
 
-`CANCHO=... OPT=... python3 scripts/check_vqe.py [--long]` (`--long` adds the 3-layer Nelder-Mead run, about two minutes; `OPT` is a cancho-opt build with `--method bfgs`):
+`CANCHO=... OPT=... python3 scripts/check_vqe.py [--long]` (`--long` adds the 3-layer Nelder-Mead run, about two minutes; `OPT` is a cancho-opt build with `--method bfgs` and `--method spsa`):
 
 * `vqe-energy` at 300 random angle vectors equals an independent numpy implementation to 2.2e-15, and is never below the exact ground state energy (the variational principle);
 * `vqe-gradient` at 60 random angle vectors equals numpy's own parameter-shift gradient to 3e-15 and central finite differences of the energy to 1e-9;
 * the exact energy `vqe` prints equals numpy's `eigvalsh` to 1.5e-14;
 * `vqe-energy` and `vqe-gradient` refuse 3 angles, words, `nan` and an infinity;
+* SPSA reaches an error below 0.05 on the exact energy (800 iterations) and below 0.15 sampled with 1,000 shots (200 iterations), on seeds 1 to 3, with `evaluations = 2 nit + 1` and the shots as counted;
 * the runs above agree with scipy's best BFGS minimum for the same ansatz, and the 3- and 4-layer BFGS runs reach the exact energy to 1e-9;
 * eighteen deliberate bugs in `model.cho` are each caught (eleven here, seven in the sampling code, below): CX as CZ, the sign of the field, of the ZZ term, the factor 2 in the X term, the sign of the matrix diagonal, the Jacobi rotation, and for the gradient the shift (2π/2, π/4), the missing 1/2, its sign, and an angle not put back.
 
@@ -100,11 +101,27 @@ angle vectors, shot counts and seeds and requires no failure.
 | Nelder-Mead | 4096 | 0 | no | 0.088 | 0.092 | -0.048 | 32,768,000 | 0 of 5 |
 | Nelder-Mead | 1000 | 0.03 | no | 0.180 | 0.240 | +0.261 | 8,000,000 | 0 of 5 |
 | Nelder-Mead | 1000 | 0.03 | yes | 0.214 | 0.434 | -0.078 | 8,000,000 | 0 of 5 |
+| SPSA, 200 iterations | 100 | 0.0 | no | 0.122 | 0.196 | +0.099 | 80,200 | 5 of 5 (completed) |
+| SPSA, 200 iterations | 1000 | 0.0 | no | 0.056 | 0.077 | +0.063 | 802,000 | 5 of 5 (completed) |
+| SPSA, 200 iterations | 4096 | 0.0 | no | 0.041 | 0.076 | +0.029 | 3,284,992 | 5 of 5 (completed) |
+| SPSA, 200 iterations | 1000 | 0.03 | no | 0.055 | 0.076 | +0.409 | 802,000 | 5 of 5 (completed) |
+| SPSA, 200 iterations | 1000 | 0.03 | yes | 0.059 | 0.094 | +0.049 | 802,000 | 5 of 5 (completed) |
+| SPSA, 800 iterations | 100 | 0.0 | no | 0.084 | 0.137 | +0.059 | 320,200 | 5 of 5 (completed) |
+| SPSA, 800 iterations | 1000 | 0.0 | no | 0.034 | 0.047 | +0.085 | 3,202,000 | 5 of 5 (completed) |
+| SPSA, 800 iterations | 4096 | 0.0 | no | 0.033 | 0.037 | +0.053 | 13,115,392 | 5 of 5 (completed) |
+| SPSA, 800 iterations | 1000 | 0.03 | no | 0.042 | 0.059 | +0.367 | 3,202,000 | 5 of 5 (completed) |
+| SPSA, 800 iterations | 1000 | 0.03 | yes | 0.037 | 0.052 | -0.042 | 3,202,000 | 5 of 5 (completed) |
 
+* **SPSA** (`opt minimize --method spsa`, cancho-opt section 11: two objective evaluations per iteration whatever the number of angles; 200 or 800 iterations, `--a 0.3 --c 0.2`, picked on seeds 101 to 104 so that they are not the table's seeds)
+  "completes" its iterations (it has no convergence test, so the last column is not comparable to the others). At 100 shots it is the clear winner (true error 0.12 and 0.08 against BFGS's 0.33); at 1,000 shots 200 iterations
+  already match BFGS (0.056 against 0.063) with 2.5 times fewer shots (802,000 against 2,046,000), and 800 iterations are better (0.034) for more (3.2 million); at 4,096 shots 200 iterations match BFGS (0.041 against 0.043) with half the shots.
+  Its error stops falling with the shots: 800 iterations give 0.034 and 0.033 at 1,000 and 4,096 shots, and **with the exact energy (no shot noise) the same 800 iterations still stop at 0.027 to 0.036** (`scripts/check_vqe.py`), where BFGS
+  reaches 1e-9. So SPSA's floor here is its own, not shot noise (the cause, probably the gain schedule, was not examined). A tuned `a`, `c` or more iterations may lower it; that was not examined beyond the small grid above.
+  Its reported energy is one fresh evaluation at the final angles, not the best of many noisy ones, so it is not optimistic: it lies *above* the exact energy (+0.03 to +0.1) in every row without read-out error.
 * **BFGS is better than Nelder-Mead at every setting**, in the true error (about 2 to 3 times smaller) and in the shots (about 3 to 5 times fewer). Neither converges: BFGS stops on "precision loss" (the gradient noise puts a floor under
   what the line search can resolve), Nelder-Mead at its 4,000-evaluation limit. The error does not fall as `1/sqrt(S)` from 1,000 to 4,096 shots (0.063 to 0.043, where 0.031 would be that law); why was not examined.
 * **The reported energy is not to be trusted, in both directions.** Noise makes it optimistic: minimising a noisy objective picks the angles where the noise happened to be low, so it can lie *below* the exact ground state energy
   (Nelder-Mead at 100 shots: -0.24, a violation of the variational principle that no exact energy could show), while the true energy at those angles is always above it. A read-out error makes it pessimistic (+0.3) unless mitigated.
 * **Mitigation changes the number you quote, not where the optimum is:** the true error is about the same with and without it (0.064 and 0.057 for BFGS), since the read-out error scales the landscape without moving its minimum
   much, but the reported energy is 0.3 off without it and 0.07 off with it (it inflates the variance by `1 / (1 - 2 P)^2`, so it is noisier).
-* One machine, one seed set, one ansatz; the shots counted are `runs x (1 + 2 P) x 2 S` for BFGS (one run per distinct point) and `runs x 2 S` for Nelder-Mead.
+* One machine, one seed set, one ansatz; the shots counted are `runs x (1 + 2 P) x 2 S` for BFGS (one run per distinct point) and `runs x 2 S` for Nelder-Mead and SPSA (`2 nit + 1` runs).

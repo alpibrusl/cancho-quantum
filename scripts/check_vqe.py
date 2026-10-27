@@ -277,6 +277,24 @@ def main():
                 bad += not reach
                 extra = " (the exact energy to 1e-9)" if reach else " (NOT the exact energy)"
             print(f"{'ok  ' if good else 'FAIL'} vqe {method} with {layers} layer(s): {got['energy']:.10f} in {got['evaluations']} energy and {got['gradients']} gradient evaluations; the best of 30 scipy BFGS runs finds {best:.10f} (difference {diff:.1e}); error against the exact energy {got['error']:.2e}{extra}")
+        # SPSA (cancho-opt section 11): two evaluations per iteration; the exact energy is approached, not reached; and with shots it still gets there
+        for label, extra, limit, want_spent in (("exact energy", ["--maxiter", "800"], 0.05, 0), ("sampled, 1000 shots", ["--maxiter", "200", "--shots", "1000", "--sampled", sampled], 0.15, (2 * 200 + 1) * 2 * 1000)):
+            errs = []
+            for seed in (1, 2, 3):
+                r = subprocess.run([driver, "--method", "spsa", "--layers", "3", "--opt", opt, "--energy", energy, "--seed", str(seed), *extra], capture_output=True, text=True)
+                if r.returncode != 0:
+                    bad += 1
+                    print("FAIL vqe spsa", label, r.returncode, r.stderr[-300:])
+                    continue
+                got = json.loads(r.stdout)
+                errs.append(got["true_error"])
+                spent_ok = got["shots"] == want_spent and got["evaluations"] == 2 * int(extra[1]) + 1 and got["converged"] is True and got["method"] == "spsa"
+                bad += not spent_ok
+                if not spent_ok:
+                    print("FAIL vqe spsa accounting", got)
+            good = len(errs) == 3 and all(0 <= e < limit for e in errs)
+            bad += not good
+            print(f"{'ok  ' if good else 'FAIL'} vqe spsa, {label}, 3 layers, seeds 1 to 3: true errors {', '.join(f'{e:.3f}' for e in errs)} (all below {limit}), evaluations 2 nit + 1, shots as counted")
     print("ok" if not bad else f"FAIL: {bad}")
     sys.exit(1 if bad else 0)
 
