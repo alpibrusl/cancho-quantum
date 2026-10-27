@@ -3,8 +3,11 @@ edition 7;
 // `vqe`: a variational quantum eigensolver in cancho (README.md). It asks cancho-opt's `opt minimize` (Nelder-Mead) for the angles that minimise the energy of the state that `vqe-energy` prepares,
 // and prints the result next to the exact ground state energy.
 //
-//     vqe [--method bfgs|nelder-mead] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N]
+//     vqe [--method bfgs|nelder-mead|spsa] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N] [--maxiter N] [--a A] [--c C]
 //         [--shots S [--seed K] [--readout P] [--mitigate] [--sampled PATH]]
+//
+// With `--method spsa` (`opt minimize --method spsa`, no gradient, two evaluations per iteration whatever the number of angles) the optimiser runs `--maxiter` iterations (default 200) with step gain `--a` (default 0.3) and probe size `--c` (default 0.2; chosen on seeds 101-104 of the study, README.md); `--seed` is also its seed; `converged` then means that it
+// completed its iterations (SPSA has no convergence test), and the shots spent are `evaluations` times 2 S.
 //
 // L is 1 to 4 (default 2: 12 angles). The default method is BFGS (`opt minimize --method bfgs` on `vqe-gradient`, whose gradient is exact: the parameter-shift rule), one run. With `--method nelder-mead` (on `vqe-energy`) a single run
 // stops early in this many dimensions (it can "converge" on a point that is not a minimum), so `opt` is started R times (default 4), each from where the last one stopped. `--opt` and `--energy` are the programs to start (defaults `opt` and `vqe-energy`, found on PATH). One JSON object on standard output:
@@ -168,16 +171,32 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         k1 = k1 + 1;
     }
     var use_bfgs = true;
+    var use_spsa = false;
     let method_text = flag(args, "--method");
     if len(method_text) > 0 {
         if bytes.equal(method_text, "nelder-mead") {
             use_bfgs = false;
+        } else if bytes.equal(method_text, "spsa") {
+            use_bfgs = false;
+            use_spsa = true;
         } else if !bytes.equal(method_text, "bfgs") {
-            return refuse(io, "--method is bfgs or nelder-mead");
+            return refuse(io, "--method is bfgs, nelder-mead or spsa");
         }
     }
+    var maxiter = flag(args, "--maxiter");
+    if len(maxiter) == 0 {
+        maxiter = "200";
+    }
+    var gain = flag(args, "--a");
+    if len(gain) == 0 {
+        gain = "0.3";
+    }
+    var probe = flag(args, "--c");
+    if len(probe) == 0 {
+        probe = "0.2";
+    }
     var restarts = 4;
-    if use_bfgs {
+    if use_bfgs || use_spsa {
         restarts = 1;
     }
     let restart_text = flag(args, "--restarts");
@@ -218,6 +237,23 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
                 argv = buffer.append(heap, argv, sampled_path);
             } else {
                 argv = buffer.append(heap, argv, gradient_path);
+            }
+        } else if use_spsa {
+            argv = buffer.append(heap, argv, "\0--method\0spsa\0--maxiter\0");
+            argv = buffer.append(heap, argv, maxiter);
+            argv = buffer.append(heap, argv, "\0--a\0");
+            argv = buffer.append(heap, argv, gain);
+            argv = buffer.append(heap, argv, "\0--c\0");
+            argv = buffer.append(heap, argv, probe);
+            if len(seed_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--seed\0");
+                argv = buffer.append(heap, argv, seed_text);
+            }
+            argv = buffer.append(heap, argv, "\0--\0");
+            if shots > 0 {
+                argv = buffer.append(heap, argv, sampled_path);
+            } else {
+                argv = buffer.append(heap, argv, energy_path);
             }
         } else {
             argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
@@ -277,7 +313,11 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
                         if use_bfgs {
                             gradients = gradients + json.to_int(src, t, json.get(src, t, 0, "njev"));
                         }
-                        converged = json.to_bool(t, json.get(src, t, 0, "converged"));
+                        if use_spsa {
+                            converged = json.to_bool(t, json.get(src, t, 0, "completed"));
+                        } else {
+                            converged = json.to_bool(t, json.get(src, t, 0, "converged"));
+                        }
                         borrow mut point as &!pw in {
                             var m2 = 0;
                             while m2 < count {
@@ -343,6 +383,8 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         w = json.put_key(heap, w, "method");
         if use_bfgs {
             w = json.put_string(heap, w, "bfgs");
+        } else if use_spsa {
+            w = json.put_string(heap, w, "spsa");
         } else {
             w = json.put_string(heap, w, "nelder-mead");
         }
