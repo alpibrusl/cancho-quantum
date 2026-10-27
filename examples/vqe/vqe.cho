@@ -4,13 +4,15 @@ edition 7;
 // and prints the result next to the exact ground state energy.
 //
 //     vqe [--method bfgs|nelder-mead] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N]
+//         [--shots S [--seed K] [--readout P] [--mitigate] [--sampled PATH]]
 //
 // L is 1 to 4 (default 2: 12 angles). The default method is BFGS (`opt minimize --method bfgs` on `vqe-gradient`, whose gradient is exact: the parameter-shift rule), one run. With `--method nelder-mead` (on `vqe-energy`) a single run
 // stops early in this many dimensions (it can "converge" on a point that is not a minimum), so `opt` is started R times (default 4), each from where the last one stopped. `--opt` and `--energy` are the programs to start (defaults `opt` and `vqe-energy`, found on PATH). One JSON object on standard output:
 //
 //     {"method": "bfgs", "layers": 2, "parameters": 12, "exact": E0, "energy": E, "error": E - E0, "evaluations": N, "gradients": G, "restarts": R, "converged": true}
 //
-// The status is 0 when `opt` converged, 1 when it stopped at its limit (the result is printed all the same), 2 on a refusal.
+// With `--shots S` the energy is the one `vqe-sampled` estimates from 2 S shots (README.md, "Sampling"); `energy` is then what the optimiser saw, `true_energy` the exact energy at the angles it found (`vqe-energy` run once more), and
+// `shots` the total spent, counting one run of the objective for each distinct point (`gradients` of them for BFGS, `evaluations` for Nelder-Mead). The status is 0 when `opt` converged, 1 when it stopped at its limit (the result is printed all the same), 2 on a refusal.
 import qc.gates;
 import std.buffer;
 import std.bytes;
@@ -60,7 +62,7 @@ fn flag[&g](args: &g Args, name: &static [byte]) -> [args] &static [byte] {
 }
 
 // `opt` started with `argv`; its status (255 when it could not be run) and standard output.
-fn run_opt[&h, &i, &x, &c, &p, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], argv: &a [byte]) -> [heap, err_write, exec(""), clock, poll] (int, buffer.Buffer) {
+fn run_opt[&h, &i, &x, &c, &p, &a, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], argv: &a [byte], input: &n [byte]) -> [heap, err_write, exec(""), clock, poll] (int, buffer.Buffer) {
     var out = buffer.empty(heap, 0);
     var rc = 255;
     match process.channels_with_errors() {
@@ -75,7 +77,7 @@ fn run_opt[&h, &i, &x, &c, &p, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec("")
                     refuse(io, "cannot start opt: is it built, and on the PATH or given with --opt?");
                 }
                 Spawned::Ok(child) => {
-                    let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, "", 1048576, 1048576, 600000);
+                    let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 1048576, 1048576, 600000);
                     buffer.drop(heap, out);
                     buffer.drop(heap, errors);
                     out = got;
@@ -85,6 +87,37 @@ fn run_opt[&h, &i, &x, &c, &p, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec("")
         }
     }
     return (rc, out);
+}
+
+// `text` without the white space at its ends
+fn trim[&s](text: &s [byte]) -> [] &s [byte] {
+    var a = 0;
+    var b = len(text);
+    while a < b && (int_of(text[a]) == ' ' || int_of(text[a]) == 10 || int_of(text[a]) == 13) {
+        a = a + 1;
+    }
+    while b > a && (int_of(text[b - 1]) == ' ' || int_of(text[b - 1]) == 10 || int_of(text[b - 1]) == 13) {
+        b = b - 1;
+    }
+    return text[a..b];
+}
+
+// the number written in `text` (digits only), or -1
+fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
 }
 
 fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, exec(""), clock, poll, args] int {
@@ -111,6 +144,28 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
     var gradient_path = flag(args, "--gradient");
     if len(gradient_path) == 0 {
         gradient_path = "vqe-gradient";
+    }
+    var shots = 0;
+    let shots_text = flag(args, "--shots");
+    if len(shots_text) > 0 {
+        shots = digits(shots_text);
+        if shots < 1 || shots > 4096 {
+            return refuse(io, "--shots is 1 to 4096");
+        }
+    }
+    var sampled_path = flag(args, "--sampled");
+    if len(sampled_path) == 0 {
+        sampled_path = "vqe-sampled";
+    }
+    let seed_text = flag(args, "--seed");
+    let readout_text = flag(args, "--readout");
+    var mitigate = false;
+    var k1 = 1;
+    while k1 < arg_count(args) {
+        if bytes.equal(arg(args, k1), "--mitigate") {
+            mitigate = true;
+        }
+        k1 = k1 + 1;
     }
     var use_bfgs = true;
     let method_text = flag(args, "--method");
@@ -159,18 +214,44 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         }
         if use_bfgs {
             argv = buffer.append(heap, argv, "\0--method\0bfgs\0--gtol\01e-6\0--maxiter\01000\0--\0");
-            argv = buffer.append(heap, argv, gradient_path);
+            if shots > 0 {
+                argv = buffer.append(heap, argv, sampled_path);
+            } else {
+                argv = buffer.append(heap, argv, gradient_path);
+            }
         } else {
             argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
             argv = buffer.append(heap, argv, maxfev);
             argv = buffer.append(heap, argv, "\0--\0");
-            argv = buffer.append(heap, argv, energy_path);
+            if shots > 0 {
+                argv = buffer.append(heap, argv, sampled_path);
+            } else {
+                argv = buffer.append(heap, argv, energy_path);
+            }
+        }
+        if shots > 0 {
+            argv = buffer.append(heap, argv, "\0--shots\0");
+            argv = buffer.append(heap, argv, shots_text);
+            if len(seed_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--seed\0");
+                argv = buffer.append(heap, argv, seed_text);
+            }
+            if len(readout_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--readout\0");
+                argv = buffer.append(heap, argv, readout_text);
+            }
+            if mitigate {
+                argv = buffer.append(heap, argv, "\0--mitigate");
+            }
+            if use_bfgs {
+                argv = buffer.append(heap, argv, "\0--gradient");
+            }
         }
         argv = buffer.push(heap, argv, byte_of(0));
         var rc = 255;
         var got = buffer.empty(heap, 0);
         borrow argv as &ar in {
-            let (r2, o2) = run_opt(heap, io, exec, clock, opt_path, buffer.bytes(ar));
+            let (r2, o2) = run_opt(heap, io, exec, clock, opt_path, buffer.bytes(ar), "");
             rc = r2;
             buffer.drop(heap, got);
             got = o2;
@@ -212,6 +293,43 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         buffer.drop(heap, got);
         round = round + 1;
     }
+    // the exact energy at the angles found
+    var true_energy = best;
+    if status == 0 {
+        var text = buffer.empty(heap, 256);
+        borrow point as &pr in {
+            var k2 = 0;
+            while k2 < count {
+                if k2 > 0 {
+                    text = buffer.push(heap, text, byte_of(' '));
+                }
+                region r {
+                    let scratch = alloc_slice[r](32, byte_of(0));
+                    let n = fmt.float_into(scratch, contents(pr)[k2]);
+                    text = buffer.append(heap, text, scratch[0..n]);
+                }
+                k2 = k2 + 1;
+            }
+        }
+        var got2 = buffer.empty(heap, 0);
+        var rc2 = 255;
+        borrow text as &tr in {
+            let (r3, o3) = run_opt(heap, io, exec, clock, energy_path, "", buffer.bytes(tr));
+            rc2 = r3;
+            buffer.drop(heap, got2);
+            got2 = o3;
+        }
+        borrow got2 as &g2 in {
+            let (okv, v) = model.number(trim(buffer.bytes(g2)));
+            if rc2 == 0 && okv {
+                true_energy = v;
+            } else {
+                status = refuse(io, "vqe-energy did not give the energy at the angles found");
+            }
+        }
+        buffer.drop(heap, got2);
+        buffer.drop(heap, text);
+    }
     unbox_slice(heap, point);
     if status == 0 {
         let m = box_slice(heap, 256, 0.0);
@@ -238,6 +356,20 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         w = json.put_float(heap, w, best);
         w = json.put_key(heap, w, "error");
         w = json.put_float(heap, w, best - exact);
+        w = json.put_key(heap, w, "true_energy");
+        w = json.put_float(heap, w, true_energy);
+        w = json.put_key(heap, w, "true_error");
+        w = json.put_float(heap, w, true_energy - exact);
+        w = json.put_key(heap, w, "shots");
+        var spent = 0;
+        if shots > 0 {
+            if use_bfgs {
+                spent = gradients * (1 + 2 * count) * 2 * shots;
+            } else {
+                spent = evaluations * 2 * shots;
+            }
+        }
+        w = json.put_int(heap, w, spent);
         w = json.put_key(heap, w, "evaluations");
         w = json.put_int(heap, w, evaluations);
         w = json.put_key(heap, w, "gradients");

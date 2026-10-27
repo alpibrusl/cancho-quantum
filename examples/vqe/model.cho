@@ -3,6 +3,8 @@ edition 7;
 module vqe.model;
 
 import qc.gates;
+import qc.measure;
+import qc.profile;
 import std.fmt;
 import std.io;
 import std.json;
@@ -108,6 +110,102 @@ pub fn gradient[&s, &t, &g](st: &!s [float], theta: &!t [float], layers: int, gr
         let up = energy(st, theta, layers);
         theta[j] = keep - half_pi;
         let down = energy(st, theta, layers);
+        theta[j] = keep;
+        grad[j] = (up - down) / 2.0;
+        j = j + 1;
+    }
+    return e;
+}
+
+// ---- sampled energies ---------------------------------------------------------------------------------------------------------------------------------------------
+
+// The seed of the sampler for the angles `theta`: FNV-1a over their bits, mixed with `seed`, never 0 (a function of the angles, so the objective is a function).
+pub fn seed_of[&t](theta: &t [float], seed: int) -> [] int {
+    var h = 1469598103934665603;
+    var k = 0;
+    while k < len(theta) {
+        h = wrapping_mul(h ^ bits_of(theta[k]), 1099511628211);
+        k = k + 1;
+    }
+    h = wrapping_add(wrapping_mul(h ^ seed, 6364136223846793005), 1442695040888963407);
+    if h == 0 {
+        return 1;
+    }
+    return h;
+}
+
+// +1 for a bit that is 0, -1 for one that is 1
+fn spin(b: int, q: int) -> [] float {
+    if b >> q & 1 == 0 {
+        return 1.0;
+    }
+    return 0.0 - 1.0;
+}
+
+// The energy estimated from `shots` samples of the state in the Z basis and `shots` in the X basis (a Hadamard on every qubit first), each bit read wrongly with the probability set in `rng`
+// (`readout_ppm` parts per million, as `set_readout`); `mitigate` divides the expectations by their known read-out factors. `st` holds the 2 << 4 floats of the state, `st2` the same for the X basis,
+// `picks` `shots` integers.
+pub fn sampled[&s, &u, &t, &r, &p](st: &!s [float], st2: &!u [float], theta: &t [float], layers: int, shots: int, seed: int, readout_ppm: int, mitigate: bool, rng: &!r [int], picks: &!p [int]) -> [] float {
+    let n = qubits();
+    prepare(st, theta, layers);
+    var k = 0;
+    while k < len(st) {
+        st2[k] = st[k];
+        k = k + 1;
+    }
+    profile.init(rng, seed_of(theta, seed));
+    if readout_ppm > 0 {
+        rng[2] = readout_ppm;
+        rng[3] = 1000000;
+    }
+    measure.sample(st, n, rng, picks);
+    var zz = 0.0;
+    k = 0;
+    while k < shots {
+        var q = 0;
+        while q + 1 < n {
+            zz = zz + spin(picks[k], q) * spin(picks[k], q + 1);
+            q = q + 1;
+        }
+        k = k + 1;
+    }
+    zz = zz / float_of(shots);
+    var q2 = 0;
+    while q2 < n {
+        gates.h(st2, n, q2);
+        q2 = q2 + 1;
+    }
+    measure.sample(st2, n, rng, picks);
+    var xs = 0.0;
+    k = 0;
+    while k < shots {
+        var q3 = 0;
+        while q3 < n {
+            xs = xs + spin(picks[k], q3);
+            q3 = q3 + 1;
+        }
+        k = k + 1;
+    }
+    xs = xs / float_of(shots);
+    if mitigate && readout_ppm > 0 {
+        let keep = 1.0 - 2.0 * float_of(readout_ppm) / 1000000.0;
+        zz = zz / (keep * keep);
+        xs = xs / keep;
+    }
+    return 0.0 - zz - field() * xs;
+}
+
+// The sampled energy at `theta` and its gradient by the parameter-shift rule, each of the 2 P + 1 energies sampled on its own (the seed depends on the shifted angles).
+pub fn sampled_gradient[&s, &u, &t, &g, &r, &p](st: &!s [float], st2: &!u [float], theta: &!t [float], layers: int, shots: int, seed: int, readout_ppm: int, mitigate: bool, rng: &!r [int], picks: &!p [int], grad: &!g [float]) -> [] float {
+    let e = sampled(st, st2, theta, layers, shots, seed, readout_ppm, mitigate, rng, picks);
+    let half_pi = gates.pi() / 2.0;
+    var j = 0;
+    while j < len(theta) {
+        let keep = theta[j];
+        theta[j] = keep + half_pi;
+        let up = sampled(st, st2, theta, layers, shots, seed, readout_ppm, mitigate, rng, picks);
+        theta[j] = keep - half_pi;
+        let down = sampled(st, st2, theta, layers, shots, seed, readout_ppm, mitigate, rng, picks);
         theta[j] = keep;
         grad[j] = (up - down) / 2.0;
         j = j + 1;
