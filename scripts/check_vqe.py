@@ -7,8 +7,9 @@
      state energy (the variational principle: a state's energy cannot be lower than the lowest eigenvalue, so a value below it is a bug in the simulator or the Hamiltonian).
   2. The exact ground state energy `vqe` prints (its own Jacobi eigenvalue code) equals numpy's `eigvalsh` to 1e-12.
   3. `vqe-energy` refuses what it should.
-  4. `vqe` run for 1 and 2 layers (3 with `--long`, about two minutes) reaches the lowest energy that ansatz can reach, which numpy/scipy find independently as the best of 30 BFGS runs from random
-     starts: they must agree to 1e-6.
+  4. `vqe-gradient` (the parameter-shift rule) equals numpy's own parameter-shift gradient to 1e-12 and central finite differences of the energy to 1e-7, and refuses what `vqe-energy` does.
+  5. `vqe --method nelder-mead` for 1 and 2 layers (3 with `--long`, about two minutes) and `vqe` (BFGS) for 1 to 4 layers reach the lowest energy that ansatz can reach, which numpy/scipy find independently as the
+     best of 30 BFGS runs from random starts: they must agree to 1e-6 (the BFGS runs: the 3- and 4-layer ones must reach the exact energy to 1e-9).
 """
 import json
 import os
@@ -89,6 +90,7 @@ def main():
     global bad
     long = "--long" in sys.argv
     energy = build("vqe-energy", "examples/vqe/energy.cho")
+    gradient = build("vqe-gradient", "examples/vqe/gradient.cho")
     driver = build("vqe", "examples/vqe/vqe.cho")
     opt = os.environ.get("OPT")
     rng = np.random.default_rng(20261026)
@@ -107,11 +109,37 @@ def main():
     bad += not ok
     print(f"{'ok  ' if ok else 'FAIL'} vqe-energy at 300 random angle vectors agrees with numpy to {worst:.1e}; the smallest margin above the exact ground state energy among them was {low:.3f} (never negative)")
 
+    # the gradient: numpy's parameter shift, and finite differences
+    worst_shift = worst_fd = 0.0
+    for _ in range(60):
+        layers = int(rng.integers(1, 5))
+        theta = rng.uniform(-np.pi, np.pi, N * (layers + 1))
+        r = subprocess.run([gradient], input=" ".join(repr(float(v)) for v in theta), capture_output=True, text=True)
+        out = [float(v) for v in r.stdout.split()]
+        e, g = out[0], np.array(out[1:])
+        shift = np.zeros(len(theta))
+        fd = np.zeros(len(theta))
+        for j in range(len(theta)):
+            up, dn = theta.copy(), theta.copy()
+            up[j] += np.pi / 2
+            dn[j] -= np.pi / 2
+            shift[j] = (energy_np(up, layers) - energy_np(dn, layers)) / 2
+            up, dn = theta.copy(), theta.copy()
+            up[j] += 1e-6
+            dn[j] -= 1e-6
+            fd[j] = (energy_np(up, layers) - energy_np(dn, layers)) / 2e-6
+        worst_shift = max(worst_shift, float(np.max(np.abs(g - shift))), abs(e - energy_np(theta, layers)))
+        worst_fd = max(worst_fd, float(np.max(np.abs(g - fd))))
+    good = worst_shift <= 1e-12 and worst_fd <= 1e-7
+    bad += not good
+    print(f"{'ok  ' if good else 'FAIL'} vqe-gradient at 60 random angle vectors: equals numpy's parameter-shift gradient to {worst_shift:.1e} and central finite differences to {worst_fd:.1e}")
+
     for text, what in (("1 2 3", "3 angles"), ("a b c d e f g h", "words"), ("1 2 3 4 5 6 7 nan", "nan"), ("1e999 0 0 0 0 0 0 0", "infinity")):
-        r = subprocess.run([energy], input=text, capture_output=True, text=True)
-        good = r.returncode == 2 and r.stdout == ""
-        bad += not good
-        print(f"{'ok  ' if good else 'FAIL'} vqe-energy refuses {what} (status 2, nothing on stdout)")
+        for prog, name in ((energy, "vqe-energy"), (gradient, "vqe-gradient")):
+            r = subprocess.run([prog], input=text, capture_output=True, text=True)
+            good = r.returncode == 2 and r.stdout == ""
+            bad += not good
+            print(f"{'ok  ' if good else 'FAIL'} {name} refuses {what} (status 2, nothing on stdout)")
 
     # why the example uses CX and not CZ: with CZ the ansatz stops improving after two layers
     cz_best = {l: min(minimize(energy_np, rng.uniform(-3, 3, N * (l + 1)), args=(l, CZ), method="BFGS").fun for _ in range(30)) for l in (2, 3)}
@@ -124,15 +152,16 @@ def main():
         print("skip vqe runs: OPT (a built cancho-opt `opt`) is not set")
     else:
         results = {}
-        for layers in (1, 2) + ((3,) if long else ()):
-            r = subprocess.run([driver, "--layers", str(layers), "--opt", opt, "--energy", energy, "--maxfev", "30000"], capture_output=True, text=True)
+        runs = [("nelder-mead", l) for l in (1, 2) + ((3,) if long else ())] + [("bfgs", l) for l in (1, 2, 3, 4)]
+        for method, layers in runs:
+            r = subprocess.run([driver, "--method", method, "--layers", str(layers), "--opt", opt, "--energy", energy, "--gradient", gradient, "--maxfev", "30000"], capture_output=True, text=True)
             if r.returncode not in (0, 1):
                 bad += 1
                 print("FAIL vqe", layers, r.stderr[-300:])
                 continue
             got = json.loads(r.stdout)
-            results[layers] = got
-            if layers == 1:
+            results[(method, layers)] = got
+            if (method, layers) == ("nelder-mead", 1):
                 gap = abs(got["exact"] - EXACT)
                 bad += gap > 1e-12
                 print(f"{'ok  ' if gap <= 1e-12 else 'FAIL'} the exact ground state energy vqe prints, {got['exact']!r}, equals numpy's to {gap:.1e}")
@@ -140,7 +169,13 @@ def main():
             diff = abs(got["energy"] - best)
             good = diff <= 1e-6
             bad += not good
-            print(f"{'ok  ' if good else 'FAIL'} vqe with {layers} layer(s): {got['energy']:.10f} in {got['evaluations']} evaluations; the best of 30 BFGS runs finds {best:.10f} (difference {diff:.1e}); error against the exact energy {got['error']:.2e}")
+            extra = ""
+            if method == "bfgs" and layers >= 3:
+                reach = abs(got["error"]) <= 1e-9
+                good = good and reach
+                bad += not reach
+                extra = " (the exact energy to 1e-9)" if reach else " (NOT the exact energy)"
+            print(f"{'ok  ' if good else 'FAIL'} vqe {method} with {layers} layer(s): {got['energy']:.10f} in {got['evaluations']} energy and {got['gradients']} gradient evaluations; the best of 30 scipy BFGS runs finds {best:.10f} (difference {diff:.1e}); error against the exact energy {got['error']:.2e}{extra}")
     print("ok" if not bad else f"FAIL: {bad}")
     sys.exit(1 if bad else 0)
 

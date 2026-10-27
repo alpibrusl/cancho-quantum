@@ -3,11 +3,12 @@ edition 7;
 // `vqe`: a variational quantum eigensolver in cancho (README.md). It asks cancho-opt's `opt minimize` (Nelder-Mead) for the angles that minimise the energy of the state that `vqe-energy` prepares,
 // and prints the result next to the exact ground state energy.
 //
-//     vqe [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--maxfev N]
+//     vqe [--method bfgs|nelder-mead] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N]
 //
-// L is 1 to 4 (default 2: 12 angles). Nelder-Mead stops early in this many dimensions (it can "converge" on a point that is not a minimum), so `opt` is started R times (default 4), each from where the last one stopped. `--opt` and `--energy` are the programs to start (defaults `opt` and `vqe-energy`, found on PATH). One JSON object on standard output:
+// L is 1 to 4 (default 2: 12 angles). The default method is BFGS (`opt minimize --method bfgs` on `vqe-gradient`, whose gradient is exact: the parameter-shift rule), one run. With `--method nelder-mead` (on `vqe-energy`) a single run
+// stops early in this many dimensions (it can "converge" on a point that is not a minimum), so `opt` is started R times (default 4), each from where the last one stopped. `--opt` and `--energy` are the programs to start (defaults `opt` and `vqe-energy`, found on PATH). One JSON object on standard output:
 //
-//     {"layers": 2, "parameters": 12, "exact": E0, "energy": E, "error": E - E0, "evaluations": N, "restarts": R, "converged": true}
+//     {"method": "bfgs", "layers": 2, "parameters": 12, "exact": E0, "energy": E, "error": E - E0, "evaluations": N, "gradients": G, "restarts": R, "converged": true}
 //
 // The status is 0 when `opt` converged, 1 when it stopped at its limit (the result is printed all the same), 2 on a refusal.
 import qc.gates;
@@ -107,7 +108,23 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
     if len(maxfev) == 0 {
         maxfev = "6000";
     }
+    var gradient_path = flag(args, "--gradient");
+    if len(gradient_path) == 0 {
+        gradient_path = "vqe-gradient";
+    }
+    var use_bfgs = true;
+    let method_text = flag(args, "--method");
+    if len(method_text) > 0 {
+        if bytes.equal(method_text, "nelder-mead") {
+            use_bfgs = false;
+        } else if !bytes.equal(method_text, "bfgs") {
+            return refuse(io, "--method is bfgs or nelder-mead");
+        }
+    }
     var restarts = 4;
+    if use_bfgs {
+        restarts = 1;
+    }
     let restart_text = flag(args, "--restarts");
     if len(restart_text) > 0 {
         if len(restart_text) != 1 || int_of(restart_text[0]) < '1' || int_of(restart_text[0]) > '9' {
@@ -121,6 +138,7 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
     var status = 0;
     var best = 0.0;
     var evaluations = 0;
+    var gradients = 0;
     var converged = false;
     var round = 0;
     while round < restarts && status == 0 {
@@ -139,10 +157,15 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
                 k = k + 1;
             }
         }
-        argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
-        argv = buffer.append(heap, argv, maxfev);
-        argv = buffer.append(heap, argv, "\0--\0");
-        argv = buffer.append(heap, argv, energy_path);
+        if use_bfgs {
+            argv = buffer.append(heap, argv, "\0--method\0bfgs\0--gtol\01e-6\0--maxiter\01000\0--\0");
+            argv = buffer.append(heap, argv, gradient_path);
+        } else {
+            argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
+            argv = buffer.append(heap, argv, maxfev);
+            argv = buffer.append(heap, argv, "\0--\0");
+            argv = buffer.append(heap, argv, energy_path);
+        }
         argv = buffer.push(heap, argv, byte_of(0));
         var rc = 255;
         var got = buffer.empty(heap, 0);
@@ -170,6 +193,9 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
                     } else {
                         best = json.to_float(src, t, json.get(src, t, 0, "fun"));
                         evaluations = evaluations + json.to_int(src, t, json.get(src, t, 0, "nfev"));
+                        if use_bfgs {
+                            gradients = gradients + json.to_int(src, t, json.get(src, t, 0, "njev"));
+                        }
                         converged = json.to_bool(t, json.get(src, t, 0, "converged"));
                         borrow mut point as &!pw in {
                             var m2 = 0;
@@ -196,6 +222,12 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         unbox_slice(heap, m);
         var w = json.writer(heap, 256);
         w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "method");
+        if use_bfgs {
+            w = json.put_string(heap, w, "bfgs");
+        } else {
+            w = json.put_string(heap, w, "nelder-mead");
+        }
         w = json.put_key(heap, w, "layers");
         w = json.put_int(heap, w, layers);
         w = json.put_key(heap, w, "parameters");
@@ -208,6 +240,8 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         w = json.put_float(heap, w, best - exact);
         w = json.put_key(heap, w, "evaluations");
         w = json.put_int(heap, w, evaluations);
+        w = json.put_key(heap, w, "gradients");
+        w = json.put_int(heap, w, gradients);
         w = json.put_key(heap, w, "restarts");
         w = json.put_int(heap, w, restarts);
         w = json.put_key(heap, w, "converged");

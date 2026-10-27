@@ -65,7 +65,7 @@ pub fn expectation[&s](st: &s [float]) -> [] float {
         var q = 0;
         while q + 1 < n {
             var sign = 1.0;
-            if (b >> q & 1) != (b >> (q + 1) & 1) {
+            if b >> q & 1 != b >> q + 1 & 1 {
                 sign = 0.0 - 1.0;
             }
             zz = zz + sign * p;
@@ -79,7 +79,7 @@ pub fn expectation[&s](st: &s [float]) -> [] float {
         var s = 0.0;
         var b2 = 0;
         while b2 < 1 << n {
-            if (b2 >> q2 & 1) == 0 {
+            if b2 >> q2 & 1 == 0 {
                 let c = b2 | 1 << q2;
                 s = s + st[2 * b2] * st[2 * c] + st[2 * b2 + 1] * st[2 * c + 1];
             }
@@ -96,6 +96,25 @@ pub fn energy[&s, &t](st: &!s [float], theta: &t [float], layers: int) -> [] flo
     return expectation(st);
 }
 
+// The energy at `theta` and its gradient, into `grad`, by the parameter-shift rule: each angle is the angle of an Ry, a rotation by exp(-i theta Y / 2), whose generator has eigenvalues +-1/2, so
+// dE/dtheta_j = (E(theta_j + pi/2) - E(theta_j - pi/2)) / 2 *exactly* (not a finite difference). `theta` is changed and put back.
+pub fn gradient[&s, &t, &g](st: &!s [float], theta: &!t [float], layers: int, grad: &!g [float]) -> [] float {
+    let e = energy(st, theta, layers);
+    let half_pi = gates.pi() / 2.0;
+    var j = 0;
+    while j < len(theta) {
+        let keep = theta[j];
+        theta[j] = keep + half_pi;
+        let up = energy(st, theta, layers);
+        theta[j] = keep - half_pi;
+        let down = energy(st, theta, layers);
+        theta[j] = keep;
+        grad[j] = (up - down) / 2.0;
+        j = j + 1;
+    }
+    return e;
+}
+
 // The exact ground state energy, from the 16 x 16 matrix of H (written into `m`, 256 floats) by cyclic Jacobi rotations until the off-diagonal part is below 1e-28.
 pub fn ground[&m](m: &!m [float]) -> [] float {
     let n = qubits();
@@ -110,7 +129,7 @@ pub fn ground[&m](m: &!m [float]) -> [] float {
         var d = 0.0;
         var q = 0;
         while q + 1 < n {
-            if (b >> q & 1) != (b >> (q + 1) & 1) {
+            if b >> q & 1 != b >> q + 1 & 1 {
                 d = d + 1.0;
             } else {
                 d = d - 1.0;
@@ -183,6 +202,59 @@ pub fn ground[&m](m: &!m [float]) -> [] float {
         i = i + 1;
     }
     return low;
+}
+
+fn is_blank(c: int) -> [] bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+// The angles on standard input (numbers separated by white space; at most 64) into `theta`; how many, or -1 after a refusal printed on standard error (`program` names the program). The count must be 4 per layer plus 4.
+pub fn read_angles[&i, &t, &p](io: &!i Io, theta: &!t [float], program: &p [byte]) -> [io_read, err_write] int {
+    var status = 0;
+    var count = 0;
+    region r {
+        let tok = alloc_slice[r](64, byte_of(0));
+        var used = 0;
+        var c = getchar(io);
+        while c >= 0 && status == 0 {
+            if is_blank(c) {
+                if used > 0 {
+                    let (ok, v) = number(tok[0..used]);
+                    if !ok || count >= len(theta) {
+                        status = 1;
+                    } else {
+                        theta[count] = v;
+                        count = count + 1;
+                    }
+                    used = 0;
+                }
+            } else if used < 64 {
+                tok[used] = byte_of(c);
+                used = used + 1;
+            } else {
+                status = 1;
+            }
+            c = getchar(io);
+        }
+        if status == 0 && used > 0 {
+            let (ok2, v2) = number(tok[0..used]);
+            if !ok2 || count >= len(theta) {
+                status = 1;
+            } else {
+                theta[count] = v2;
+                count = count + 1;
+            }
+        }
+        if status == 0 && (count < qubits() * 2 || count % qubits() != 0) {
+            status = 1;
+        }
+    }
+    if status != 0 {
+        io.error_all(io, program);
+        io.error_all(io, ": the input must be numbers separated by white space, 4 per layer plus 4 (8, 12, 16, ... up to 64)\n");
+        return 0 - 1;
+    }
+    return count;
 }
 
 // A number as text (`0.3`, `-1e-2`) read by way of the JSON reader; (false, 0) when it is not one.
