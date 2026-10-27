@@ -1,0 +1,212 @@
+edition 7;
+
+module vqe.model;
+
+import qc.gates;
+import std.fmt;
+import std.io;
+import std.json;
+import std.math;
+
+// The problem of `examples/vqe` (README.md there): the ground state energy of a transverse-field Ising chain of four qubits,
+//
+//     H = - Z0 Z1 - Z1 Z2 - Z2 Z3 - h (X0 + X1 + X2 + X3)        h = 1, the critical field,
+//
+// by a hardware-efficient ansatz: `layers` times (Ry on every qubit, then CX down the chain), then one more layer of Ry. Parameter `l * 4 + q` is the angle of the Ry on qubit `q` in layer `l`.
+
+pub fn qubits() -> [] int {
+    return 4;
+}
+
+pub fn field() -> [] float {
+    return 1.0;
+}
+
+// the number of parameters of an ansatz with `layers` layers
+pub fn parameters(layers: int) -> [] int {
+    return qubits() * (layers + 1);
+}
+
+// The state of the ansatz at `theta` (as many angles as `parameters(layers)`), into `st`, which holds 2 << 4 floats.
+pub fn prepare[&s, &t](st: &!s [float], theta: &t [float], layers: int) -> [] int {
+    let n = qubits();
+    var k = 0;
+    while k < len(st) {
+        st[k] = 0.0;
+        k = k + 1;
+    }
+    st[0] = 1.0;
+    var l = 0;
+    while l <= layers {
+        var q = 0;
+        while q < n {
+            gates.ry(st, n, q, theta[l * n + q]);
+            q = q + 1;
+        }
+        if l < layers {
+            var c = 0;
+            while c + 1 < n {
+                gates.cx(st, n, c, c + 1);
+                c = c + 1;
+            }
+        }
+        l = l + 1;
+    }
+    return 0;
+}
+
+// <psi|H|psi> for the state `st`: the Z Z terms from the probabilities, the X terms from the amplitudes (<X_q> = 2 Re sum over b with bit q clear of conj(a_b) a_(b with q set)).
+pub fn expectation[&s](st: &s [float]) -> [] float {
+    let n = qubits();
+    var zz = 0.0;
+    var b = 0;
+    while b < 1 << n {
+        let p = st[2 * b] * st[2 * b] + st[2 * b + 1] * st[2 * b + 1];
+        var q = 0;
+        while q + 1 < n {
+            var sign = 1.0;
+            if (b >> q & 1) != (b >> (q + 1) & 1) {
+                sign = 0.0 - 1.0;
+            }
+            zz = zz + sign * p;
+            q = q + 1;
+        }
+        b = b + 1;
+    }
+    var xs = 0.0;
+    var q2 = 0;
+    while q2 < n {
+        var s = 0.0;
+        var b2 = 0;
+        while b2 < 1 << n {
+            if (b2 >> q2 & 1) == 0 {
+                let c = b2 | 1 << q2;
+                s = s + st[2 * b2] * st[2 * c] + st[2 * b2 + 1] * st[2 * c + 1];
+            }
+            b2 = b2 + 1;
+        }
+        xs = xs + 2.0 * s;
+        q2 = q2 + 1;
+    }
+    return 0.0 - zz - field() * xs;
+}
+
+pub fn energy[&s, &t](st: &!s [float], theta: &t [float], layers: int) -> [] float {
+    prepare(st, theta, layers);
+    return expectation(st);
+}
+
+// The exact ground state energy, from the 16 x 16 matrix of H (written into `m`, 256 floats) by cyclic Jacobi rotations until the off-diagonal part is below 1e-28.
+pub fn ground[&m](m: &!m [float]) -> [] float {
+    let n = qubits();
+    let size = 1 << n;
+    var b = 0;
+    while b < size * size {
+        m[b] = 0.0;
+        b = b + 1;
+    }
+    b = 0;
+    while b < size {
+        var d = 0.0;
+        var q = 0;
+        while q + 1 < n {
+            if (b >> q & 1) != (b >> (q + 1) & 1) {
+                d = d + 1.0;
+            } else {
+                d = d - 1.0;
+            }
+            q = q + 1;
+        }
+        m[b * size + b] = d;
+        var f = 0;
+        while f < n {
+            m[b * size + (b ^ 1 << f)] = 0.0 - field();
+            f = f + 1;
+        }
+        b = b + 1;
+    }
+    var sweep = 0;
+    var off = 1.0;
+    while sweep < 60 && off > 0.0000000000000000000000000001 {
+        off = 0.0;
+        var p = 0;
+        while p < size {
+            var q2 = p + 1;
+            while q2 < size {
+                off = off + m[p * size + q2] * m[p * size + q2];
+                q2 = q2 + 1;
+            }
+            p = p + 1;
+        }
+        p = 0;
+        while p + 1 < size {
+            var q3 = p + 1;
+            while q3 < size {
+                let apq = m[p * size + q3];
+                if math.fabs(apq) > 0.0000000000000000000000000000001 {
+                    let theta = (m[q3 * size + q3] - m[p * size + p]) / (2.0 * apq);
+                    var t = 1.0 / (math.fabs(theta) + sqrt(theta * theta + 1.0));
+                    if theta < 0.0 {
+                        t = 0.0 - t;
+                    }
+                    let c = 1.0 / sqrt(t * t + 1.0);
+                    let s = t * c;
+                    var k = 0;
+                    while k < size {
+                        let akp = m[k * size + p];
+                        let akq = m[k * size + q3];
+                        m[k * size + p] = c * akp - s * akq;
+                        m[k * size + q3] = s * akp + c * akq;
+                        k = k + 1;
+                    }
+                    k = 0;
+                    while k < size {
+                        let apk = m[p * size + k];
+                        let aqk = m[q3 * size + k];
+                        m[p * size + k] = c * apk - s * aqk;
+                        m[q3 * size + k] = s * apk + c * aqk;
+                        k = k + 1;
+                    }
+                }
+                q3 = q3 + 1;
+            }
+            p = p + 1;
+        }
+        sweep = sweep + 1;
+    }
+    var low = m[0];
+    var i = 1;
+    while i < size {
+        if m[i * size + i] < low {
+            low = m[i * size + i];
+        }
+        i = i + 1;
+    }
+    return low;
+}
+
+// A number as text (`0.3`, `-1e-2`) read by way of the JSON reader; (false, 0) when it is not one.
+pub fn number[&s](tok: &s [byte]) -> [] (bool, float) {
+    if len(tok) == 0 {
+        return (false, 0.0);
+    }
+    var ok = false;
+    var out = 0.0;
+    region r {
+        let src = alloc_slice[r](len(tok) + 2, byte_of(0));
+        src[0] = byte_of('[');
+        var k = 0;
+        while k < len(tok) {
+            src[1 + k] = tok[k];
+            k = k + 1;
+        }
+        src[len(tok) + 1] = byte_of(']');
+        let all = src[0..len(tok) + 2];
+        let tape = alloc_slice[r](json.tape_len(all), 0);
+        if json.parse(all, tape) > 0 && json.is_number(tape, 1) && json.count(tape, 0) == 1 {
+            out = json.to_float(all, tape, 1);
+            ok = out - out == 0.0;
+        }
+    }
+    return (ok, out);
+}

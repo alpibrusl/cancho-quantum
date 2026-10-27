@@ -1,0 +1,252 @@
+edition 7;
+
+// `vqe`: a variational quantum eigensolver in cancho (README.md). It asks cancho-opt's `opt minimize` (Nelder-Mead) for the angles that minimise the energy of the state that `vqe-energy` prepares,
+// and prints the result next to the exact ground state energy.
+//
+//     vqe [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--maxfev N]
+//
+// L is 1 to 4 (default 2: 12 angles). Nelder-Mead stops early in this many dimensions (it can "converge" on a point that is not a minimum), so `opt` is started R times (default 4), each from where the last one stopped. `--opt` and `--energy` are the programs to start (defaults `opt` and `vqe-energy`, found on PATH). One JSON object on standard output:
+//
+//     {"layers": 2, "parameters": 12, "exact": E0, "energy": E, "error": E - E0, "evaluations": N, "restarts": R, "converged": true}
+//
+// The status is 0 when `opt` converged, 1 when it stopped at its limit (the result is printed all the same), 2 on a refusal.
+import qc.gates;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+import std.fmt;
+import std.process;
+import vqe.model;
+
+fn refuse[&i, &r](io: &!i Io, what: &r [byte]) -> [err_write] int {
+    io.error_all(io, "vqe: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+fn status_of(ran: process.Ran) -> [] int {
+    match ran {
+        process.Ran::Code(n) => {
+            return n;
+        }
+        process.Ran::Signaled(s) => {
+            return 0 - 4;
+        }
+        process.Ran::TimedOut => {
+            return 255;
+        }
+        process.Ran::TooMuch => {
+            return 255;
+        }
+        process.Ran::Failed(e) => {
+            return 255;
+        }
+    }
+}
+
+// The value of `--flag VALUE`, or an empty slice.
+fn flag[&g](args: &g Args, name: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), name) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+// `opt` started with `argv`; its status (255 when it could not be run) and standard output.
+fn run_opt[&h, &i, &x, &c, &p, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], argv: &a [byte]) -> [heap, err_write, exec(""), clock, poll] (int, buffer.Buffer) {
+    var out = buffer.empty(heap, 0);
+    var rc = 255;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e) => {
+            refuse(io, "cannot make the pipes to start opt");
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            match exec_spawn(exec, exe, argv, "PATH=/usr/local/bin:/usr/bin:/bin\0HOME=/tmp\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                Spawned::Failed(e) => {
+                    process.close(to_child, from_child);
+                    pipe_close(from_errors);
+                    refuse(io, "cannot start opt: is it built, and on the PATH or given with --opt?");
+                }
+                Spawned::Ok(child) => {
+                    let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, "", 1048576, 1048576, 600000);
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, errors);
+                    out = got;
+                    rc = status_of(ran);
+                }
+            }
+        }
+    }
+    return (rc, out);
+}
+
+fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, exec(""), clock, poll, args] int {
+    var layers = 2;
+    let layer_text = flag(args, "--layers");
+    if len(layer_text) > 0 {
+        if len(layer_text) != 1 || int_of(layer_text[0]) < '1' || int_of(layer_text[0]) > '4' {
+            return refuse(io, "--layers is 1, 2, 3 or 4");
+        }
+        layers = int_of(layer_text[0]) - '0';
+    }
+    var opt_path = flag(args, "--opt");
+    if len(opt_path) == 0 {
+        opt_path = "opt";
+    }
+    var energy_path = flag(args, "--energy");
+    if len(energy_path) == 0 {
+        energy_path = "vqe-energy";
+    }
+    var maxfev = flag(args, "--maxfev");
+    if len(maxfev) == 0 {
+        maxfev = "6000";
+    }
+    var restarts = 4;
+    let restart_text = flag(args, "--restarts");
+    if len(restart_text) > 0 {
+        if len(restart_text) != 1 || int_of(restart_text[0]) < '1' || int_of(restart_text[0]) > '9' {
+            return refuse(io, "--restarts is 1 to 9");
+        }
+        restarts = int_of(restart_text[0]) - '0';
+    }
+    let count = model.parameters(layers);
+    // the starting point: 0.3 everywhere, then wherever the previous run stopped
+    let point = box_slice(heap, count, 0.3);
+    var status = 0;
+    var best = 0.0;
+    var evaluations = 0;
+    var converged = false;
+    var round = 0;
+    while round < restarts && status == 0 {
+        var argv = buffer.append(heap, buffer.empty(heap, 512), "minimize\0--x0\0");
+        borrow point as &pr in {
+            var k = 0;
+            while k < count {
+                if k > 0 {
+                    argv = buffer.push(heap, argv, byte_of(','));
+                }
+                region r {
+                    let scratch = alloc_slice[r](32, byte_of(0));
+                    let n = fmt.float_into(scratch, contents(pr)[k]);
+                    argv = buffer.append(heap, argv, scratch[0..n]);
+                }
+                k = k + 1;
+            }
+        }
+        argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
+        argv = buffer.append(heap, argv, maxfev);
+        argv = buffer.append(heap, argv, "\0--\0");
+        argv = buffer.append(heap, argv, energy_path);
+        argv = buffer.push(heap, argv, byte_of(0));
+        var rc = 255;
+        var got = buffer.empty(heap, 0);
+        borrow argv as &ar in {
+            let (r2, o2) = run_opt(heap, io, exec, clock, opt_path, buffer.bytes(ar));
+            rc = r2;
+            buffer.drop(heap, got);
+            got = o2;
+        }
+        buffer.drop(heap, argv);
+        if rc != 0 && rc != 1 {
+            status = refuse(io, "opt failed (its error is on its standard error: run the command by hand)");
+        } else {
+            borrow got as &gr in {
+                let src = buffer.bytes(gr);
+                let tape = box_slice(heap, json.tape_len(src), 0);
+                borrow mut tape as &!tw in {
+                    let t = contents(tw);
+                    var xs = 0 - 1;
+                    if json.parse(src, t) > 0 {
+                        xs = json.get(src, t, 0, "x");
+                    }
+                    if xs < 0 || json.count(t, xs) != count || json.get(src, t, 0, "fun") < 0 {
+                        status = refuse(io, "opt printed something that is not its result");
+                    } else {
+                        best = json.to_float(src, t, json.get(src, t, 0, "fun"));
+                        evaluations = evaluations + json.to_int(src, t, json.get(src, t, 0, "nfev"));
+                        converged = json.to_bool(t, json.get(src, t, 0, "converged"));
+                        borrow mut point as &!pw in {
+                            var m2 = 0;
+                            while m2 < count {
+                                contents(pw)[m2] = json.to_float(src, t, json.at(t, xs, m2));
+                                m2 = m2 + 1;
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, tape);
+            }
+        }
+        buffer.drop(heap, got);
+        round = round + 1;
+    }
+    unbox_slice(heap, point);
+    if status == 0 {
+        let m = box_slice(heap, 256, 0.0);
+        var exact = 0.0;
+        borrow mut m as &!mw in {
+            exact = model.ground(contents(mw));
+        }
+        unbox_slice(heap, m);
+        var w = json.writer(heap, 256);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "layers");
+        w = json.put_int(heap, w, layers);
+        w = json.put_key(heap, w, "parameters");
+        w = json.put_int(heap, w, count);
+        w = json.put_key(heap, w, "exact");
+        w = json.put_float(heap, w, exact);
+        w = json.put_key(heap, w, "energy");
+        w = json.put_float(heap, w, best);
+        w = json.put_key(heap, w, "error");
+        w = json.put_float(heap, w, best - exact);
+        w = json.put_key(heap, w, "evaluations");
+        w = json.put_int(heap, w, evaluations);
+        w = json.put_key(heap, w, "restarts");
+        w = json.put_int(heap, w, restarts);
+        w = json.put_key(heap, w, "converged");
+        w = json.put_bool(heap, w, converged);
+        w = json.end_object(heap, w);
+        let text = buffer.push(heap, json.finish(w), byte_of(10));
+        borrow text as &tr in {
+            buffer.write(io, tr);
+        }
+        buffer.drop(heap, text);
+        if !converged {
+            status = 1;
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow args as &g in {
+        borrow exec as &x in {
+            borrow clock as &c in {
+                borrow mut heap as &!h in {
+                    borrow mut io as &!i in {
+                        status = command(h, i, x, c, g);
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(exec);
+    release(clock);
+    release(heap);
+    release(io);
+    return status;
+}
