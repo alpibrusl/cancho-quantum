@@ -160,7 +160,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 <header class="top"><div class="wrap">
   <a class="brand" href=".">cancho-quantum</a>
   <nav>
-    <a href="#capabilities">Capabilities</a><a class="opt" href="#watch">Watch it run</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a class="opt" href="#hardware">Real devices</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
+    <a href="#capabilities">Capabilities</a><a class="opt" href="#watch">Watch it run</a><a class="opt" href="#humans">For humans</a><a class="opt" href="#agents">For agents</a><a class="opt" href="#vqe">VQE</a><a class="opt" href="#hardware">Real devices</a><a href="#gallery">Gallery</a><a class="opt" href="#measured">Measured</a><a class="opt" href="#try">Try it</a>
     <a href="https://github.com/alpibrusl/cancho-quantum">GitHub</a>
   </nav>
 </div></header>
@@ -628,6 +628,17 @@ library  81ff953cae0be924...</pre>
   <p class="fine">Not measured: arm64 hardware (the aarch64 runs are emulation), a second reference such as Cirq, anything above 20 qubits, and whether an agent writes better quantum code with these refusals than without. Timings in <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m1-results.md">m1-results.md</a> are single runs on one machine.</p>
 </div></section>
 
+<section id="vqe"><div class="wrap">
+  <h2>A variational algorithm</h2>
+  <p class="lead">A VQE for the ground state of a 4-qubit transverse-field Ising chain, written in cancho on this simulator, with <a href="https://github.com/alpibrusl/cancho-opt">cancho-opt</a>&rsquo;s <code>opt minimize</code> (Nelder-Mead and BFGS checked against scipy, SPSA against Qiskit&rsquo;s) as the optimiser. These numbers are typed from <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/examples/vqe/README.md">examples/vqe/README.md</a>, not rebuilt by this page; <code>scripts/check_vqe.py</code> checks the example against numpy and scipy.</p>
+  <div class="cards">
+    <div class="card"><h3>Exact energy, exact gradient</h3><p>BFGS with the parameter-shift gradient reaches the exact ground state energy, &minus;4.7587704831, to 1e-9 in 56 gradients (3 layers, 16 angles). One run of Nelder-Mead stops short in 12 or more dimensions and has to be restarted.</p></div>
+    <div class="card"><h3>With shots</h3><p>Estimated from 1,000 shots per basis, the median error of the angles found (their exact energy against the ground state) is 0.063 for BFGS, 0.160 for Nelder-Mead and 0.056 for SPSA, which spends 2.5 times fewer shots than BFGS. At 100 shots SPSA gives 0.12 against BFGS&rsquo;s 0.33.</p></div>
+    <div class="card"><h3>The reported energy lies</h3><p>With shot noise the optimiser&rsquo;s own energy can be below the ground state (0.24 below, Nelder-Mead at 100 shots), which no exact energy can be. A read-out error pushes it the other way (+0.3) unless it is mitigated; mitigation changes the number quoted, not where the optimum is.</p></div>
+    <div class="card"><h3>What SPSA does not do</h3><p>With no noise at all, 800 iterations still stop 0.03 above the ground state where BFGS reaches 1e-9: its floor is its own gain schedule, not shot noise. Five seeds, one ansatz, one machine.</p></div>
+  </div>
+</div></section>
+
 <section id="hardware"><div class="wrap">
   <h2>On real devices</h2>
   <p class="lead">The simulator&rsquo;s noise model, built from IBM&rsquo;s published calibration, was compared with counts from two 156-qubit devices (<code>ibm_fez</code>, <code>ibm_kingston</code>) on the Open Plan, 26&ndash;27 October 2026. These numbers are typed from the files in <code>docs/data/hardware/</code>, not rebuilt by this page; the write-up is <a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/hardware.md">docs/hardware.md</a>.</p>
@@ -635,7 +646,7 @@ library  81ff953cae0be924...</pre>
     <div class="card"><h3>Where it matches</h3><p>On <code>ibm_kingston</code>, away from a qubit stuck at 1, the model lands close to the device on mirror circuits: about 0.07&ndash;0.09 total-variation distance from the ideal for the model against 0.09&ndash;0.10 measured, about the same as Qiskit Aer&rsquo;s own model.</p></div>
     <div class="card"><h3>Where it does not</h3><p>On <code>ibm_fez</code> the calibration&rsquo;s numbers moved more than the device did over 24 hours. The model changed from 0.31 to 0.16 when the calibration was republished; the device stayed between 0.23 and 0.34.</p></div>
     <div class="card"><h3>Drift it cannot see</h3><p><code>ibm_kingston</code> read 0.13&ndash;0.16 in an afternoon and evening, against 0.09&ndash;0.10 at other times, while the model stayed flat. A calibration taken once a day does not capture that.</p></div>
-    <div class="card"><h3>A pre-run scan and fitted gate rates</h3><p>The test written down in advance (issue 16) on <code>ibm_fez</code>: the two together cut the distance to 0.79 of the calibration&rsquo;s, and 1 of 13 circuits was consistent with the model. Partly, bordering on a fail. <code>ibm_kingston</code>: not run, the plan&rsquo;s seconds ran out.</p></div>
+    <div class="card"><h3>A pre-run scan and fitted gate rates</h3><p>The test written down in advance (issue 16) on <code>ibm_fez</code>: the two together cut the distance to 0.79 of the calibration&rsquo;s, and 1 of 13 circuits was consistent with the model. Partly, bordering on a fail. 11 of the 13 circuits moved closer. <code>ibm_kingston</code>: the scan and the rates ran, the 13 circuits never did (the plan&rsquo;s seconds ran out), so there is no result.</p></div>
   </div>
   <p class="fine">Not shown here: a second pass on <code>ibm_kingston</code> for issue 16, and anything beyond five qubits of a line. Two devices on one plan, two days of calibrations.</p>
 </div></section>
@@ -663,6 +674,7 @@ python3 scripts/check_types.py</code></pre>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/noise-results.md">Noise by sampling</a></h3><p>Four channels, checked as an average against the exact answer.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/density-results.md">Exact noise</a></h3><p>The density matrix as a state of twice as many qubits.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/idle-noise.md">Idle noise</a></h3><p>T1 and T2 decay while a qubit waits, checked against Qiskit Aer&rsquo;s own channel.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/examples/vqe/README.md">A VQE</a></h3><p>BFGS, Nelder-Mead and SPSA on exact and sampled energies, and what each does with shot noise.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/hardware.md">Real devices</a></h3><p>Counts from <code>ibm_fez</code> and <code>ibm_kingston</code> against the model, a 24-hour drift run, and what was missing.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/docs/m3-results.md">Determinism</a></h3><p>Six builds, one set of bytes, and what the emulation does not show.</p></div>
   </div>
