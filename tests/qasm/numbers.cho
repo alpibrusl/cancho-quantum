@@ -7,7 +7,7 @@ import std.io;
 fn run[&i](io: &!i Io) -> [io_read, io_write] int {
     var status = 0;
     region r {
-        let la = alloc_slice[r](1, 0);
+        let la = alloc_slice[r](16, 0);
         let scratch = alloc_slice[r](32, byte_of(0));
         la[0] = getchar(io);
         var more = true;

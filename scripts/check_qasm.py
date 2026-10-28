@@ -17,6 +17,7 @@ For every circuit in tests/qasm/ (written by tools/qcconv.cho):
 """
 import argparse
 import math
+import re
 import os
 import subprocess
 import sys
@@ -151,7 +152,7 @@ def check_decimal_circuits(exe):
         else:
             ok += 1
     refusals = 0
-    for angle in ("1e", "pi*", ".", "abc", "1/0", "1e50", "1..2", "-", "pi/", "2*3"):
+    for angle in ("1e", "pi*", ".", "abc", "1/0", "1e50", "1..2", "-", "pi/", "2*"):
         code, out = run(exe, f"OPENQASM 2.0;\nqreg q[1];\nrz({angle}) q[0];\n")
         if code == 3 and out.strip() == "error: an angle must be a number or a multiple of pi (0.785, pi, -pi/2, 3*pi/4)" or code == 3 and out.startswith("error:"):
             refusals += 1
@@ -261,6 +262,295 @@ def check_classical(exe):
     return bad == 0
 
 
+OLD_REV = "5070a8e"     # the last commit before gate definitions: the reader whose angles must not move
+
+
+def build_old(compiler):
+    """`qsim` built from OLD_REV (None when the revision is not in this clone)."""
+    d = tempfile.mkdtemp(prefix="qasm-old-")
+    r = subprocess.run(f"git -C {ROOT} archive {OLD_REV} src | tar -x -C {d}", shell=True, capture_output=True)
+    if r.returncode:
+        return None
+    exe = os.path.join(d, "qsim")
+    srcs = [os.path.join(d, "src", f) for f in sorted(os.listdir(os.path.join(d, "src"))) if f.endswith(".cho")]
+    subprocess.run([compiler, "build", *srcs, "--std", "-o", exe], check=True)
+    return exe
+
+
+def old_angle_texts(rng, count):
+    out = []
+    for _ in range(count):
+        sign = str(rng.choice(["", "-"]))
+        N = int(rng.choice([1, 2, 3, 5, 7, 12, 31, 97, 12345, 0, 100000]))
+        M = int(rng.choice([1, 2, 3, 4, 8, 97, 1000, 16]))
+        D = str(rng.choice(["0.5", "1.5707963267948966", "3.14", "0.25", "2.0", "7.853981633974483", "1e-3", "123.456", "0.1"]))
+        forms = ["pi", f"{N}*pi", f"pi/{M}", f"{N}*pi/{M}", "0", D, f"{D}*pi", f"{D}*pi/{M}", f"{N}", f"{N}/{M}", f"{N} * pi / {M}", "2*pi/3.5", f"{D}/{M}", f"{D}*pi/{D}"]
+        out.append(sign + str(rng.choice(forms)))
+    return out
+
+
+def check_old_angles(exe, old):
+    """Check 1 of docs/qasm-gates.md section 6: the angles of the old grammar did not move. Every text of the old grammar, in rx ry rz p u1 u2 u3 cp, gives the same bytes from the old reader and the new."""
+    if old is None:
+        print(f"skip old-angle check: revision {OLD_REV} is not in this clone")
+        return True
+    rng = np.random.default_rng(20261030)
+    same = bad = 0
+    progs = []
+    for a in old_angle_texts(rng, 5000):
+        progs.append(f"OPENQASM 2.0;\nqreg q[2];\nh q[0];\n{rng.choice(['rx', 'ry', 'rz', 'p', 'u1'])}({a}) q[0];\ncx q[0],q[1];\n")
+    for a, b, c in zip(old_angle_texts(rng, 1500), old_angle_texts(rng, 1500), old_angle_texts(rng, 1500)):
+        progs.append(f"OPENQASM 2.0;\nqreg q[2];\nh q[0];\nu3({a},{b},{c}) q[0];\nu2({b},{c}) q[1];\ncp({a}) q[0],q[1];\n")
+    for text in progs:
+        o = subprocess.run([old], input=text, capture_output=True, text=True)
+        n = subprocess.run([exe], input=text, capture_output=True, text=True)
+        if o.returncode == 0:
+            if (o.returncode, o.stdout) == (n.returncode, n.stdout):
+                same += 1
+            else:
+                bad += 1
+                if bad < 5:
+                    print(f"FAIL old angle text differs:\n{text}\nold {o.stdout[:100]!r}\nnew {n.returncode} {n.stdout[:100]!r}")
+    print(f"{'ok  ' if not bad else 'FAIL'} the old angle grammar did not move: {same} of {len(progs)} programs give the same bytes from the old reader (rev {OLD_REV}) and the new; {bad} differ")
+    return bad == 0
+
+
+def amplitudes_vs_qiskit(exe, text):
+    code, out = run(exe, text)
+    if code != 0:
+        return code, 1.0
+    sv = Statevector(qasm2.loads(text, custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)).data
+    got = parse(out)[2]
+    return 0, max(abs(complex(*got.get(i, (0.0, 0.0))) - sv[i]) for i in range(len(sv)))
+
+
+def check_qiskit_gates(exe):
+    """Check 2: circuits with custom gates, nested, with names that share their first seven characters (the old reader would have taken them for one word), written by Qiskit's `qasm2.dumps` together with the
+    definitions of the library gates it writes (ryy, iswap, ecr, dcx), against Qiskit's statevector to 1e-12."""
+    from qiskit.circuit.library import RYYGate, ECRGate, iSwapGate, DCXGate
+    rng = np.random.default_rng(20261030)
+    ok = bad = 0
+    for case in range(80):
+        n = int(rng.integers(3, 13))
+        qc = QuantumCircuit(n)
+        made = []
+        prefix = str(rng.choice(["gate_QFT_", "measured_", "my_long_gate_", "cswapper"]))
+        for g in range(int(rng.integers(1, 4))):
+            k = int(rng.integers(2, 4))
+            sub = QuantumCircuit(k, name=f"{prefix}{g}{int(rng.integers(10**8, 10**9))}")
+            for _ in range(int(rng.integers(2, 7))):
+                kind = str(rng.choice(["h", "t", "rx", "ry", "rz", "cx", "cz", "swap", "nest"]))
+                qs = [int(x) for x in rng.permutation(k)]
+                ang = float(rng.uniform(-7, 7))
+                if kind in ("h", "t"):
+                    getattr(sub, kind)(qs[0])
+                elif kind in ("rx", "ry", "rz"):
+                    getattr(sub, kind)(ang, qs[0])
+                elif kind in ("cx", "cz", "swap"):
+                    getattr(sub, kind)(qs[0], qs[1])
+                elif made:
+                    gate = made[int(rng.integers(0, len(made)))]
+                    if gate.num_qubits <= k:
+                        sub.append(gate, qs[: gate.num_qubits])
+            made.append(sub.to_gate())
+        for _ in range(int(rng.integers(3, 9))):
+            qs = [int(x) for x in rng.permutation(n)]
+            kind = int(rng.integers(0, 4))
+            if kind == 0 and made:
+                gate = made[int(rng.integers(0, len(made)))]
+                qc.append(gate, qs[: gate.num_qubits])
+            elif kind == 1:
+                qc.append(RYYGate(float(rng.uniform(-3, 3))), qs[:2])
+            elif kind == 2:
+                qc.append([iSwapGate(), ECRGate(), DCXGate()][int(rng.integers(0, 3))], qs[:2])
+            else:
+                qc.h(qs[0])
+        text = qasm2.dumps(qc)
+        code, worst = amplitudes_vs_qiskit(exe, text)
+        if code != 0 or worst > TOL:
+            bad += 1
+            print(f"FAIL qiskit custom gates case {case}: exit {code}, worst {worst:.2e}\n{text[:900]}")
+        else:
+            ok += 1
+    print(f"{'ok  ' if not bad else 'FAIL'} Qiskit's definitions (custom, nested, long names, ryy iswap ecr dcx): {ok} random circuits agree with Qiskit to {TOL}; {bad} wrong")
+    return bad == 0
+
+
+EXPRS = ["a", "-a", "a/2", "a*2+b", "(a+b)/3", "pi/2-a", "2*pi*a", "sin(a)", "cos(a)*b", "sqrt(a*a+1)", "a^2", "exp(-a)", "ln(a+2)", "-(a-b)*1.5", "tan(a/3)", "a-b-1", "2^a", "3*a/4", "pi*a/3", "-pi/2+b"]
+ARGS = ["0.7", "pi/4", "1.3", "0.25*pi", "1e-1", "sqrt(2)", "1/3", "0.5"]    # small and positive, so that `ln(a+2)` and `sqrt` stay in their domain whatever the nesting passes on
+
+
+def check_expressions(exe):
+    """Check 3: gate definitions written by hand with the angle names in expressions of the whole grammar (nested calls pass expressions on), 150 random programs against Qiskit's reading of the same text."""
+    rng = np.random.default_rng(20261031)
+    ok = bad = 0
+    for case in range(150):
+        n = int(rng.integers(2, 5))
+        pick = lambda: str(rng.choice(EXPRS))
+        arg = lambda: str(rng.choice(ARGS))
+        lines = ["OPENQASM 2.0;", 'include "qelib1.inc";']
+        lines.append(f"gate inner(a,b) x,y {{ rx({pick()}) x; cx x,y; rz({pick()}) y; u3({pick()},{pick()},{pick()}) x; }}")
+        only_a = lambda: re.sub(r"\bb\b", "a", pick())
+        lines.append(f"gate outer(a) p,q,r {{ inner(a*2,{only_a()}) p,q; crz({only_a()}) q,r; inner(-a,pi/3) r,p; }}")
+        lines.append(f"qreg q[{n}];")
+        for _ in range(int(rng.integers(2, 7))):
+            qs = [int(x) for x in rng.permutation(n)]
+            kind = str(rng.choice(["inner", "outer", "h", "rx"]))
+            if kind == "inner":
+                lines.append(f"inner({arg()},{arg()}) q[{qs[0]}],q[{qs[1]}];")
+            elif kind == "outer" and n >= 3:
+                lines.append(f"outer({arg()}) q[{qs[0]}],q[{qs[1]}],q[{qs[2]}];")
+            elif kind == "rx":
+                lines.append(f"rx({arg()}) q[{qs[0]}];")
+            else:
+                lines.append(f"h q[{qs[0]}];")
+        text = ("", " ", "\n")[case % 3].join(lines) + "\n"     # a third of them with nothing between statements, so that a call is followed at once by the next one
+        code, worst = amplitudes_vs_qiskit(exe, text)
+        if code != 0 or worst > TOL:
+            bad += 1
+            print(f"FAIL expression case {case}: exit {code}, worst {worst:.2e}\n{text}")
+        else:
+            ok += 1
+    for expression in ("2*3", "2*3*pi/12", "(2+1)*pi/6", "-(3*pi)/4", "pi*3/4", "pi/2/2", "pi*2*3/12", "1/2*pi", "2^3*0.1", "2^3^2/100", "-2^2*0.1", "2^-1", "3*2*0.5", "-(-pi)/5", "+pi/7", "(pi)", "((2))*pi/9"):
+        text = f"OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[1];\nh q[0];\nrz({expression}) q[0];\nrx({expression}) q[0];\n"
+        code, worst = amplitudes_vs_qiskit(exe, text)
+        if code != 0 or worst > TOL:
+            bad += 1
+            print(f"FAIL angle {expression!r}: exit {code}, worst {worst:.2e}")
+        else:
+            ok += 1
+    print(f"{'ok  ' if not bad else 'FAIL'} angle expressions: {ok} random definitions and fixed expressions agree with Qiskit to {TOL}; {bad} wrong")
+    return bad == 0
+
+
+def gate_refusals():
+    """(text, expected status): every row of the limits table of docs/qasm-gates.md section 5."""
+    head = "OPENQASM 2.0;\nqreg q[3];\n"
+    def chain(top):
+        return "gate g0 a,b { cx a,b; }\n" + "".join(f"gate g{i} a,b {{ " + "g%d a,b; " % (i - 1) * 10 + "}\n" for i in range(1, top + 1)) + f"g{top} q[0],q[1];\n"
+    return [
+        (head + "gate g a { x a; }\ngate g a { z a; }\n", 3),
+        (head + "nosuch q[0];\n", 3),
+        (head + "opaque op a;\n", 3),
+        (head + "gate g a { measure a -> c[0]; }\ncreg c[1];\ng q[0];\n", 3),
+        (head + "gate g(t) a { rz(t) a; }\ng q[0];\n", 3),
+        (head + "gate g a { x a; }\ng q[0],q[1];\n", 2),
+        (head + "gate g a,b { cx a,b; }\ng q[1],q[1];\n", 2),
+        (head + "gate g a { g a; }\ng q[0];\n", 3),
+        (head + chain(7), 3),    # eight deep, ten calls each: 10^7 calls, over the budget of 200,000
+        (head + chain(8), 3),    # nine deep: over the depth
+        (head + "creg c[1];\nmeasured q[0] -> c[0];\n", 3),    # not `measure`
+        (head + "gate g a { " + "x a; " * 5000 + "}\n", 3),
+        (head + "".join(f"gate g{i} a {{ x a; }}\n" for i in range(65)), 3),
+        (head + "gate g " + ",".join(f"a{i}" for i in range(25)) + " { x a0; }\n", 3),
+        (head + "gate g a { x a;", 2),
+        (head + "gate g(t) a { rz(1/0) a; }\ng(1) q[0];\n", 3),
+        (head + "gate g a { gate h b { x b; } }\n", 3),
+        (head + "gate g a { x a; }\ng q[7];\n", 2),
+        (head + "rz(1/0) q[0];\n", 3),
+        (head + "rz(sqrt(-1)) q[0];\n", 3),
+        (head + "rz(ln(0)) q[0];\n", 3),
+        (head + "gate g a { x b; }\ng q[0];\n", 2),
+        (head + "x q[0];\n}\n", 2),
+    ]
+
+
+def check_gate_refusals(exe):
+    """Check 4: every row of the limits table is refused with its status (nothing on standard output that is not the error, and never a trap), and 1,200 mutated programs (a character deleted, doubled or replaced) end in status 0, 2 or 3."""
+    ok = bad = 0
+    for text, want in gate_refusals():
+        r = subprocess.run([exe], input=text, capture_output=True, text=True, timeout=120)
+        if r.returncode == want:
+            ok += 1
+        else:
+            bad += 1
+            print(f"FAIL expected status {want}, got {r.returncode}: {text[:160]!r} {r.stdout[:80]!r}")
+    rng = np.random.default_rng(20261031)
+    seeds = [
+        'OPENQASM 2.0;\ninclude "qelib1.inc";\ngate inner(a,b) x,y { rx(a*2+b) x; cx x,y; rz(-a/3+pi) y; }\ngate outer(a) p,q,r { inner(a,0.5) p,q; crz(sin(a)) q,r; }\nqreg q[3];\ncreg c[2];\nouter(0.7) q[0],q[1],q[2];\nmeasure q[0] -> c[0];\nif(c==1) inner(1,2) q[1],q[2];\n',
+        'OPENQASM 2.0;\nqreg q[2];\ngate g(t) a,b { rz(t^2) a; cx a,b; ry(-t) b; } // note\ng(1.5) q[0],q[1];\ng(pi/3) q[1],q[0];\n',
+    ]
+    fuzz = 0
+    for _ in range(1200):
+        text = seeds[int(rng.integers(0, len(seeds)))]
+        for _ in range(int(rng.integers(1, 4))):
+            at = int(rng.integers(0, len(text)))
+            how = int(rng.integers(0, 3))
+            ch = str(rng.choice(list("(){};,/*+-^.0129eqabcgipnt [] \n")))
+            if how == 0:
+                text = text[:at] + text[at + 1:]
+            elif how == 1:
+                text = text[:at] + text[at] + text[at:]
+            else:
+                text = text[:at] + ch + text[at + 1:]
+        try:
+            r = subprocess.run([exe], input=text, capture_output=True, text=True, timeout=60)
+            code = r.returncode
+        except subprocess.TimeoutExpired:
+            code = "timeout"
+        if code in (0, 2, 3):
+            fuzz += 1
+        else:
+            bad += 1
+            if bad < 6:
+                print(f"FAIL mutated program ended with {code}:\n{text}")
+    print(f"{'ok  ' if not bad else 'FAIL'} gate refusals: {ok} of {len(gate_refusals())} limit rows refused with their status; {fuzz} of 1200 mutated programs ended in 0, 2 or 3 and never a trap; {bad} wrong")
+    return bad == 0
+
+
+def check_gate_defs(exe, old):
+    return check_old_angles(exe, old) and check_qiskit_gates(exe) and check_expressions(exe) and check_gate_refusals(exe)
+
+
+GATE_MUTANTS = [
+    ("src/qasm.cho", "b = b * a2;", "b = b + a2;", "a pi multiple divided by an integer"),
+    ("src/qasm.cho", "                    a = a * a2;\n                    v = float_of(a);", "                    a = a + a2;\n                    v = float_of(a);", "an integer times an integer"),
+    ("src/qasm.cho", "                    k = 1;\n                    a = a * a2;\n                    b = b2;", "                    k = 1;\n                    a = a + a2;\n                    b = b2;", "an integer times a pi multiple"),
+    ("src/qasm.cho", "        let (k2, a2, b2, v2) = unary(io, la);\n        if k2 < 0 {\n            return bad_value();\n        }\n        let r = math.pow(v, v2);", "        let (k2, a2, b2, v2) = power(io, la);\n        if k2 < 0 {\n            return bad_value();\n        }\n        let r = math.pow(v, v2);", "^ binds the exponent too tightly"),
+    ("src/qasm.cho", "        if k == 1 {\n            return (1, 0 - a, b, 0.0 - v);\n        }", "        if k == 1 {\n            return (1, a, b, 0.0 - v);\n        }", "a lost unary minus on a pi multiple"),
+    ("src/qasm.cho", "                if op == '+' {\n                    v = v + v2;", "                if op == '-' {\n                    v = v + v2;", "plus and minus swapped"),
+    ("src/qasm.cho", "                    la[top] = '(';\n                    top = top + 1;\n                    var m = 0;", "                    var m = 0;", "a parameter's value without its parentheses"),
+    ("src/qasm.cho", "            la[0] = la[f + 2];\n            la[6] = la[f + 3];", "            la[0] = 32;\n            la[6] = la[f + 3];", "the saved character not restored at the end of a frame"),
+    ("src/qasm.cho", "    if count > 7 {\n        return 0 - 2;\n    }", "    if count > 7 {\n        return w;\n    }", "a long name taken for its first seven characters"),
+    ("src/qasm.cho", "    la[4] = la[4] + 1;\n    if la[4] > 200000 {", "    la[4] = la[4] + 0;\n    if la[4] > 200000 {", "the count of gate calls"),
+    ("src/qasm.cho", "            la[top] = '0' + at % 10;", "            la[top] = '0' + at % 9;", "a qubit index digit"),
+]
+
+
+def gate_mutants(compiler, old):
+    ok = True
+    for path, a, b, what in GATE_MUTANTS:
+        d = tempfile.mkdtemp(prefix="qasm-mut-")
+        os.makedirs(os.path.join(d, "src"))
+        for f in os.listdir(os.path.join(ROOT, "src")):
+            text = open(os.path.join(ROOT, "src", f)).read()
+            if "src/" + f == path:
+                if text.count(a) != 1:
+                    print(f"FAIL mutant '{what}': the text it changes occurs {text.count(a)} times")
+                    ok = False
+                    text = None
+                else:
+                    text = text.replace(a, b, 1)
+            if text is not None:
+                open(os.path.join(d, "src", f), "w").write(text)
+        exe = os.path.join(d, "qsim")
+        srcs = [os.path.join(d, "src", f) for f in sorted(os.listdir(os.path.join(d, "src"))) if f.endswith(".cho")]
+        r = subprocess.run([compiler, "build", *srcs, "--std", "-o", exe], capture_output=True, text=True)
+        if r.returncode:
+            print(f"FAIL mutant '{what}' does not build: {r.stderr[-200:]}")
+            ok = False
+            continue
+        import contextlib, io as _io
+        with contextlib.redirect_stdout(_io.StringIO()):
+            survived = check_gate_defs(exe, old)
+        if survived:
+            print(f"FAIL mutant '{what}' SURVIVED")
+            ok = False
+        else:
+            print(f"ok   mutant killed: {what}")
+    return ok
+
+
 def ulps(a, b):
     import struct
     key = lambda x: (lambda i: i if i >= 0 else -(1 << 63) - i)(struct.unpack("<q", struct.pack("<d", x))[0])
@@ -342,6 +632,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--compiler", default=os.environ.get("CANCHO", "cancho"))
     ap.add_argument("--exe")
+    ap.add_argument("--mutants", action="store_true", help="also build the reader with one deliberate bug at a time and require the gate-definition checks to fail on each")
     args = ap.parse_args()
     exe = args.exe or os.path.join(tempfile.mkdtemp(prefix="qasm-"), "qsim")
     if not args.exe:
@@ -391,7 +682,10 @@ def main():
     print(f"\n{len(names) - len(failed)} of {len(names)} files read by both parsers; "
           f"Qiskit-written QASM: {accepted} run, {refused} refused for a decimal angle")
     native = check_native(exe)
-    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe) and check_controlled(exe) and check_classical(exe)
+    old = build_old(args.compiler)
+    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe) and check_controlled(exe) and check_classical(exe) and check_gate_defs(exe, old)
+    if numbers and args.mutants:
+        numbers = gate_mutants(args.compiler, old)
     sys.exit(1 if failed or not native or not numbers else 0)
 
 

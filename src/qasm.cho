@@ -3,7 +3,9 @@ module qc.qasm;
 import qc.dump;
 import qc.gates;
 import qc.measure;
+import std.fmt;
 import std.io;
+import std.math;
 
 // A subset of OpenQASM 2.0, read from standard input and run on the state
 // vector. It is what Qiskit writes for circuits of the gates this simulator
@@ -18,18 +20,38 @@ import std.io;
 //   cx cy cz ch swap q[i],q[j];  cp(a) cu1(a) crz(a) rzz(a) q[i],q[j];  ccx cswap q[i],q[j],q[k];   cy ch crz rzz cswap are the true matrices of qelib1.inc
 //   measure q[i] -> c[j];                       measure q[i] (without the arrow the outcome is only printed); the bit goes into c
 //   if (c==k) <statement>;                      the statement runs when the creg c holds k, and is skipped otherwise
+//   gate name(a,b) x,y { rx(a*2+b) x; cx x,y; }   a definition: up to 64, stored as text and expanded at each call (docs/qasm-gates.md); a call is `name(1,pi/2) q[0],q[1];`
+//   U(t,f,l) q[i];  CX q[i],q[j];                the two gates a definition of any other is written from
 //
-// An angle is a number in radians (`0.785398`, `-1.2e-3`, `2`), `pi`, or a number times pi, divided by a number: `-pi/2`, `3*pi/4`, `0.25*pi`. A multiple of pi
-// by whole numbers is `pi * num / den`, the double the references compute, bit for bit; a decimal is read to the correctly rounded double (checked against Python's, scripts/check_qasm.py) when its digits (at most 18) times its power of ten are an integer below 2^62, or the power is 18 below, or 22 either way for digits below 2^53, and to within
-// a few units in the last place beyond that, where an angle is far too small or too large to matter (docs/features-results.md). Anything
-// else (`gate` definitions, `if`, a second `qreg`) is refused with a line that says what.
+// An angle is an expression: `0.785398`, `-1.2e-3`, `pi`, `3*pi/4`, `2*pi/3 + sin(0.1)`, with + - * / ^, parentheses and sin cos tan exp ln sqrt (docs/qasm-gates.md section 4). A multiple of pi by whole
+// numbers (`3*pi/4`, `-pi/2`) stays `pi * num / den`, the double the references compute, bit for bit; a decimal is read to the correctly rounded double (checked against Python's in scripts/check_qasm.py) when its
+// digits (at most 18) times its power of ten are an integer below 2^62, or the power is 18 below, or 22 either way for digits below 2^53, and to within a few units in the last place beyond that, where an angle is far
+// too small or too large to matter (docs/features-results.md). `reset`, `opaque` and a second `qreg` are refused with a line that says what.
 //
 // A word is its characters packed big-endian into an int, the first seven
 // only, the same trick `main.cho` uses.
 
-// `la[0]` is the character under the cursor, -1 at the end of input.
+// `la` is the reader's one array of ints (docs/qasm-gates.md section 3). Its cells:
+//   0 the character under the cursor, -1 at the end of input       1 depth: 0 reads standard input, d reads the d-th expansion of a gate call
+//   2 gate definitions stored    3 where the next one goes          4 gate calls expanded so far          5 length of the last word read
+//   6 the top of the expansion area                                 8..39 the frames (4 cells each: next cell, end, character saved, top saved)
+//   40..63 qubit operands of a call   64..95 where each angle's text of a call is   96..159 the characters of the last word   160..287 the table of definitions (start, length)
+//   288.. the text of the definitions, 24,000 cells, then the expansions
 fn advance[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
-    la[0] = getchar(io);
+    if la[1] == 0 {
+        la[0] = getchar(io);
+    } else {
+        let f = 8 + (la[1] - 1) * 4;
+        if la[f] < la[f + 1] {
+            la[0] = la[la[f]];
+            la[f] = la[f] + 1;
+        } else {
+            // the expansion is read: back to the text it was called from, with the character that was under the cursor then
+            la[0] = la[f + 2];
+            la[6] = la[f + 3];
+            la[1] = la[1] - 1;
+        }
+    }
     return la[0];
 }
 
@@ -63,7 +85,8 @@ fn skip_statement[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
     return 0;
 }
 
-// The next identifier, packed; 0 if the next character does not start one.
+// The next identifier, packed; 0 if the next character does not start one, -2 if it is longer than seven characters (so it is never a built-in: docs/qasm-gates.md section 3). Its characters, up to 63, and its
+// length are left in `la` for the lookup of a defined gate.
 fn word[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
     skip(io, la);
     var w = 0;
@@ -72,8 +95,15 @@ fn word[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
         if count < 7 {
             w = w * 256 + la[0];
         }
+        if count < 63 {
+            la[96 + count] = la[0];
+        }
         count = count + 1;
         advance(io, la);
+    }
+    la[5] = count;
+    if count > 7 {
+        return 0 - 2;
     }
     return w;
 }
@@ -309,69 +339,211 @@ pub fn number[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, float) 
     return (2, 0, v);
 }
 
-// An angle, up to and including the character `close` (`)` after the last of a gate's angles, `,` after the others): a number, `pi`, or a number `*pi`, then `/` and a number, with a sign in front. `3*pi/4`,
-// `-pi/2` and `0` are the multiples of pi the reader has always taken, and they stay `pi * num / den`, the same double as the references compute; anything else is a decimal in radians. Answers (ok, angle), ok 0
-// when it is outside the subset.
-fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, float) {
+// ---- angle expressions (docs/qasm-gates.md section 4) ------------------------------------------------------------------------------------------------------
+// A value is (kind, a, b, v): kind 0 a double v, kind 1 the multiple a/b of pi (v is its double, `pi * a / b`), kind 2 the integer a, kind -1 an error. Multiples of pi stay multiples of pi through `*` and `/` by integers, which is what
+// keeps every angle of the old grammar (`3*pi/4`, `-pi/2`, `0`) the double the references compute.
+
+fn small(x: int) -> [] bool {
+    return x > 0 - 1000000000 && x < 1000000000;
+}
+
+fn bad_value() -> [] (int, int, int, float) {
+    return (0 - 1, 0, 1, 0.0);
+}
+
+fn atom[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, int, float) {
     skip(io, la);
-    var sign = 1;
-    if la[0] == '-' {
-        sign = 0 - 1;
+    if la[0] == '(' {
         advance(io, la);
-    }
-    skip(io, la);
-    var haspi = false;
-    var integral = true;
-    var num = 1;
-    var base = 1.0;
-    let (k1, i1, v1) = number(io, la);
-    if k1 == 0 {
-        let name = word(io, la);
-        if name != 28777 {
-            return (0, 0.0);
+        let (k, a, b, v) = expr(io, la);
+        if k < 0 || !expect(io, la, ')') {
+            return bad_value();
         }
-        haspi = true;
-    } else {
-        num = i1;
-        base = v1;
-        integral = k1 == 1;
-        if expect(io, la, '*') {
-            let name = word(io, la);
-            if name != 28777 {
-                return (0, 0.0);
+        return (k, a, b, v);
+    }
+    if la[0] >= '0' && la[0] <= '9' || la[0] == '.' {
+        let (nk, whole, nv) = number(io, la);
+        if nk == 1 {
+            return (2, whole, 1, nv);
+        }
+        if nk == 2 {
+            return (0, 0, 1, nv);
+        }
+        return bad_value();
+    }
+    let name = word(io, la);
+    if name == 28777 {
+        return (1, 1, 1, gates.pi());
+    }
+    if name == 7563630 || name == 6516595 || name == 7627118 || name == 6649968 || name == 27758 || name == 1936814708 {
+        if !expect(io, la, '(') {
+            return bad_value();
+        }
+        let (k, a, b, v) = expr(io, la);
+        if k < 0 || !expect(io, la, ')') {
+            return bad_value();
+        }
+        var r = 0.0;
+        if name == 7563630 {
+            r = math.sin(v);
+        } else if name == 6516595 {
+            r = math.cos(v);
+        } else if name == 7627118 {
+            r = math.tan(v);
+        } else if name == 6649968 {
+            r = math.exp(v);
+        } else if name == 27758 {
+            if v <= 0.0 {
+                return bad_value();
             }
-            haspi = true;
+            r = math.log(v);
+        } else {
+            if v < 0.0 {
+                return bad_value();
+            }
+            r = sqrt(v);
+        }
+        if r - r != 0.0 {
+            return bad_value();
+        }
+        return (0, 0, 1, r);
+    }
+    return bad_value();
+}
+
+fn power[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, int, float) {
+    let (k, a, b, v) = atom(io, la);
+    skip(io, la);
+    if k >= 0 && la[0] == '^' {
+        advance(io, la);
+        let (k2, a2, b2, v2) = unary(io, la);
+        if k2 < 0 {
+            return bad_value();
+        }
+        let r = math.pow(v, v2);
+        if r - r != 0.0 {
+            return bad_value();
+        }
+        return (0, 0, 1, r);
+    }
+    return (k, a, b, v);
+}
+
+fn unary[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, int, float) {
+    skip(io, la);
+    if la[0] == '-' {
+        advance(io, la);
+        let (k, a, b, v) = unary(io, la);
+        if k == 1 {
+            return (1, 0 - a, b, 0.0 - v);
+        }
+        if k == 2 {
+            return (2, 0 - a, 1, 0.0 - v);
+        }
+        if k == 0 {
+            return (0, 0, 1, 0.0 - v);
+        }
+        return bad_value();
+    }
+    if la[0] == '+' {
+        advance(io, la);
+        return unary(io, la);
+    }
+    return power(io, la);
+}
+
+fn term[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, int, float) {
+    let (k0, a0, b0, v0) = unary(io, la);
+    var k = k0;
+    var a = a0;
+    var b = b0;
+    var v = v0;
+    var go = k >= 0;
+    while go {
+        skip(io, la);
+        let op = la[0];
+        if op == '*' || op == '/' {
+            advance(io, la);
+            let (k2, a2, b2, v2) = unary(io, la);
+            if k2 < 0 {
+                k = 0 - 1;
+                go = false;
+            } else if op == '*' {
+                if k == 2 && k2 == 2 && small(a) && small(a2) {
+                    a = a * a2;
+                    v = float_of(a);
+                } else if k == 2 && k2 == 1 && small(a) && small(a2) {
+                    k = 1;
+                    a = a * a2;
+                    b = b2;
+                    v = gates.angle(a, b);
+                } else if k == 1 && k2 == 2 && small(a) && small(a2) {
+                    a = a * a2;
+                    v = gates.angle(a, b);
+                } else {
+                    k = 0;
+                    v = v * v2;
+                }
+            } else if v2 == 0.0 {
+                k = 0 - 1;
+                go = false;
+            } else if k == 1 && k2 == 2 && small(b) && small(a2) {
+                b = b * a2;
+                v = gates.angle(a, b);
+            } else {
+                k = 0;
+                v = v / v2;
+            }
+        } else {
+            go = false;
         }
     }
-    var den = 1;
-    var divisor = 1.0;
-    var divided = false;
-    var integer_divisor = true;
-    if expect(io, la, '/') {
-        let (k2, i2, v2) = number(io, la);
-        if k2 == 0 || v2 == 0.0 {
-            return (0, 0.0);
+    return (k, a, b, v);
+}
+
+fn expr[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, int, float) {
+    let (k0, a0, b0, v0) = term(io, la);
+    var k = k0;
+    var a = a0;
+    var b = b0;
+    var v = v0;
+    var go = k >= 0;
+    while go {
+        skip(io, la);
+        let op = la[0];
+        if op == '+' || op == '-' {
+            advance(io, la);
+            let (k2, a2, b2, v2) = term(io, la);
+            if k2 < 0 {
+                k = 0 - 1;
+                go = false;
+            } else {
+                if op == '+' {
+                    v = v + v2;
+                } else {
+                    v = v - v2;
+                }
+                k = 0;
+            }
+        } else {
+            go = false;
         }
-        divided = true;
-        den = i2;
-        divisor = v2;
-        integer_divisor = k2 == 1;
     }
-    if !expect(io, la, close) {
+    return (k, a, b, v);
+}
+
+// An angle, up to and including the character `close` (`)` after the last of a gate's angles, `,` after the others): an expression (numbers, `pi`, `+ - * / ^`, parentheses, `sin cos tan exp ln sqrt`).
+// Answers (ok, angle), ok 0 when it is outside the subset or not finite.
+fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, float) {
+    let (k, a, b, v) = expr(io, la);
+    if k < 0 || !expect(io, la, close) {
         return (0, 0.0);
     }
-    if haspi && integral && integer_divisor {
-        return (1, gates.angle(sign * num, den));
+    if k == 1 {
+        return (1, gates.angle(a, b));
     }
-    var v = base;
-    if haspi {
-        v = v * gates.pi();
-    }
-    if divided {
-        v = v / divisor;
-    }
-    if sign < 0 {
-        v = 0.0 - v;
+    if v - v != 0.0 {
+        return (0, 0.0);
     }
     return (1, v);
 }
@@ -395,9 +567,362 @@ fn refuse[&i, &r](io: &!i Io, why: &r [byte]) -> [io_write] int {
     return 3;
 }
 
+// ---- gate definitions (docs/qasm-gates.md) --------------------------------------------------------------------------------------------------------------------
+
+// where the text of the definitions ends and the expansions begin in `la`
+fn def_end() -> [] int {
+    return 24288;
+}
+
+fn ident_end[&l](la: &l [int], i: int, limit: int) -> [] int {
+    var k = i;
+    while k < limit && is_word(la[k]) {
+        k = k + 1;
+    }
+    return k;
+}
+
+fn skip_blank[&l](la: &l [int], i: int, limit: int) -> [] int {
+    var k = i;
+    while k < limit && is_space(la[k]) {
+        k = k + 1;
+    }
+    return k;
+}
+
+fn same_text[&l](la: &l [int], a: int, alen: int, b: int, blen: int) -> [] bool {
+    if alen != blen {
+        return false;
+    }
+    var k = 0;
+    while k < alen {
+        if la[a + k] != la[b + k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The identifiers, comma separated, from `i` to the first `)` or `{` (or `e`): answers (start, length of the k-th one, how many, where it stopped).
+fn scan_list[&l](la: &l [int], i: int, e: int, k: int) -> [] (int, int, int, int) {
+    var count = 0;
+    var ks = 0;
+    var kl = 0;
+    var p = skip_blank(la, i, e);
+    var more = true;
+    while more && p < e {
+        let c = la[p];
+        if c == ')' || c == '{' {
+            more = false;
+        } else if is_word(c) {
+            let q = ident_end(la, p, e);
+            if count == k {
+                ks = p;
+                kl = q - p;
+            }
+            count = count + 1;
+            p = skip_blank(la, q, e);
+            if p < e && la[p] == ',' {
+                p = skip_blank(la, p + 1, e);
+            }
+        } else {
+            more = false;
+        }
+    }
+    return (ks, kl, count, p);
+}
+
+// The definition called by the last word read, or -1.
+fn find_def[&l](la: &l [int]) -> [] int {
+    let n = la[5];
+    if n > 63 {
+        return 0 - 1;
+    }
+    var d = 0;
+    while d < la[2] {
+        let s = la[160 + 2 * d];
+        if same_text(la, s, ident_end(la, s, s + la[161 + 2 * d]) - s, 96, n) {
+            return d;
+        }
+        d = d + 1;
+    }
+    return 0 - 1;
+}
+
+// Is the text from `s` to `e` a definition: `name [(params)] qubits { ... }`, with 1 to 24 qubits and up to 16 params, and a name not defined yet? 0 when it is, else the message.
+fn definition_fault[&l](la: &l [int], s: int, e: int) -> [] int {
+    let ne = ident_end(la, s, e);
+    if ne == s || la[s] >= '0' && la[s] <= '9' {
+        return 1;
+    }
+    var d = 0;
+    while d < la[2] {
+        let t = la[160 + 2 * d];
+        if same_text(la, t, ident_end(la, t, t + la[161 + 2 * d]) - t, s, ne - s) {
+            return 2;
+        }
+        d = d + 1;
+    }
+    var p = skip_blank(la, ne, e);
+    if la[p] == '(' {
+        let (a1, b1, np, p1) = scan_list(la, p + 1, e, 0);
+        if la[p1] != ')' || np > 16 {
+            return 1;
+        }
+        p = skip_blank(la, p1 + 1, e);
+    }
+    let (a2, b2, nq, p2) = scan_list(la, p, e, 0);
+    if la[p2] != '{' || nq < 1 || nq > 24 {
+        return 1;
+    }
+    return 0;
+}
+
+// `gate name [(params)] qubits { body }`: the text from the name to the `}` goes into the definition area (without `//` comments), and the next statement is read after it.
+fn define[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read, io_write] int {
+    skip(io, la);
+    if la[2] >= 64 {
+        return refuse(io, "more than 64 gate definitions");
+    }
+    let start = la[3];
+    var top = start;
+    var done = false;
+    var opened = false;
+    var status = 0;
+    while !done && status == 0 {
+        let c = la[0];
+        if c < 0 {
+            status = 2;
+        } else if c == '{' && opened {
+            status = refuse(io, "a gate defined inside a gate");
+        } else if top >= def_end() - 1 {
+            status = refuse(io, "gate definitions of more than 24,000 characters in all");
+        } else if c == '/' {
+            advance(io, la);
+            if la[0] == '/' {
+                while la[0] >= 0 && la[0] != 10 {
+                    advance(io, la);
+                }
+            } else {
+                la[top] = '/';
+                top = top + 1;
+            }
+        } else {
+            la[top] = c;
+            top = top + 1;
+            if c == '{' {
+                opened = true;
+            }
+            if c == '}' {
+                done = true;
+            }
+            advance(io, la);
+        }
+    }
+    if status == 0 {
+        let fault = definition_fault(la, start, top);
+        if fault == 1 {
+            status = refuse(io, "a gate definition is not `name [(params)] qubits { statements }` with up to 24 qubits");
+        } else if fault == 2 {
+            status = refuse(io, "a gate defined twice");
+        } else {
+            la[160 + 2 * la[2]] = start;
+            la[161 + 2 * la[2]] = top - start;
+            la[2] = la[2] + 1;
+            la[3] = top;
+        }
+    }
+    return status;
+}
+
+// A call of the defined gate `d`, whose name has been read: the angles and qubits that follow are read, the body is copied above the expansions already made with the angle names replaced by `(value)` and the qubit names
+// by `q[index]`, and the copy becomes the input until it is read (a frame: docs/qasm-gates.md section 3). Answers 0 or a status.
+fn call_user[&i, &b, &l](io: &!i Io, scratch: &!b [byte], la: &!l [int], d: int, n: int) -> [io_read, io_write] int {
+    let s = la[160 + 2 * d];
+    let e = s + la[161 + 2 * d];
+    let after = skip_blank(la, ident_end(la, s, e), e);
+    var np = 0;
+    var pstart = 0 - 1;
+    var qstart = after;
+    if la[after] == '(' {
+        pstart = after + 1;
+        let (a1, b1, c1, p1) = scan_list(la, pstart, e, 0);
+        np = c1;
+        qstart = skip_blank(la, p1 + 1, e);
+    }
+    let (a2, b2, nq, p2) = scan_list(la, qstart, e, 0);
+    if la[1] >= 8 {
+        return refuse(io, "gates nested deeper than 8");
+    }
+    la[4] = la[4] + 1;
+    if la[4] > 200000 {
+        return refuse(io, "more than 200,000 gate calls");
+    }
+    var top = la[6];
+    let room = len(la) - 64;
+    var status = 0;
+    if np > 0 && !expect(io, la, '(') {
+        status = refuse(io, "a gate call needs its angles in parentheses");
+    }
+    var k = 0;
+    while k < np && status == 0 {
+        var close = ')';
+        if k + 1 < np {
+            close = ',';
+        }
+        let (ok, theta) = angle(io, la, close);
+        if ok == 0 {
+            status = refuse(io, "a gate call whose angles are not the definition's, or outside the subset");
+        } else {
+            let count = fmt.float_into(scratch, theta);
+            if top + count >= room {
+                status = refuse(io, "gate expansion too long");
+            } else {
+                la[64 + 2 * k] = top;
+                la[65 + 2 * k] = count;
+                var j = 0;
+                while j < count {
+                    la[top + j] = int_of(scratch[j]);
+                    j = j + 1;
+                }
+                top = top + count;
+            }
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < nq && status == 0 {
+        if k > 0 {
+            expect(io, la, ',');
+        }
+        let q = operand(io, la);
+        if q < 0 || q >= n {
+            status = 2;
+        } else {
+            var j = 0;
+            while j < k {
+                if la[40 + j] == q {
+                    status = 2;
+                }
+                j = j + 1;
+            }
+            la[40 + k] = q;
+        }
+        k = k + 1;
+    }
+    skip(io, la);
+    if status == 0 && la[0] != ';' {
+        status = 2;
+    }
+    to_semicolon(io, la);
+    if status != 0 {
+        return status;
+    }
+    // the body, with the names replaced
+    let start = top;
+    var i = p2 + 1;
+    let stop = e - 1;
+    while i < stop && status == 0 {
+        let c = la[i];
+        if top + 40 >= room {
+            status = refuse(io, "gate expansion too long");
+        } else if is_word(c) && !(c >= '0' && c <= '9') {
+            let q = ident_end(la, i, stop);
+            var found = false;
+            var j = 0;
+            while j < np && !found {
+                let (ks, kl, kc, kp) = scan_list(la, pstart, e, j);
+                if same_text(la, i, q - i, ks, kl) {
+                    found = true;
+                    la[top] = '(';
+                    top = top + 1;
+                    var m = 0;
+                    while m < la[65 + 2 * j] {
+                        la[top] = la[la[64 + 2 * j] + m];
+                        top = top + 1;
+                        m = m + 1;
+                    }
+                    la[top] = ')';
+                    top = top + 1;
+                }
+                j = j + 1;
+            }
+            j = 0;
+            while j < nq && !found {
+                let (ks, kl, kc, kp) = scan_list(la, qstart, e, j);
+                if same_text(la, i, q - i, ks, kl) {
+                    found = true;
+                    la[top] = 'q';
+                    la[top + 1] = '[';
+                    top = top + 2;
+                    let at = la[40 + j];
+                    if at >= 10 {
+                        la[top] = '0' + at / 10;
+                        top = top + 1;
+                    }
+                    la[top] = '0' + at % 10;
+                    la[top + 1] = ']';
+                    top = top + 2;
+                }
+                j = j + 1;
+            }
+            if !found {
+                var m = i;
+                while m < q {
+                    la[top] = la[m];
+                    top = top + 1;
+                    m = m + 1;
+                }
+            }
+            i = q;
+        } else if c >= '0' && c <= '9' || c == '.' {
+            var q = i;
+            var go = true;
+            while q < stop && go {
+                let t = la[q];
+                if t >= '0' && t <= '9' || t == '.' {
+                    q = q + 1;
+                } else if t == 'e' || t == 'E' {
+                    q = q + 1;
+                    if q < stop && (la[q] == '+' || la[q] == '-') {
+                        q = q + 1;
+                    }
+                } else {
+                    go = false;
+                }
+            }
+            var m = i;
+            while m < q {
+                la[top] = la[m];
+                top = top + 1;
+                m = m + 1;
+            }
+            i = q;
+        } else {
+            la[top] = c;
+            top = top + 1;
+            i = i + 1;
+        }
+    }
+    if status == 0 && top > start {
+        let f = 8 + la[1] * 4;
+        la[f] = start + 1;
+        la[f + 1] = top;
+        la[f + 2] = la[0];
+        la[f + 3] = la[6];
+        la[6] = top;
+        la[1] = la[1] + 1;
+        la[0] = la[start];
+    }
+    return status;
+}
+
 // Run the statements that follow `OPENQASM`. Answers 0, or a status: 2 for
 // malformed input, 3 for something outside the subset.
 pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int], rng: &!r [int], scratch: &!b [byte], la: &!l [int]) -> [io_read, io_write] int {
+    la[3] = 288;
+    la[6] = def_end();
     advance(io, la);
     to_semicolon(io, la);
     var status = 0;
@@ -406,7 +931,9 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
     while !done && status == 0 {
         skip_statement(io, la);
         let w = word(io, la);
-        if w == 0 {
+        if w == 0 && la[0] >= 0 {
+            status = 2;
+        } else if w == 0 {
             done = true;
         } else if w == 22324781757055315 || w == 29676245855069285 || w == 27691691891320178 {
             to_semicolon(io, la);
@@ -425,6 +952,15 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
                     qubits[0] = n;
                 }
             }
+        } else if w == 1734440037 {
+            if la[1] != 0 {
+                status = refuse(io, "a gate defined inside a gate");
+            } else {
+                status = define(io, la);
+            }
+        } else if w == 122528461845861 {
+            to_semicolon(io, la);
+            status = refuse(io, "opaque gates are not read");
         } else if w == 1668441447 {
             // creg name[size]: up to four, each a value of up to 20 bits that `measure q[i] -> name[j]` sets bit j of and `if (name==k)` tests
             let nm = word(io, la);
@@ -445,6 +981,12 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
             }
         } else if n == 0 {
             status = refuse(io, "a gate before qreg");
+        } else if la[2] > 0 && find_def(la) >= 0 {
+            // a defined gate wins over a built-in of the same name, as in Qiskit's loader
+            status = call_user(io, scratch, la, find_def(la), n);
+        } else if la[1] > 0 && (w == 30792241684771429 || w == 26982 || w == 491328333172) {
+            to_semicolon(io, la);
+            status = refuse(io, "measure, reset and if are not allowed inside a gate");
         } else if w == 30792241684771429 {
             let q = operand(io, la);
             // `-> name[j]` (or `-> name` for a register of one bit) names the bit the outcome goes to
@@ -549,7 +1091,7 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
                 gates.sdg(st, n, q);
                 gates.h(st, n, q);
             }
-        } else if w == 30002 || w == 30003 || w == 117 {
+        } else if w == 30002 || w == 30003 || w == 117 || w == 85 {
             // u2(f,l), u3(t,f,l), u(t,f,l): p(f) ry(t) p(l), the first one applied last
             var ok = expect(io, la, '(');
             var theta = gates.angle(1, 2);
@@ -576,7 +1118,7 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
                 gates.ry(st, n, q, theta);
                 gates.p(st, n, q, phi);
             }
-        } else if w == 25464 || w == 25466 || w == 1937203568 || w == 25465 || w == 25448 {
+        } else if w == 25464 || w == 25466 || w == 1937203568 || w == 25465 || w == 25448 || w == 17240 {
             let a = operand(io, la);
             expect(io, la, ',');
             let c = operand(io, la);
