@@ -278,7 +278,7 @@ def main():
                 extra = " (the exact energy to 1e-9)" if reach else " (NOT the exact energy)"
             print(f"{'ok  ' if good else 'FAIL'} vqe {method} with {layers} layer(s): {got['energy']:.10f} in {got['evaluations']} energy and {got['gradients']} gradient evaluations; the best of 30 scipy BFGS runs finds {best:.10f} (difference {diff:.1e}); error against the exact energy {got['error']:.2e}{extra}")
         # SPSA (cancho-opt section 11): two evaluations per iteration; the exact energy is approached, not reached; and with shots it still gets there
-        for label, extra, limit, want_spent in (("exact energy", ["--maxiter", "800"], 0.05, 0), ("sampled, 1000 shots", ["--maxiter", "200", "--shots", "1000", "--sampled", sampled], 0.15, (2 * 200 + 1) * 2 * 1000)):
+        for label, extra, limit, want_spent in (("exact energy", ["--maxiter", "800"], 0.05, 0), ("exact energy, a = 1, c = 0.05, A = 0 (README: the gain schedule)", ["--maxiter", "800", "--a", "1", "--c", "0.05", "--stability", "0"], 0.05, 0), ("sampled, 1000 shots", ["--maxiter", "200", "--shots", "1000", "--sampled", sampled], 0.15, (2 * 200 + 1) * 2 * 1000)):
             errs = []
             for seed in (1, 2, 3):
                 r = subprocess.run([driver, "--method", "spsa", "--layers", "3", "--opt", opt, "--energy", energy, "--seed", str(seed), *extra], capture_output=True, text=True)

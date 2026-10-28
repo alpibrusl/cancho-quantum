@@ -3,10 +3,10 @@ edition 7;
 // `vqe`: a variational quantum eigensolver in cancho (README.md). It asks cancho-opt's `opt minimize` (Nelder-Mead) for the angles that minimise the energy of the state that `vqe-energy` prepares,
 // and prints the result next to the exact ground state energy.
 //
-//     vqe [--method bfgs|nelder-mead|spsa] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N] [--maxiter N] [--a A] [--c C]
+//     vqe [--method bfgs|nelder-mead|spsa] [--layers L] [--restarts R] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N] [--maxiter N] [--a A] [--c C] [--stability S]
 //         [--shots S [--seed K] [--readout P] [--mitigate] [--sampled PATH]]
 //
-// With `--method spsa` (`opt minimize --method spsa`, no gradient, two evaluations per iteration whatever the number of angles) the optimiser runs `--maxiter` iterations (default 200) with step gain `--a` (default 0.3) and probe size `--c` (default 0.2; chosen on seeds 101-104 of the study, README.md); `--seed` is also its seed; `converged` then means that it
+// With `--method spsa` (`opt minimize --method spsa`, no gradient, two evaluations per iteration whatever the number of angles) the optimiser runs `--maxiter` iterations (default 200) with step gain `--a` (default 0.3) and probe size `--c` (default 0.2; chosen on seeds 101-104 of the study, README.md) and stability constant `--stability` (opt's default, a tenth of the iterations); `--seed` is also its seed; `converged` then means that it
 // completed its iterations (SPSA has no convergence test), and the shots spent are `evaluations` times 2 S.
 //
 // L is 1 to 4 (default 2: 12 angles). The default method is BFGS (`opt minimize --method bfgs` on `vqe-gradient`, whose gradient is exact: the parameter-shift rule), one run. With `--method nelder-mead` (on `vqe-energy`) a single run
@@ -195,6 +195,7 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
     if len(probe) == 0 {
         probe = "0.2";
     }
+    let stability = flag(args, "--stability");
     var restarts = 4;
     if use_bfgs || use_spsa {
         restarts = 1;
@@ -245,6 +246,10 @@ fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
             argv = buffer.append(heap, argv, gain);
             argv = buffer.append(heap, argv, "\0--c\0");
             argv = buffer.append(heap, argv, probe);
+            if len(stability) > 0 {
+                argv = buffer.append(heap, argv, "\0--stability\0");
+                argv = buffer.append(heap, argv, stability);
+            }
             if len(seed_text) > 0 {
                 argv = buffer.append(heap, argv, "\0--seed\0");
                 argv = buffer.append(heap, argv, seed_text);
