@@ -1,0 +1,463 @@
+edition 7;
+
+// `qaoa`: QAOA for MaxCut on the triangular prism in cancho (README.md). It asks cancho-opt's `opt minimize` for the angles that minimise `qaoa-energy` (minus the expected number of edges cut) and prints the result next
+// to the best cut that exists.
+//
+//     qaoa [--method bfgs|nelder-mead|spsa] [--layers P] [--starts S] [--opt PATH] [--energy PATH] [--gradient PATH] [--maxfev N] [--maxiter N] [--a A] [--c C]
+//          [--shots N [--seed K] [--readout P] [--sampled PATH]]
+//
+// P is 1 to 4 (default 2). The landscape has many local minima, so `opt` is started S times (default 6, 1 to 8) from fixed points (the same angles in every layer) and the best result is kept. The default method is BFGS on
+// `qaoa-gradient` (the gradient is exact: the parameter-shift rule over every gate instance); with `--shots N` the objective is `qaoa-sampled` (N shots per evaluation) and the methods are `nelder-mead` and `spsa`, which need no gradient.
+// One JSON object on standard output:
+//
+//     {"method": "bfgs", "layers": 2, "best_cut": 7, "expected_cut": E, "ratio": E / 7, "angles": [...], "starts": S, "evaluations": N, "gradients": G, "shots": N}
+//
+// `expected_cut` is always the exact one at the angles found (`qaoa-energy` run once more), whatever the objective was. The status is 0, or 2 on a refusal.
+import qaoa.model;
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+import std.fmt;
+import std.process;
+
+fn refuse[&i, &r](io: &!i Io, what: &r [byte]) -> [err_write] int {
+    io.error_all(io, "qaoa: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+fn status_of(ran: process.Ran) -> [] int {
+    match ran {
+        process.Ran::Code(n) => {
+            return n;
+        }
+        process.Ran::Signaled(s) => {
+            return 0 - 4;
+        }
+        process.Ran::TimedOut => {
+            return 255;
+        }
+        process.Ran::TooMuch => {
+            return 255;
+        }
+        process.Ran::Failed(e) => {
+            return 255;
+        }
+    }
+}
+
+// The value of `--flag VALUE`, or an empty slice.
+fn flag[&g](args: &g Args, name: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), name) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+// `opt` started with `argv`; its status (255 when it could not be run) and standard output.
+fn run_opt[&h, &i, &x, &c, &p, &a, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], argv: &a [byte], input: &n [byte]) -> [heap, err_write, exec(""), clock, poll] (int, buffer.Buffer) {
+    var out = buffer.empty(heap, 0);
+    var rc = 255;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e) => {
+            refuse(io, "cannot make the pipes to start opt");
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            match exec_spawn(exec, exe, argv, "PATH=/usr/local/bin:/usr/bin:/bin\0HOME=/tmp\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                Spawned::Failed(e) => {
+                    process.close(to_child, from_child);
+                    pipe_close(from_errors);
+                    refuse(io, "cannot start opt: is it built, and on the PATH or given with --opt?");
+                }
+                Spawned::Ok(child) => {
+                    let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 1048576, 1048576, 600000);
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, errors);
+                    out = got;
+                    rc = status_of(ran);
+                }
+            }
+        }
+    }
+    return (rc, out);
+}
+
+// `text` without the white space at its ends
+fn trim[&s](text: &s [byte]) -> [] &s [byte] {
+    var a = 0;
+    var b = len(text);
+    while a < b && (int_of(text[a]) == ' ' || int_of(text[a]) == 10 || int_of(text[a]) == 13) {
+        a = a + 1;
+    }
+    while b > a && (int_of(text[b - 1]) == ' ' || int_of(text[b - 1]) == 10 || int_of(text[b - 1]) == 13) {
+        b = b - 1;
+    }
+    return text[a..b];
+}
+
+// the number written in `text` (digits only), or -1
+fn digits[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+// the fixed starting points: (gamma, beta) for start k, used in every layer
+fn start_gamma(k: int) -> [] float {
+    if k == 0 {
+        return 0.4;
+    } else if k == 1 {
+        return 0.8;
+    } else if k == 2 {
+        return 1.2;
+    } else if k == 3 {
+        return 0.2;
+    } else if k == 4 {
+        return 1.6;
+    } else if k == 5 {
+        return 0.6;
+    } else if k == 6 {
+        return 1.0;
+    }
+    return 2.0;
+}
+
+fn start_beta(k: int) -> [] float {
+    if k == 0 {
+        return 0.3;
+    } else if k == 1 {
+        return 0.2;
+    } else if k == 2 {
+        return 0.4;
+    } else if k == 3 {
+        return 0.6;
+    } else if k == 4 {
+        return 0.1;
+    } else if k == 5 {
+        return 0.5;
+    } else if k == 6 {
+        return 0.7;
+    }
+    return 0.3;
+}
+
+fn put_floats[&h, &p](heap: &!h Heap, text: buffer.Buffer, point: &p [float], sep: int) -> [heap] buffer.Buffer {
+    var out = text;
+    var k = 0;
+    while k < len(point) {
+        if k > 0 {
+            out = buffer.push(heap, out, byte_of(sep));
+        }
+        region r {
+            let scratch = alloc_slice[r](32, byte_of(0));
+            let n = fmt.float_into(scratch, point[k]);
+            out = buffer.append(heap, out, scratch[0..n]);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn command[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &g Args) -> [heap, io_write, err_write, exec(""), clock, poll, args] int {
+    var layers = 2;
+    let layer_text = flag(args, "--layers");
+    if len(layer_text) > 0 {
+        if len(layer_text) != 1 || int_of(layer_text[0]) < '1' || int_of(layer_text[0]) > '4' {
+            return refuse(io, "--layers is 1, 2, 3 or 4");
+        }
+        layers = int_of(layer_text[0]) - '0';
+    }
+    var starts = 6;
+    let start_text = flag(args, "--starts");
+    if len(start_text) > 0 {
+        if len(start_text) != 1 || int_of(start_text[0]) < '1' || int_of(start_text[0]) > '8' {
+            return refuse(io, "--starts is 1 to 8");
+        }
+        starts = int_of(start_text[0]) - '0';
+    }
+    var opt_path = flag(args, "--opt");
+    if len(opt_path) == 0 {
+        opt_path = "opt";
+    }
+    var energy_path = flag(args, "--energy");
+    if len(energy_path) == 0 {
+        energy_path = "qaoa-energy";
+    }
+    var gradient_path = flag(args, "--gradient");
+    if len(gradient_path) == 0 {
+        gradient_path = "qaoa-gradient";
+    }
+    var sampled_path = flag(args, "--sampled");
+    if len(sampled_path) == 0 {
+        sampled_path = "qaoa-sampled";
+    }
+    var maxfev = flag(args, "--maxfev");
+    if len(maxfev) == 0 {
+        maxfev = "4000";
+    }
+    var maxiter = flag(args, "--maxiter");
+    if len(maxiter) == 0 {
+        maxiter = "200";
+    }
+    var gain = flag(args, "--a");
+    if len(gain) == 0 {
+        gain = "0.3";
+    }
+    var probe = flag(args, "--c");
+    if len(probe) == 0 {
+        probe = "0.2";
+    }
+    var shots = 0;
+    let shots_text = flag(args, "--shots");
+    if len(shots_text) > 0 {
+        shots = digits(shots_text);
+        if shots < 1 || shots > 4096 {
+            return refuse(io, "--shots is 1 to 4096");
+        }
+    }
+    let seed_text = flag(args, "--seed");
+    let readout_text = flag(args, "--readout");
+    var use_bfgs = true;
+    var use_spsa = false;
+    let method_text = flag(args, "--method");
+    if len(method_text) > 0 {
+        if bytes.equal(method_text, "nelder-mead") {
+            use_bfgs = false;
+        } else if bytes.equal(method_text, "spsa") {
+            use_bfgs = false;
+            use_spsa = true;
+        } else if !bytes.equal(method_text, "bfgs") {
+            return refuse(io, "--method is bfgs, nelder-mead or spsa");
+        }
+    }
+    if use_bfgs && shots > 0 {
+        return refuse(io, "bfgs needs a gradient and qaoa-sampled has none: use --method nelder-mead or spsa with --shots");
+    }
+    let count = 2 * layers;
+    let point = box_slice(heap, count, 0.0);
+    let best_point = box_slice(heap, count, 0.0);
+    var status = 0;
+    var best = 1.0e300;
+    var evaluations = 0;
+    var gradients = 0;
+    var round = 0;
+    while round < starts && status == 0 {
+        borrow mut point as &!pw in {
+            var l = 0;
+            while l < layers {
+                contents(pw)[2 * l] = start_gamma(round);
+                contents(pw)[2 * l + 1] = start_beta(round);
+                l = l + 1;
+            }
+        }
+        var argv = buffer.append(heap, buffer.empty(heap, 512), "minimize\0--x0\0");
+        borrow point as &pr in {
+            argv = put_floats(heap, argv, contents(pr), ',');
+        }
+        var program = energy_path;
+        if shots > 0 {
+            program = sampled_path;
+        }
+        if use_bfgs {
+            argv = buffer.append(heap, argv, "\0--method\0bfgs\0--gtol\01e-6\0--maxiter\01000\0--\0");
+            program = gradient_path;
+        } else if use_spsa {
+            argv = buffer.append(heap, argv, "\0--method\0spsa\0--maxiter\0");
+            argv = buffer.append(heap, argv, maxiter);
+            argv = buffer.append(heap, argv, "\0--a\0");
+            argv = buffer.append(heap, argv, gain);
+            argv = buffer.append(heap, argv, "\0--c\0");
+            argv = buffer.append(heap, argv, probe);
+            if len(seed_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--seed\0");
+                argv = buffer.append(heap, argv, seed_text);
+            }
+            argv = buffer.append(heap, argv, "\0--\0");
+        } else {
+            argv = buffer.append(heap, argv, "\0--step\00.4\0--xatol\01e-7\0--fatol\01e-10\0--maxfev\0");
+            argv = buffer.append(heap, argv, maxfev);
+            argv = buffer.append(heap, argv, "\0--\0");
+        }
+        argv = buffer.append(heap, argv, program);
+        if shots > 0 {
+            argv = buffer.append(heap, argv, "\0--shots\0");
+            argv = buffer.append(heap, argv, shots_text);
+            if len(seed_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--seed\0");
+                argv = buffer.append(heap, argv, seed_text);
+            }
+            if len(readout_text) > 0 {
+                argv = buffer.append(heap, argv, "\0--readout\0");
+                argv = buffer.append(heap, argv, readout_text);
+            }
+        }
+        argv = buffer.push(heap, argv, byte_of(0));
+        var rc = 255;
+        var got = buffer.empty(heap, 0);
+        borrow argv as &ar in {
+            let (r2, o2) = run_opt(heap, io, exec, clock, opt_path, buffer.bytes(ar), "");
+            rc = r2;
+            buffer.drop(heap, got);
+            got = o2;
+        }
+        buffer.drop(heap, argv);
+        if rc != 0 && rc != 1 {
+            status = refuse(io, "opt failed (its error is on its standard error: run the command by hand)");
+        } else {
+            borrow got as &gr in {
+                let src = buffer.bytes(gr);
+                let tape = box_slice(heap, json.tape_len(src), 0);
+                borrow mut tape as &!tw in {
+                    let t = contents(tw);
+                    var xs = 0 - 1;
+                    if json.parse(src, t) > 0 {
+                        xs = json.get(src, t, 0, "x");
+                    }
+                    if xs < 0 || json.count(t, xs) != count || json.get(src, t, 0, "fun") < 0 {
+                        status = refuse(io, "opt printed something that is not its result");
+                    } else {
+                        evaluations = evaluations + json.to_int(src, t, json.get(src, t, 0, "nfev"));
+                        if use_bfgs {
+                            gradients = gradients + json.to_int(src, t, json.get(src, t, 0, "njev"));
+                        }
+                        let fun = json.to_float(src, t, json.get(src, t, 0, "fun"));
+                        if fun < best {
+                            best = fun;
+                            borrow mut best_point as &!bw in {
+                                var m2 = 0;
+                                while m2 < count {
+                                    contents(bw)[m2] = json.to_float(src, t, json.at(t, xs, m2));
+                                    m2 = m2 + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, tape);
+            }
+        }
+        buffer.drop(heap, got);
+        round = round + 1;
+    }
+    // the exact cut expected at the angles found
+    var expected = 0.0;
+    if status == 0 {
+        var text = buffer.empty(heap, 256);
+        borrow best_point as &br in {
+            text = put_floats(heap, text, contents(br), ' ');
+        }
+        var got2 = buffer.empty(heap, 0);
+        var rc2 = 255;
+        borrow text as &tr in {
+            let (r3, o3) = run_opt(heap, io, exec, clock, energy_path, "", buffer.bytes(tr));
+            rc2 = r3;
+            buffer.drop(heap, got2);
+            got2 = o3;
+        }
+        borrow got2 as &g2 in {
+            let (okv, v) = model.number(trim(buffer.bytes(g2)));
+            if rc2 == 0 && okv {
+                expected = 0.0 - v;
+            } else {
+                status = refuse(io, "qaoa-energy did not give the cost at the angles found");
+            }
+        }
+        buffer.drop(heap, got2);
+        buffer.drop(heap, text);
+    }
+    if status == 0 {
+        let cut = model.best_cut();
+        var w = json.writer(heap, 256);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "method");
+        if use_bfgs {
+            w = json.put_string(heap, w, "bfgs");
+        } else if use_spsa {
+            w = json.put_string(heap, w, "spsa");
+        } else {
+            w = json.put_string(heap, w, "nelder-mead");
+        }
+        w = json.put_key(heap, w, "layers");
+        w = json.put_int(heap, w, layers);
+        w = json.put_key(heap, w, "best_cut");
+        w = json.put_int(heap, w, cut);
+        w = json.put_key(heap, w, "expected_cut");
+        w = json.put_float(heap, w, expected);
+        w = json.put_key(heap, w, "ratio");
+        w = json.put_float(heap, w, expected / float_of(cut));
+        w = json.put_key(heap, w, "angles");
+        w = json.begin_array(heap, w);
+        var k = 0;
+        borrow best_point as &br in {
+            while k < count {
+                w = json.put_float(heap, w, contents(br)[k]);
+                k = k + 1;
+            }
+        }
+        w = json.end_array(heap, w);
+        w = json.put_key(heap, w, "starts");
+        w = json.put_int(heap, w, starts);
+        w = json.put_key(heap, w, "evaluations");
+        w = json.put_int(heap, w, evaluations);
+        w = json.put_key(heap, w, "gradients");
+        w = json.put_int(heap, w, gradients);
+        w = json.put_key(heap, w, "shots");
+        var spent = 0;
+        if shots > 0 {
+            spent = evaluations * shots;
+        }
+        w = json.put_int(heap, w, spent);
+        w = json.end_object(heap, w);
+        let out = buffer.push(heap, json.finish(w), byte_of(10));
+        borrow out as &or in {
+            buffer.write(io, or);
+        }
+        buffer.drop(heap, out);
+    }
+    unbox_slice(heap, point);
+    unbox_slice(heap, best_point);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow args as &g in {
+        borrow exec as &x in {
+            borrow clock as &c in {
+                borrow mut heap as &!h in {
+                    borrow mut io as &!i in {
+                        status = command(h, i, x, c, g);
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(exec);
+    release(clock);
+    release(heap);
+    release(io);
+    return status;
+}
