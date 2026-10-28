@@ -1,0 +1,34 @@
+{
+ "device": "ibm_kingston",
+ "date": "2026-10-27T18:16:44Z",
+ "shots": 1000,
+ "stand_in": false,
+ "thresholds": {
+  "bad": 0.15,
+  "weak": 0.05
+ },
+ "bad": [],
+ "weak": [],
+ "qubits": {
+  "56": {
+   "idle_reads_1": 0.005,
+   "after_x_reads_0": 0.009000000000000008
+  },
+  "60": {
+   "idle_reads_1": 0.005,
+   "after_x_reads_0": 0.029000000000000026
+  },
+  "61": {
+   "idle_reads_1": 0.001,
+   "after_x_reads_0": 0.006000000000000005
+  },
+  "62": {
+   "idle_reads_1": 0.005,
+   "after_x_reads_0": 0.01100000000000001
+  },
+  "63": {
+   "idle_reads_1": 0.005,
+   "after_x_reads_0": 0.015000000000000013
+  }
+ }
+}
