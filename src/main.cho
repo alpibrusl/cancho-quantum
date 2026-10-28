@@ -325,7 +325,7 @@ fn run_qasm[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int
     region r {
         let rng = alloc_slice[r](1, 88172645463325252);
         let scratch = alloc_slice[r](24, byte_of(0));
-        let qubits = alloc_slice[r](1, 0);
+        let qubits = alloc_slice[r](16, 0);
         let la = alloc_slice[r](1, 0);
         borrow mut amp as &!w in {
             let st = contents(w);

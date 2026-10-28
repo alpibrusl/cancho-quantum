@@ -69,7 +69,7 @@
 ## Not done
 
 - No noise and no density matrices; the state is pure.
-- QASM: no `gate` definitions, `if`, `cy`/`ch`/`crz`/`rzz`, or more than one `qreg` (decimal angles, `u3`/`u2` are read).
+- QASM: no `gate` definitions, no `cu3`/`rxx`/`csx`, and one `qreg` only. Read since: decimal angles, `u3`/`u2`, `cy`/`ch`/`crz`/`rzz`/`cswap` (120 random circuits against Qiskit to 1e-12), up to four `creg`s, `measure q[i] -> c[j]` and `if (c==k)` (120 programs whose outcomes are certain, against Aer's final state; a flipped condition and a `measure` that sets the wrong bit are each caught).
   QASM is not written by cancho yet (a Python script writes it).
 - `sample` is at most 4096 draws, each costing one pass over the state; a
   billion-amplitude register is out of range anyway (the limit is 20 qubits).

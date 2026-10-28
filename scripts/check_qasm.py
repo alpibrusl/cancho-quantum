@@ -162,6 +162,105 @@ def check_decimal_circuits(exe):
     return bad == 0
 
 
+def check_controlled(exe):
+    """`cy`, `ch`, `crz`, `rzz` and `cswap`, which `qelib1.inc` defines and Qiskit writes: 120 random circuits of them with the usual gates around, against Qiskit's statevector to 1e-12 (Qiskit's are the true
+    controlled matrices, so a global phase left over by a decomposition would show here)."""
+    rng = np.random.default_rng(20261029)
+    ok = bad = 0
+    for case in range(120):
+        n = int(rng.integers(2, 5))
+        lines = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{n}];"]
+        for _ in range(int(rng.integers(4, 14))):
+            kind = str(rng.choice(["cy", "ch", "crz", "rzz", "cswap", "h", "t", "rx", "cx", "ry"]))
+            qs = [int(x) for x in rng.permutation(n)]
+            ang = f"{float(rng.uniform(-7, 7))!r}"
+            if kind in ("cy", "ch", "cx"):
+                lines.append(f"{kind} q[{qs[0]}],q[{qs[1]}];")
+            elif kind in ("crz", "rzz"):
+                lines.append(f"{kind}({ang}) q[{qs[0]}],q[{qs[1]}];")
+            elif kind == "cswap" and n >= 3:
+                lines.append(f"cswap q[{qs[0]}],q[{qs[1]}],q[{qs[2]}];")
+            elif kind in ("rx", "ry"):
+                lines.append(f"{kind}({ang}) q[{qs[0]}];")
+            elif kind in ("h", "t"):
+                lines.append(f"{kind} q[{qs[0]}];")
+        text = "\n".join(lines) + "\n"
+        code, out = run(exe, text)
+        sv = Statevector(qasm2.loads(text, custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)).data
+        got = parse(out)[2] if code == 0 else {}
+        worst = max(abs(complex(*got.get(i, (0.0, 0.0))) - sv[i]) for i in range(len(sv))) if code == 0 else 1.0
+        if code != 0 or worst > TOL:
+            bad += 1
+            print(f"FAIL controlled case {case}: exit {code}, worst {worst:.2e}\n{text}")
+        else:
+            ok += 1
+    print(f"{'ok  ' if not bad else 'FAIL'} cy ch crz rzz cswap: {ok} random circuits agree with Qiskit to {TOL}; {bad} wrong")
+    return bad == 0
+
+
+def check_classical(exe):
+    """`creg`, `measure q[i] -> c[j]` and `if (c==k)`: random programs whose measurements are certain (the gates only move basis states about and change their phase, so every outcome is fixed, and so is every
+    condition), the final state against Aer's, which runs the same `if`. Then the texts that are not valid are refused with status 2 and not run."""
+    from qiskit import transpile
+    from qiskit_aer import AerSimulator
+    rng = np.random.default_rng(20261029)
+    ok = bad = taken = 0
+    for case in range(120):
+        n = int(rng.integers(2, 5))
+        sizes = [int(rng.integers(1, 4)), int(rng.integers(1, 4))]
+        lines = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{n}];", f"creg a[{sizes[0]}];", f"creg b[{sizes[1]}];"]
+        for _ in range(int(rng.integers(5, 16))):
+            qs = [int(x) for x in rng.permutation(n)]
+            kind = str(rng.choice(["x", "y", "z", "s", "t", "cx", "cy", "cz", "swap", "ccx", "cswap", "rz", "crz", "measure", "measure", "if", "if"]))
+            def gate():
+                if kind in ("x", "y", "z", "s", "t"):
+                    return f"{kind} q[{qs[0]}];"
+                if kind == "rz":
+                    return f"rz({float(rng.uniform(-7, 7))!r}) q[{qs[0]}];"
+                if kind == "crz":
+                    return f"crz({float(rng.uniform(-7, 7))!r}) q[{qs[0]}],q[{qs[1]}];"
+                if kind in ("cx", "cy", "cz", "swap"):
+                    return f"{kind} q[{qs[0]}],q[{qs[1]}];"
+                if kind == "ccx" and n >= 3:
+                    return f"ccx q[{qs[0]}],q[{qs[1]}],q[{qs[2]}];"
+                if kind == "cswap" and n >= 3:
+                    return f"cswap q[{qs[0]}],q[{qs[1]}],q[{qs[2]}];"
+                return f"x q[{qs[0]}];"
+            if kind == "measure":
+                reg = int(rng.integers(0, 2))
+                lines.append(f"measure q[{qs[0]}] -> {'ab'[reg]}[{int(rng.integers(0, sizes[reg]))}];")
+            elif kind == "if":
+                reg = int(rng.integers(0, 2))
+                kind = str(rng.choice(["x", "z", "cx", "swap", "rz"]))
+                lines.append(f"if({'ab'[reg]}=={int(rng.integers(0, 1 << sizes[reg]))}) {gate()}")
+            else:
+                lines.append(gate())
+        text = "\n".join(lines) + "\n"
+        code, out = run(exe, text)
+        qc = qasm2.loads(text, custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)
+        qc.save_statevector()
+        sv = AerSimulator(method="statevector").run(transpile(qc, AerSimulator(), optimization_level=0), shots=1).result().get_statevector().data
+        got = parse(out)[2] if code == 0 else {}
+        worst = max(abs(complex(*got.get(i, (0.0, 0.0))) - sv[i]) for i in range(len(sv))) if code == 0 else 1.0
+        if code != 0 or worst > 1e-9:
+            bad += 1
+            print(f"FAIL classical case {case}: exit {code}, worst {worst:.2e}\n{text}")
+        else:
+            ok += 1
+    refused = 0
+    base = "OPENQASM 2.0;\nqreg q[2];\ncreg c[2];\n"
+    for body, want in (("measure q[0] -> d[0];", 2), ("measure q[0] -> c[5];", 2), ("if(d==1) x q[0];", 2), ("if(c=1) x q[0];", 2), ("if(c==1 x q[0];", 2),
+                       ("creg e[0];", 3), ("creg e[1];creg f[1];creg g[1];creg h[1];", 3)):
+        code, out = run(exe, base + body + "\n")
+        if code == want:
+            refused += 1
+        else:
+            bad += 1
+            print(f"FAIL {body!r} should end with status {want}: exit {code}, {out[:80]!r}")
+    print(f"{'ok  ' if not bad else 'FAIL'} creg, measure -> and if: {ok} random programs end in Aer's state to 1e-9; {refused} of 7 invalid ones refused with the right status; {bad} wrong")
+    return bad == 0
+
+
 def ulps(a, b):
     import struct
     key = lambda x: (lambda i: i if i >= 0 else -(1 << 63) - i)(struct.unpack("<q", struct.pack("<d", x))[0])
@@ -292,7 +391,7 @@ def main():
     print(f"\n{len(names) - len(failed)} of {len(names)} files read by both parsers; "
           f"Qiskit-written QASM: {accepted} run, {refused} refused for a decimal angle")
     native = check_native(exe)
-    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe)
+    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe) and check_controlled(exe) and check_classical(exe)
     sys.exit(1 if failed or not native or not numbers else 0)
 
 
