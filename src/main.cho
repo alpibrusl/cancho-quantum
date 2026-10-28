@@ -321,22 +321,25 @@ fn run_qc[&h, &i](heap: &!h Heap, io: &!i Io, n: int) -> [heap, io_read, io_writ
 // block that costs nothing until a gate touches it.
 fn run_qasm[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     let amp = box_slice(heap, state.floats_for(20), 0.0);
+    let lbox = box_slice(heap, 41000, 0);
     var status = 0;
     region r {
         let rng = alloc_slice[r](1, 88172645463325252);
         let scratch = alloc_slice[r](24, byte_of(0));
         let qubits = alloc_slice[r](16, 0);
-        let la = alloc_slice[r](1, 0);
         borrow mut amp as &!w in {
             let st = contents(w);
             state.start(st);
-            status = qasm.run(io, st, qubits, rng, scratch, la);
+            borrow mut lbox as &!lw in {
+                status = qasm.run(io, st, qubits, rng, scratch, contents(lw));
+            }
             if status == 0 && qubits[0] > 0 {
                 dump.amplitudes(io, st, qubits[0], scratch);
             }
         }
     }
     unbox_slice(heap, amp);
+    unbox_slice(heap, lbox);
     return status;
 }
 

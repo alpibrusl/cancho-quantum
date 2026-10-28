@@ -472,7 +472,7 @@ pair  ns   cx error &gt; p
   <h4 class="gsub">Input formats <span>A plain-text circuit format and OpenQASM 2.0.</span></h4>
 <ul class="gallery">
   <li class="gtile"><h4>OpenQASM 2.0 in</h4>
-      <p><code>qsim</code> reads the OpenQASM a circuit is usually written in. All 20 circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, 20 of the files <em>Qiskit</em> wrote run; 0 were refused. An angle may be a multiple of &pi; (<code>3*pi/4</code>, kept as exactly the double the references compute) or a decimal, which is read to the same double Python reads (bit for bit over 16,000 random texts in the range it promises, <code>scripts/check_qasm.py</code>).</p>
+      <p><code>qsim</code> reads the OpenQASM a circuit is usually written in. All 20 circuits that QASM can express were converted, parsed by Qiskit&rsquo;s own reader and by <code>qsim</code>, and agree with the reference. Going the other way, 20 of the files <em>Qiskit</em> wrote run; 0 were refused. An angle may be a multiple of &pi; (<code>3*pi/4</code>, kept as exactly the double the references compute) or a decimal, which is read to the same double Python reads (bit for bit over 16,000 random texts in the range it promises, <code>scripts/check_qasm.py</code>). <code>gate</code> definitions are read, nested and with expressions of their angles in them, and so are <code>cy</code> <code>ch</code> <code>crz</code> <code>rzz</code> <code>cswap</code>, <code>creg</code>, <code>measure &rarr; c[j]</code> and <code>if</code>.</p>
       <pre class="code small">OPENQASM 2.0;
 include "qelib1.inc";
 qreg q[2];
@@ -573,7 +573,7 @@ library  81ff953cae0be924...</pre>
       <p class="glinks"><a href="https://github.com/alpibrusl/cancho/issues/611">Tracked in cancho#611</a> <a href="https://github.com/alpibrusl/cancho/pull/608">Design PR #608</a></p>
 </li>
   <li class="gtile soon"><h4>The rest of OpenQASM <span class="badge">Planned</span></h4>
-      <p><code>gate</code> definitions, and writing QASM from cancho itself (a Python script writes it now). <code>sx</code>, <code>sxdg</code>, <code>id</code>, <code>u2</code>, <code>u3</code> and <code>u</code> are read (<code>u3</code> is <code>p ry p</code>, exactly) and checked against Qiskit on 120 random circuits; so are <code>cy</code>, <code>ch</code>, <code>crz</code>, <code>rzz</code> and <code>cswap</code> (120 more) and <code>creg</code>, <code>measure &rarr;</code> and <code>if</code> (120 programs against Aer).</p>
+      <p>More than one <code>qreg</code>, <code>reset</code>, <code>measure q -&gt; c</code> on a whole register, and <code>cu3</code>, <code>rxx</code>, <code>csx</code> as built-ins (a file can define them with <code>gate</code>, which is read). What the reader does take is in the OpenQASM tile above, with how each part is checked against Qiskit.</p>
       <p class="glinks"><a href="https://github.com/alpibrusl/cancho-quantum/blob/main/src/qasm.cho">Reader</a></p>
 </li>
   <li class="gtile soon"><h4>Crosstalk and richer gate noise <span class="badge">Planned</span></h4>

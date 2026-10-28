@@ -66,10 +66,12 @@
   used where a unique borrow is needed is `type-mismatch`. Passing one borrow twice
   is accepted (the same gap as CNOT).
 
+- **The reader had two leniencies that only a longer test found.** A name longer than seven characters was taken for the built-in its first seven characters spell (`measured q[0] -> c[0];` ran as `measure`; Qiskit writes names like `gate_QFT_140039187527760`), and a character that starts no statement (a stray `}` or `)`) was taken for the end of the input, so the rest of the file was silently not run. Both are refused now (`scripts/check_qasm.py`, "gate refusals").
+
 ## Not done
 
 - No noise and no density matrices; the state is pure.
-- QASM: no `gate` definitions, no `cu3`/`rxx`/`csx`, and one `qreg` only. Read since: decimal angles, `u3`/`u2`, `cy`/`ch`/`crz`/`rzz`/`cswap` (120 random circuits against Qiskit to 1e-12), up to four `creg`s, `measure q[i] -> c[j]` and `if (c==k)` (120 programs whose outcomes are certain, against Aer's final state; a flipped condition and a `measure` that sets the wrong bit are each caught).
+- QASM: no `reset`, `opaque`, whole-register `measure q -> c` or second `qreg`, and `cu3`/`rxx`/`csx` only through a `gate` definition. Read since, each checked against Qiskit: `gate` definitions (`docs/qasm-gates.md`), decimal angles, `u3`/`u2`, `cy`/`ch`/`crz`/`rzz`/`cswap` (120 random circuits against Qiskit to 1e-12), up to four `creg`s, `measure q[i] -> c[j]` and `if (c==k)` (120 programs whose outcomes are certain, against Aer's final state; a flipped condition and a `measure` that sets the wrong bit are each caught).
   QASM is not written by cancho yet (a Python script writes it).
 - `sample` is at most 4096 draws, each costing one pass over the state; a
   billion-amplitude register is out of range anyway (the limit is 20 qubits).

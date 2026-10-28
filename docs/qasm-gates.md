@@ -47,9 +47,11 @@ Today an angle is read by a grammar of its own (`angle`): a number, `pi`, `N*pi`
 | a call that nests more than 8 deep (including a gate that calls itself: it is defined before its body is read, so its own name is a call) | status 3, "gates nested deeper than 8" |
 | more than 200,000 gate calls expanded in one run (a chain of gates that each call the one before twice) | status 3, "too many gate calls" |
 | a name of more than 63 characters | status 3 |
-| a call with a different number of angles or qubits than the definition | status 2 |
+| a call with a different number of angles than the definition, or an angle outside the subset | status 3 |
+| a call with more or fewer qubits than the definition, an index out of range, a qubit twice, or a body that names something that is not a formal | status 2 |
+| a character that starts no statement (a stray `}` or `)`), which the reader used to take for the end of the input | status 2 |
 | a call of a name that is neither built in nor defined | status 3 "a gate that is not defined" |
-| `opaque`; `measure`, `reset`, `if` inside a body; a second definition of the same name | status 3 |
+| `opaque`; `measure`, `reset`, `if` inside a body; a second definition of the same name; a `{` inside a body | status 3 |
 | an expression that divides by zero or is not finite | status 3 |
 
 ## 6. What is checked (`scripts/check_qasm.py`), and what is not claimed
@@ -59,5 +61,18 @@ Today an angle is read by a grammar of its own (`angle`): a number, `pi`, `N*pi`
 3. **Expressions.** 150 random definitions written by hand with parameters in expressions of the full grammar, against `qasm2.loads`' statevector to 1e-12.
 4. **Refusals.** Every row of §5 is a text that must be refused with its status (and none may trap); a fuzz of 1,000 mutated programs must end in a status, never a trap.
 5. **Mutants.** The check must fail on deliberate bugs in the evaluator (a precedence swap, `^` associating the wrong way, a lost unary minus), in the substitution (a parameter replaced by its text without parentheses, which makes `-param0` and `2*param0` wrong when the value is negative or an expression), and in the frame stack (the saved character not restored).
+
+## 7. Results **[measured, `scripts/check_qasm.py`, `--mutants` for the last line]**
+
+1. **The old grammar did not move:** 6,500 programs (5,000 with one angle in rx ry rz p u1, 1,500 with u3, u2 and cp) give the same bytes from the reader at 5070a8e and from this one.
+2. **Qiskit's definitions:** 80 random circuits (custom gates nested up to three deep, names `gate_QFT_<digits>`, `measured_<digits>`, `my_long_gate_<digits>`, registers of 3 to 12 qubits so that qubit indices of two digits are expanded, `ryy`, `iswap`, `ecr`, `dcx`) agree with Qiskit's statevector to 1e-12.
+3. **Expressions:** 150 random programs (two nested definitions, expressions of the whole grammar, a third of them with no white space between statements) and 17 fixed expressions (`2^3^2/100`, `2^-1`, `-2^2*0.1`, `(2+1)*pi/6`, ...) agree with Qiskit to 1e-12.
+4. **Refusals:** the 23 rows of the limits table are refused with their status, and 1,200 mutated programs end in 0, 2 or 3, never a trap.
+5. **Mutants:** 11 deliberate bugs, all killed. The first run of the mutants found **four holes in the check** (not in the reader): nothing used an integer times an integer, nothing used `^` with a negative exponent, every call was followed by white space (so a lost saved character was invisible), the test circuits had at most 5 qubits (so a wrong
+   digit in a qubit index like 9 or 11 was invisible), the call-count budget was hidden behind the depth limit by the test chain, and no undefined name began like a built-in. Each is now a case.
+
+**Found on the way, and corrected in the reader:** a name of more than seven characters that begins with a built-in's seven ran as that built-in (`measured q[0] -> c[0];`), and a character that starts no statement (a stray `}`) ended the reading silently with status 0.
+
+**Corrected here:** the table of section 5 said that a call with the wrong number of angles is status 2; it is status 3 (the angle is read with the definition's number of `,` and `)`, and a wrong count is an angle outside what the call can take), and a body that names something that is not a formal is status 2, not 3. The table is as built.
 
 Not claimed: `rxx`, `csx`, `cu3` as built-ins (they can now be defined in a file, as Qiskit's `qelib1.inc` does); the speed of expansion; that a pathological program (200,000 calls) is quick; arbitrary-precision text for `float_into` (the shortest round-trip is relied on, and is checked, not proved).
