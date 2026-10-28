@@ -1,0 +1,274 @@
+edition 7;
+
+module qaoa.model;
+
+import qc.gates;
+import qc.measure;
+import qc.profile;
+import std.io;
+import std.json;
+
+// The problem of `examples/qaoa` (README.md there): MaxCut on the triangular prism, six vertices and nine edges (two triangles 0-1-2 and 3-4-5, joined by 0-3, 1-4, 2-5). Each triangle loses at least one edge, so the best cut has 7 of the 9.
+//
+// QAOA with `p` layers (Farhi, Goldstone, Gutmann 2014): Hadamard on every qubit, then p times a cost layer and a mixer layer. The cost layer is `RZZ(gamma)` on every edge, the mixer `RX(2 beta)` on every qubit, with
+// the angles `theta[2 l] = gamma_l` and `theta[2 l + 1] = beta_l`. The value to minimise is `cost = -<cut>`, the negative of the expected number of cut edges; with RZZ(gamma) = exp(-i gamma Z Z / 2) the sign of
+// gamma is the opposite of the usual statement with exp(-i gamma C), a convention and nothing else.
+
+pub fn qubits() -> [] int {
+    return 6;
+}
+
+pub fn edges() -> [] int {
+    return 9;
+}
+
+// edge k as 8 * a + b
+fn edge(k: int) -> [] int {
+    if k == 0 {
+        return 1;
+    } else if k == 1 {
+        return 10;
+    } else if k == 2 {
+        return 2;
+    } else if k == 3 {
+        return 28;
+    } else if k == 4 {
+        return 37;
+    } else if k == 5 {
+        return 29;
+    } else if k == 6 {
+        return 3;
+    } else if k == 7 {
+        return 12;
+    }
+    return 21;
+}
+
+// the number of edges cut by the bit string `b` (bit q is the side of vertex q)
+pub fn cut_of(b: int) -> [] int {
+    var c = 0;
+    var k = 0;
+    while k < edges() {
+        let e = edge(k);
+        if b >> e / 8 & 1 != b >> e % 8 & 1 {
+            c = c + 1;
+        }
+        k = k + 1;
+    }
+    return c;
+}
+
+// the largest cut, by looking at all 64 bit strings
+pub fn best_cut() -> [] int {
+    var best = 0;
+    var b = 0;
+    while b < 1 << qubits() {
+        if cut_of(b) > best {
+            best = cut_of(b);
+        }
+        b = b + 1;
+    }
+    return best;
+}
+
+// The state of the circuit at `theta` into `st` (2 << 6 floats). One gate instance may be shifted by `delta` (for the parameter-shift rule): `kind` 0 the RZZ of edge `index` in layer `layer`, kind 1 the RX of qubit
+// `index` in layer `layer`; `layer` -1 shifts nothing.
+pub fn prepare[&s, &t](st: &!s [float], theta: &t [float], p: int, layer: int, kind: int, index: int, delta: float) -> [] int {
+    let n = qubits();
+    var k = 0;
+    while k < len(st) {
+        st[k] = 0.0;
+        k = k + 1;
+    }
+    st[0] = 1.0;
+    var q = 0;
+    while q < n {
+        gates.h(st, n, q);
+        q = q + 1;
+    }
+    var l = 0;
+    while l < p {
+        var j = 0;
+        while j < edges() {
+            var a = theta[2 * l];
+            if layer == l && kind == 0 && index == j {
+                a = a + delta;
+            }
+            gates.rzz(st, n, edge(j) / 8, edge(j) % 8, a);
+            j = j + 1;
+        }
+        var v = 0;
+        while v < n {
+            var b = 2.0 * theta[2 * l + 1];
+            if layer == l && kind == 1 && index == v {
+                b = b + delta;
+            }
+            gates.rx(st, n, v, b);
+            v = v + 1;
+        }
+        l = l + 1;
+    }
+    return 0;
+}
+
+// the expected number of cut edges of the state `st`, from its probabilities
+pub fn expected_cut[&s](st: &s [float]) -> [] float {
+    var total = 0.0;
+    var b = 0;
+    while b < 1 << qubits() {
+        total = total + float_of(cut_of(b)) * (st[2 * b] * st[2 * b] + st[2 * b + 1] * st[2 * b + 1]);
+        b = b + 1;
+    }
+    return total;
+}
+
+pub fn cost[&s, &t](st: &!s [float], theta: &t [float], p: int) -> [] float {
+    prepare(st, theta, p, 0 - 1, 0, 0, 0.0);
+    return 0.0 - expected_cut(st);
+}
+
+// The cost at `theta` and its gradient into `grad`, by the parameter-shift rule applied to every gate instance: RZZ(a) and RX(a) are exp(-i a P / 2) with P a Pauli string, so d cost / d a = (cost(a + pi/2) - cost(a - pi/2)) / 2
+// exactly. gamma_l is the angle of nine RZZs (the derivative is the sum over them), beta_l of six RXs of angle 2 beta (the sum, times 2).
+pub fn gradient[&s, &t, &g](st: &!s [float], theta: &t [float], p: int, grad: &!g [float]) -> [] float {
+    let e = cost(st, theta, p);
+    let half_pi = gates.pi() / 2.0;
+    var l = 0;
+    while l < p {
+        var sum = 0.0;
+        var j = 0;
+        while j < edges() {
+            prepare(st, theta, p, l, 0, j, half_pi);
+            let up = 0.0 - expected_cut(st);
+            prepare(st, theta, p, l, 0, j, 0.0 - half_pi);
+            let down = 0.0 - expected_cut(st);
+            sum = sum + (up - down) / 2.0;
+            j = j + 1;
+        }
+        grad[2 * l] = sum;
+        sum = 0.0;
+        var v = 0;
+        while v < qubits() {
+            prepare(st, theta, p, l, 1, v, half_pi);
+            let up = 0.0 - expected_cut(st);
+            prepare(st, theta, p, l, 1, v, 0.0 - half_pi);
+            let down = 0.0 - expected_cut(st);
+            sum = sum + (up - down);
+            v = v + 1;
+        }
+        grad[2 * l + 1] = sum;
+        l = l + 1;
+    }
+    return e;
+}
+
+// The seed of the sampler for `theta`: FNV-1a over the bits of the angles, mixed with `seed`, never 0 (so that the sampled cost is a function of the angles).
+pub fn seed_of[&t](theta: &t [float], seed: int) -> [] int {
+    var h = 1469598103934665603;
+    var k = 0;
+    while k < len(theta) {
+        h = wrapping_mul(h ^ bits_of(theta[k]), 1099511628211);
+        k = k + 1;
+    }
+    h = wrapping_add(wrapping_mul(h ^ seed, 6364136223846793005), 1442695040888963407);
+    if h == 0 {
+        return 1;
+    }
+    return h;
+}
+
+// The cost estimated from `shots` samples (a device's answer): minus the mean number of edges cut by the sampled bit strings, each bit read wrongly with the probability `readout_ppm` parts per million. `picks` holds `shots` ints.
+pub fn sampled[&s, &t, &r, &c](st: &!s [float], theta: &t [float], p: int, shots: int, seed: int, readout_ppm: int, rng: &!r [int], picks: &!c [int]) -> [] float {
+    prepare(st, theta, p, 0 - 1, 0, 0, 0.0);
+    profile.init(rng, seed_of(theta, seed));
+    if readout_ppm > 0 {
+        rng[2] = readout_ppm;
+        rng[3] = 1000000;
+    }
+    measure.sample(st, qubits(), rng, picks);
+    var total = 0;
+    var k = 0;
+    while k < shots {
+        total = total + cut_of(picks[k]);
+        k = k + 1;
+    }
+    return 0.0 - float_of(total) / float_of(shots);
+}
+
+fn is_blank(c: int) -> [] bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+// The angles on standard input (numbers separated by white space, 2 per layer, 1 to 4 layers) into `theta`; how many, or -1 after a refusal printed on standard error (`program` names the program).
+pub fn read_angles[&i, &t, &p](io: &!i Io, theta: &!t [float], program: &p [byte]) -> [io_read, err_write] int {
+    var status = 0;
+    var count = 0;
+    region r {
+        let tok = alloc_slice[r](64, byte_of(0));
+        var used = 0;
+        var c = getchar(io);
+        while c >= 0 && status == 0 {
+            if is_blank(c) {
+                if used > 0 {
+                    let (ok, v) = number(tok[0..used]);
+                    if !ok || count >= len(theta) {
+                        status = 1;
+                    } else {
+                        theta[count] = v;
+                        count = count + 1;
+                    }
+                    used = 0;
+                }
+            } else if used < 64 {
+                tok[used] = byte_of(c);
+                used = used + 1;
+            } else {
+                status = 1;
+            }
+            c = getchar(io);
+        }
+        if status == 0 && used > 0 {
+            let (ok2, v2) = number(tok[0..used]);
+            if !ok2 || count >= len(theta) {
+                status = 1;
+            } else {
+                theta[count] = v2;
+                count = count + 1;
+            }
+        }
+        if status == 0 && (count < 2 || count % 2 != 0 || count > 8) {
+            status = 1;
+        }
+    }
+    if status != 0 {
+        io.error_all(io, program);
+        io.error_all(io, ": the input must be numbers separated by white space, 2 per layer (2, 4, 6 or 8)\n");
+        return 0 - 1;
+    }
+    return count;
+}
+
+// A number as text (`0.3`, `-1e-2`) read by way of the JSON reader; (false, 0) when it is not one.
+pub fn number[&s](tok: &s [byte]) -> [] (bool, float) {
+    if len(tok) == 0 {
+        return (false, 0.0);
+    }
+    var ok = false;
+    var out = 0.0;
+    region r {
+        let src = alloc_slice[r](len(tok) + 2, byte_of(0));
+        src[0] = byte_of('[');
+        var k = 0;
+        while k < len(tok) {
+            src[1 + k] = tok[k];
+            k = k + 1;
+        }
+        src[len(tok) + 1] = byte_of(']');
+        let all = src[0..len(tok) + 2];
+        let tape = alloc_slice[r](json.tape_len(all), 0);
+        if json.parse(all, tape) > 0 && json.is_number(tape, 1) && json.count(tape, 0) == 1 {
+            out = json.to_float(all, tape, 1);
+            ok = out - out == 0.0;
+        }
+    }
+    return (ok, out);
+}

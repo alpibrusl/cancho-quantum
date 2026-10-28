@@ -1,0 +1,60 @@
+edition 7;
+
+// `qaoa-gradient`: the objective of `examples/qaoa` for a method that wants a gradient (`opt minimize --method bfgs`). Reads the angles as `qaoa-energy` does and prints one line: the cost, then its gradient
+// with respect to each angle, by the parameter-shift rule over every gate instance (exact: `model.gradient`). The same capabilities as `qaoa-energy`: none beyond standard input and output.
+import qc.gates;
+import qc.state;
+import std.fmt;
+import std.io;
+import qaoa.model;
+
+fn put[&i](io: &!i Io, x: float) -> [io_write] int {
+    region r {
+        let out = alloc_slice[r](32, byte_of(0));
+        let n = fmt.float_into(out, x);
+        io.write_all(io, out[0..n]);
+    }
+    return 0;
+}
+
+fn run[&i](io: &!i Io) -> [io_read, io_write, err_write] int {
+    var status = 0;
+    region r {
+        let theta = alloc_slice[r](16, 0.0);
+        let grad = alloc_slice[r](16, 0.0);
+        let st = alloc_slice[r](128, 0.0);
+        let count = model.read_angles(io, theta, "qaoa-gradient");
+        if count < 0 {
+            status = 2;
+        } else {
+            let e = model.gradient(st, theta[0..count], count / 2, grad[0..count]);
+            put(io, e);
+            var k = 0;
+            while k < count {
+                io.write_all(io, " ");
+                put(io, grad[k]);
+                k = k + 1;
+            }
+            io.newline(io);
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut io as &!i in {
+        status = run(i);
+    }
+    release(io);
+    return status;
+}

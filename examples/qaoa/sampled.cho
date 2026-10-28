@@ -1,0 +1,120 @@
+edition 7;
+
+// `qaoa-sampled`: the objective of `examples/qaoa` as a device would give it: minus the mean number of edges cut by `S` sampled bit strings (README.md).
+//
+//     qaoa-sampled --shots S [--seed K] [--readout P]      the angles on standard input
+//
+// S is the number of shots, 1 to 4096; K a seed (default 1); P the probability that a measured bit is read wrongly (0 to 0.49). It reads its arguments, standard input and writes standard output: no file, no
+// network, no other program.
+import qc.gates;
+import qc.measure;
+import qc.profile;
+import qc.state;
+import std.bytes;
+import std.fmt;
+import std.io;
+import qaoa.model;
+
+fn put[&i](io: &!i Io, x: float) -> [io_write] int {
+    region r {
+        let out = alloc_slice[r](32, byte_of(0));
+        let n = fmt.float_into(out, x);
+        io.write_all(io, out[0..n]);
+    }
+    return 0;
+}
+
+fn refuse[&i, &w](io: &!i Io, what: &w [byte]) -> [err_write] int {
+    io.error_all(io, "qaoa-sampled: ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 2;
+}
+
+// the value of `--name V`, or an empty slice
+fn flag[&g](args: &g Args, name: &static [byte]) -> [args] &static [byte] {
+    var k = 1;
+    while k + 1 < arg_count(args) {
+        if bytes.equal(arg(args, k), name) {
+            return arg(args, k + 1);
+        }
+        k = k + 1;
+    }
+    return arg(args, 0)[0..0];
+}
+
+fn natural[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var v = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        v = v * 10 + (c - '0');
+        k = k + 1;
+    }
+    return v;
+}
+
+fn run[&i, &g](io: &!i Io, args: &g Args) -> [io_read, io_write, err_write, args] int {
+    let shots = natural(flag(args, "--shots"));
+    if shots < 1 || shots > 4096 {
+        return refuse(io, "--shots S is required, 1 to 4096");
+    }
+    var seed = 1;
+    let seed_text = flag(args, "--seed");
+    if len(seed_text) > 0 {
+        seed = natural(seed_text);
+        if seed < 0 {
+            return refuse(io, "--seed is a non-negative integer below 10^9");
+        }
+    }
+    var ppm = 0;
+    let ro_text = flag(args, "--readout");
+    if len(ro_text) > 0 {
+        let (ok, p) = model.number(ro_text);
+        if !ok || p < 0.0 || p > 0.49 {
+            return refuse(io, "--readout P is a probability from 0 to 0.49");
+        }
+        ppm = truncate(p * 1000000.0 + 0.5);
+    }
+    var status = 0;
+    region r {
+        let theta = alloc_slice[r](16, 0.0);
+        let st = alloc_slice[r](128, 0.0);
+        let picks = alloc_slice[r](shots, 0);
+        let rng = alloc_slice[r](profile.size(), 0);
+        let count = model.read_angles(io, theta, "qaoa-sampled");
+        if count < 0 {
+            status = 2;
+        } else {
+            put(io, model.sampled(st, theta[0..count], count / 2, shots, seed, ppm, rng, picks));
+            io.newline(io);
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow args as &g in {
+        borrow mut io as &!i in {
+            status = run(i, g);
+        }
+    }
+    release(args);
+    release(io);
+    return status;
+}

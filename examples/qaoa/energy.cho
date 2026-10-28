@@ -1,0 +1,46 @@
+edition 7;
+
+// `qaoa-energy`: the objective of `examples/qaoa`. Reads the angles on standard input (numbers separated by white space, 2 per layer: gamma and beta), prints the cost, minus the expected number of cut
+// edges, of the state they prepare. It reads no file and writes nothing but the answer: `cancho authority` on it names no capability beyond standard input and output.
+import qc.gates;
+import qc.state;
+import std.fmt;
+import std.io;
+import qaoa.model;
+
+fn run[&i](io: &!i Io) -> [io_read, io_write, err_write] int {
+    var status = 0;
+    region r {
+        let theta = alloc_slice[r](16, 0.0);
+        let st = alloc_slice[r](128, 0.0);
+        let count = model.read_angles(io, theta, "qaoa-energy");
+        if count < 0 {
+            status = 2;
+        } else {
+            let e = model.cost(st, theta[0..count], count / 2);
+            let out = alloc_slice[r](32, byte_of(0));
+            let n = fmt.float_into(out, e);
+            io.write_all(io, out[0..n]);
+            io.newline(io);
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut io as &!i in {
+        status = run(i);
+    }
+    release(io);
+    return status;
+}
