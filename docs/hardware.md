@@ -324,3 +324,15 @@ above it.)
 Limits: `stats` takes its levels from the data, so a level that the counts never show cannot be named; its expected mass is given to the largest level (this
 can only make the test less sensitive). The test says the model is not exact, not what is missing. With 2000 shots a difference of a few percent in a probability is already
 significant; with 200 it would not be.
+
+## What the runs cost
+
+The Open Plan charges the device's execution time of each job. Measured from the jobs' `usage.qpu_charge_time_seconds`, 26-27 October 2026:
+
+* each rates job (100 random mirror circuits, a few hundred gate layers, 2000 shots) is charged **54-55 s**; the rates set of three jobs is about **165 s** per device (fez 162 s, kingston 165 s);
+* a mirror set (6 circuits) or the spike set (7 circuits) is charged 3-5 s; a scan is under 3 s;
+* the whole plan was 600 s per 28 days, and the usage read 613 s at the end: the two rates sets (about 330 s), the 24-hour drift run (about 140 s on two devices), the first runs and the diagnostics used it all.
+
+The estimate in the issue (1 to 2 minutes for 300 circuits) and mine (40-60 s per device for the whole protocol) were both too low by about three times for the rates set. The cost is the circuits' length times the shots: use `--circuits 150` or fewer shots if only one device is wanted, and expect nothing else to fit in the same 28 days.
+
+ibm_kingston's issue 16 run is incomplete for this reason and one more: its mirror job was submitted at 18:25 UTC and stayed queued while the plan's seconds ran out; it was cancelled, the spike set never ran, and the scan and rates files (`ibm_kingston-2026-10-27-1816-readout.json`, `...-1820-rates-from60.json`) are kept as they are.

@@ -18,11 +18,10 @@ import std.io;
 //   cx cz swap q[i],q[j];  cp(a) cu1(a) q[i],q[j];  ccx q[i],q[j],q[k];
 //   measure q[i] -> c[j];                       measure q[i] (the c[j] is ignored)
 //
-// An angle is a rational multiple of pi: `pi`, `-pi/2`, `3*pi/4`, `0`. A
-// decimal angle is refused (status 3), because the digits of a decimal are
-// rounded and a multiple of pi is not, and the references are compared bit
-// for bit. Anything else (`gate` definitions, `if`, a second `qreg`)
-// is refused with a line that says what.
+// An angle is a number in radians (`0.785398`, `-1.2e-3`, `2`), `pi`, or a number times pi, divided by a number: `-pi/2`, `3*pi/4`, `0.25*pi`. A multiple of pi
+// by whole numbers is `pi * num / den`, the double the references compute, bit for bit; a decimal is read to the correctly rounded double (checked against Python's, scripts/check_qasm.py) when its digits (at most 18) times its power of ten are an integer below 2^62, or the power is 18 below, or 22 either way for digits below 2^53, and to within
+// a few units in the last place beyond that, where an angle is far too small or too large to matter (docs/features-results.md). Anything
+// else (`gate` definitions, `if`, a second `qreg`) is refused with a line that says what.
 //
 // A word is its characters packed big-endian into an int, the first seven
 // only, the same trick `main.cho` uses.
@@ -119,9 +118,200 @@ fn operand[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] int {
     return k;
 }
 
-// An angle, up to and including the character `close` (`)` after the last of a gate's angles, `,` after the others), as a fraction of pi: answers
-// (num, den), or (0, 0) when the expression is outside the subset.
-fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, int) {
+// 10^k for k from 0 to 22, every one of them exact in a double
+fn pow10(k: int) -> [] float {
+    var v = 1.0;
+    var j = 0;
+    while j < k {
+        v = v * 10.0;
+        j = j + 1;
+    }
+    return v;
+}
+
+// 10^k as an integer, k up to 18
+fn pow10_int(k: int) -> [] int {
+    var v = 1;
+    var j = 0;
+    while j < k {
+        v = v * 10;
+        j = j + 1;
+    }
+    return v;
+}
+
+// m / 10^k correctly rounded (to nearest, ties to even), for m at least 2^53 and k from 1 to 18: the quotient's bits by long division, 54 of them, then the rounding by hand. Dividing the double of m by the
+// double of 10^k would round twice.
+fn quotient(m: int, k: int) -> [] float {
+    let d = pow10_int(k);
+    var q = m / d;
+    var r = m - q * d;
+    var f = 0;
+    var mant = 0;
+    var exp2 = 0;
+    var up = false;
+    if q >= 9007199254740992 {
+        // 54 to 60 bits: keep the top 53, the rest decides the rounding
+        var nb = 0;
+        var t = q;
+        while t > 0 {
+            t = t / 2;
+            nb = nb + 1;
+        }
+        let shift = nb - 53;
+        let unit = 1 << shift;
+        mant = q / unit;
+        let rest = q - mant * unit;
+        let half = unit / 2;
+        up = rest > half || rest == half && (r != 0 || mant % 2 == 1);
+        exp2 = shift;
+    } else {
+        while q < 9007199254740992 {
+            r = r * 2;
+            q = q * 2;
+            if r >= d {
+                r = r - d;
+                q = q + 1;
+            }
+            f = f + 1;
+        }
+        mant = q / 2;
+        let roundbit = q - mant * 2;
+        up = roundbit == 1 && (r != 0 || mant % 2 == 1);
+        exp2 = 0 - (f - 1);
+    }
+    if up {
+        mant = mant + 1;
+    }
+    var v = float_of(mant);
+    var j = exp2;
+    while j > 0 {
+        v = v * 2.0;
+        j = j - 1;
+    }
+    while j < 0 {
+        v = v / 2.0;
+        j = j + 1;
+    }
+    return v;
+}
+
+// An unsigned number: digits, optionally a point and more digits, optionally `e` or `E`, a sign and an exponent. Answers (kind, integer, value): kind 0 when there is no number or it is out of range, 1 for plain digits
+// (the integer is then their value), 2 for a decimal. The value is the digits (the first 18 significant ones) as an integer, scaled by a power of ten: correctly rounded in the range qasm's header gives, within a few units in the last place beyond it (docs/features-results.md).
+pub fn number[&i, &l](io: &!i Io, la: &!l [int]) -> [io_read] (int, int, float) {
+    skip(io, la);
+    if !(la[0] >= '0' && la[0] <= '9') && la[0] != '.' {
+        return (0, 0, 0.0);
+    }
+    var m = 0;
+    var significant = 0;
+    var dropped = 0;
+    var fraction = 0;
+    var decimal = false;
+    var digits = 0;
+    while la[0] >= '0' && la[0] <= '9' {
+        if significant < 18 {
+            m = m * 10 + (la[0] - '0');
+            if m != 0 {
+                significant = significant + 1;
+            }
+        } else {
+            dropped = dropped + 1;
+        }
+        digits = digits + 1;
+        advance(io, la);
+    }
+    var whole = m;
+    if la[0] == '.' {
+        decimal = true;
+        advance(io, la);
+        while la[0] >= '0' && la[0] <= '9' {
+            if significant < 18 {
+                m = m * 10 + (la[0] - '0');
+                if m != 0 {
+                    significant = significant + 1;
+                }
+                fraction = fraction + 1;
+            }
+            digits = digits + 1;
+            advance(io, la);
+        }
+    }
+    if digits == 0 {
+        return (0, 0, 0.0);
+    }
+    var ex = 0;
+    if la[0] == 'e' || la[0] == 'E' {
+        decimal = true;
+        advance(io, la);
+        var neg = false;
+        if la[0] == '-' {
+            neg = true;
+            advance(io, la);
+        } else if la[0] == '+' {
+            advance(io, la);
+        }
+        if !(la[0] >= '0' && la[0] <= '9') {
+            return (0, 0, 0.0);
+        }
+        while la[0] >= '0' && la[0] <= '9' {
+            if ex < 10000 {
+                ex = ex * 10 + (la[0] - '0');
+            }
+            advance(io, la);
+        }
+        if neg {
+            ex = 0 - ex;
+        }
+    }
+    if !decimal {
+        if dropped > 0 {
+            return (0, 0, 0.0);
+        }
+        return (1, whole, float_of(whole));
+    }
+    var e10 = ex - fraction + dropped;
+    if m == 0 {
+        return (2, 0, 0.0);
+    }
+    if e10 > 40 {
+        return (0, 0, 0.0);
+    }
+    var v = float_of(m);
+    var big = m >= 9007199254740992;
+    if e10 < 0 && e10 >= 0 - 18 && big {
+        v = quotient(m, 0 - e10);
+        e10 = 0;
+    } else if e10 > 0 && e10 <= 18 && m <= 4611686018427387904 / pow10_int(e10) {
+        v = float_of(m * pow10_int(e10));
+        e10 = 0;
+    }
+    while e10 > 0 {
+        var step = e10;
+        if step > 22 {
+            step = 22;
+        }
+        v = v * pow10(step);
+        e10 = e10 - step;
+    }
+    while e10 < 0 {
+        var step = 0 - e10;
+        if step > 22 {
+            step = 22;
+        }
+        v = v / pow10(step);
+        e10 = e10 + step;
+        if v == 0.0 {
+            e10 = 0;
+        }
+    }
+    return (2, 0, v);
+}
+
+// An angle, up to and including the character `close` (`)` after the last of a gate's angles, `,` after the others): a number, `pi`, or a number `*pi`, then `/` and a number, with a sign in front. `3*pi/4`,
+// `-pi/2` and `0` are the multiples of pi the reader has always taken, and they stay `pi * num / den`, the same double as the references compute; anything else is a decimal in radians. Answers (ok, angle), ok 0
+// when it is outside the subset.
+fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, float) {
     skip(io, la);
     var sign = 1;
     if la[0] == '-' {
@@ -129,39 +319,60 @@ fn angle[&i, &l](io: &!i Io, la: &!l [int], close: int) -> [io_read] (int, int) 
         advance(io, la);
     }
     skip(io, la);
+    var haspi = false;
+    var integral = true;
     var num = 1;
-    var den = 1;
-    if la[0] >= '0' && la[0] <= '9' {
-        num = uint(io, la);
-        if la[0] == '.' {
-            // A decimal: refused, but consume to the closing parenthesis.
-            while la[0] >= 0 && la[0] != ')' {
-                advance(io, la);
+    var base = 1.0;
+    let (k1, i1, v1) = number(io, la);
+    if k1 == 0 {
+        let name = word(io, la);
+        if name != 28777 {
+            return (0, 0.0);
+        }
+        haspi = true;
+    } else {
+        num = i1;
+        base = v1;
+        integral = k1 == 1;
+        if expect(io, la, '*') {
+            let name = word(io, la);
+            if name != 28777 {
+                return (0, 0.0);
             }
-            advance(io, la);
-            return (0, 0);
-        }
-        if num == 0 && expect(io, la, close) {
-            return (0, 1);
-        }
-        if !expect(io, la, '*') {
-            return (0, 0);
+            haspi = true;
         }
     }
-    let name = word(io, la);
-    if name != 28777 {
-        return (0, 0);
-    }
+    var den = 1;
+    var divisor = 1.0;
+    var divided = false;
+    var integer_divisor = true;
     if expect(io, la, '/') {
-        den = uint(io, la);
-        if den == 0 {
-            return (0, 0);
+        let (k2, i2, v2) = number(io, la);
+        if k2 == 0 || v2 == 0.0 {
+            return (0, 0.0);
         }
+        divided = true;
+        den = i2;
+        divisor = v2;
+        integer_divisor = k2 == 1;
     }
     if !expect(io, la, close) {
-        return (0, 0);
+        return (0, 0.0);
     }
-    return (sign * num, den);
+    if haspi && integral && integer_divisor {
+        return (1, gates.angle(sign * num, den));
+    }
+    var v = base;
+    if haspi {
+        v = v * gates.pi();
+    }
+    if divided {
+        v = v / divisor;
+    }
+    if sign < 0 {
+        v = 0.0 - v;
+    }
+    return (1, v);
 }
 
 fn refuse[&i, &r](io: &!i Io, why: &r [byte]) -> [io_write] int {
@@ -237,21 +448,21 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
             if !expect(io, la, '(') {
                 status = 2;
             } else {
-                let (num, den) = angle(io, la, ')');
+                let (good, theta) = angle(io, la, ')');
                 let q = operand(io, la);
                 to_semicolon(io, la);
-                if den == 0 {
-                    status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+                if good == 0 {
+                    status = refuse(io, "an angle must be a number or a multiple of pi (0.785, pi, -pi/2, 3*pi/4)");
                 } else if q < 0 || q >= n {
                     status = 2;
                 } else if w == 29304 {
-                    gates.rx(st, n, q, gates.angle(num, den));
+                    gates.rx(st, n, q, theta);
                 } else if w == 29305 {
-                    gates.ry(st, n, q, gates.angle(num, den));
+                    gates.ry(st, n, q, theta);
                 } else if w == 29306 {
-                    gates.rz(st, n, q, gates.angle(num, den));
+                    gates.rz(st, n, q, theta);
                 } else {
-                    gates.p(st, n, q, gates.angle(num, den));
+                    gates.p(st, n, q, theta);
                 }
             }
         } else if w == 29560 || w == 1937269863 || w == 26980 {
@@ -271,31 +482,29 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
         } else if w == 30002 || w == 30003 || w == 117 {
             // u2(f,l), u3(t,f,l), u(t,f,l): p(f) ry(t) p(l), the first one applied last
             var ok = expect(io, la, '(');
-            var tn = 1;
-            var td = 2;
+            var theta = gates.angle(1, 2);
             var bad = 0;
             if ok && w != 30002 {
-                let (a1, b1) = angle(io, la, ',');
-                tn = a1;
-                td = b1;
-                if b1 == 0 {
+                let (g1, t1) = angle(io, la, ',');
+                theta = t1;
+                if g1 == 0 {
                     bad = 1;
                 }
             }
-            let (fnum, fden) = angle(io, la, ',');
-            let (lnum, lden) = angle(io, la, ')');
+            let (g2, phi) = angle(io, la, ',');
+            let (g3, lambda) = angle(io, la, ')');
             let q = operand(io, la);
             to_semicolon(io, la);
             if !ok {
                 status = 2;
-            } else if bad == 1 || fden == 0 || lden == 0 {
-                status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+            } else if bad == 1 || g2 == 0 || g3 == 0 {
+                status = refuse(io, "an angle must be a number or a multiple of pi (0.785, pi, -pi/2, 3*pi/4)");
             } else if q < 0 || q >= n {
                 status = 2;
             } else {
-                gates.p(st, n, q, gates.angle(lnum, lden));
-                gates.ry(st, n, q, gates.angle(tn, td));
-                gates.p(st, n, q, gates.angle(fnum, fden));
+                gates.p(st, n, q, lambda);
+                gates.ry(st, n, q, theta);
+                gates.p(st, n, q, phi);
             }
         } else if w == 25464 || w == 25466 || w == 1937203568 {
             let a = operand(io, la);
@@ -315,17 +524,17 @@ pub fn run[&i, &s, &r, &b, &l, &q](io: &!i Io, st: &!s [float], qubits: &!q [int
             if !expect(io, la, '(') {
                 status = 2;
             } else {
-                let (num, den) = angle(io, la, ')');
+                let (good, theta) = angle(io, la, ')');
                 let a = operand(io, la);
                 expect(io, la, ',');
                 let c = operand(io, la);
                 to_semicolon(io, la);
-                if den == 0 {
-                    status = refuse(io, "an angle must be a multiple of pi (pi, -pi/2, 3*pi/4, 0)");
+                if good == 0 {
+                    status = refuse(io, "an angle must be a number or a multiple of pi (0.785, pi, -pi/2, 3*pi/4)");
                 } else if a < 0 || c < 0 || a >= n || c >= n {
                     status = 2;
                 } else {
-                    gates.cp(st, n, a, c, gates.angle(num, den));
+                    gates.cp(st, n, a, c, theta);
                 }
             }
         } else if w == 6513528 {

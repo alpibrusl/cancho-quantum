@@ -37,8 +37,8 @@
 - **OpenQASM.** All 20 circuits QASM can express (those without `seed`,
   `sample` or `trig`) are written by `tools/qcconv.cho` (cancho; `scripts/qc_to_qasm.py` is its Python reference); Qiskit's own
   reader and `qsim` agree on each. In the other direction Qiskit wrote the same
-  circuits with `qasm2.dumps`: **18 run, 2 were refused** because Qiskit wrote a
-  decimal angle (for example `-399.8243433872783` for -12345 pi / 97).
+  circuits with `qasm2.dumps`: **18 ran and 2 were refused** because Qiskit wrote a
+  decimal angle (for example `-399.8243433872783` for -12345 pi / 97); **since the decimal reader (below) all 20 run**, the `rz_sweep` file with its angles of up to 3 million radians among them.
 
 ## Findings
 
@@ -52,11 +52,12 @@
   a file that includes it; Qiskit writes them anyway. `qc_to_qasm.py` therefore
   writes `u1`, `cu1` and three `cx` (standard QASM), and `qsim` reads both
   spellings.
-- **A decimal angle cannot be read bit for bit.** The digits are rounded; a
-  multiple of pi is not. The reader refuses decimals with a message instead of
-  accepting an approximation that would break the references. If decimals are wanted,
-  the right fix is a correctly-rounded decimal parser, which cancho's `std` does
-  not have.
+- **A decimal angle can be read bit for bit, but it took a division with the rounding done by hand.** This document used to say it could not, and that
+  cancho's `std` has no correctly rounded decimal parser; the reader now has one for the range an angle uses (`src/qasm.cho`, `number`). Dividing the double of the digits by the double of a
+  power of ten rounds twice and is wrong in the last place for about 1 text in 17 of those checked once the digits exceed 2^53 (17-digit angles, which Qiskit writes): the reader long-divides the digits to 54 bits
+  and rounds once, to nearest even. `scripts/check_qasm.py` compares it with Python's `float` on 18,252 texts (random doubles' `repr`, random digit strings of 1 to 18 digits with
+  a point and an exponent, and exact halfway cases): bit for bit when the digits (at most 18) are a power of ten of at most 18 below, 22 either way below 2^53 digits, or times the power below 2^62, and within 2 ulp
+  outside it (huge or tiny angles). With the division done in doubles the same check finds 1,081 wrong. A multiple of pi (`3*pi/4`) is still `pi * num / den`, the double the references compute.
 - **One character of lookahead cannot tell a comment from division.** `//` and
   `pi/4` both start with `/`; the QASM reader handles comments only at the start
   of a statement. Qiskit writes none, and the reader says so in a comment.
@@ -68,7 +69,7 @@
 ## Not done
 
 - No noise and no density matrices; the state is pure.
-- QASM: no decimal angles, `gate` definitions, `u3`/`u2`, `if`, or more than one `qreg`.
+- QASM: no `gate` definitions, `if`, `cy`/`ch`/`crz`/`rzz`, or more than one `qreg` (decimal angles, `u3`/`u2` are read).
   QASM is not written by cancho yet (a Python script writes it).
 - `sample` is at most 4096 draws, each costing one pass over the state; a
   billion-amplitude register is out of range anyway (the limit is 20 qubits).
