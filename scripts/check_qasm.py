@@ -115,6 +115,130 @@ def check_native(exe):
     return bad == 0 and ok > 0
 
 
+def check_decimal_circuits(exe):
+    """Angles written the ways Qiskit and people write them (a decimal, an exponent, a sign, `0.25*pi`, `2*pi/3`, a plain integer), 150 random circuits of rx ry rz u1 cu1 u3 against Qiskit's statevector to 1e-12 (Qiskit
+    reads the same text); and the texts that are not angles must be refused with status 3 and not run."""
+    rng = np.random.default_rng(20261028)
+    forms = [lambda x: repr(x), lambda x: f"{x:.17e}", lambda x: f"{x:.6f}", lambda x: f"{-abs(x)!r}", lambda x: f"{x / math.pi!r}*pi", lambda x: f"{abs(x) * 3:.5f}*pi/3", lambda x: f"{int(x * 100)}", lambda x: f"{x:.3g}"]
+    ok = bad = 0
+    for case in range(150):
+        n = int(rng.integers(1, 4))
+        lines = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{n}];"]
+        for _ in range(int(rng.integers(2, 9))):
+            q = int(rng.integers(0, n))
+            a = lambda: forms[int(rng.integers(0, len(forms)))](float(rng.uniform(-7, 7)))
+            kind = rng.choice(["rx", "ry", "rz", "u1", "cp", "u3", "h", "cx"])
+            if kind in ("rx", "ry", "rz", "u1"):
+                lines.append(f"{kind}({a()}) q[{q}];")
+            elif kind == "u3":
+                lines.append(f"u3({a()},{a()},{a()}) q[{q}];")
+            elif kind == "cp" and n > 1:
+                t = int(rng.choice([k for k in range(n) if k != q]))
+                lines.append(f"cu1({a()}) q[{q}],q[{t}];")
+            elif kind == "cx" and n > 1:
+                t = int(rng.choice([k for k in range(n) if k != q]))
+                lines.append(f"cx q[{q}],q[{t}];")
+            elif kind == "h":
+                lines.append(f"h q[{q}];")
+        text = "\n".join(lines) + "\n"
+        code, out = run(exe, text)
+        sv = Statevector(qasm2.loads(text)).data
+        got = parse(out)[2] if code == 0 else {}
+        worst = max(abs(complex(*got.get(i, (0.0, 0.0))) - sv[i]) for i in range(len(sv))) if code == 0 else 1.0
+        if code != 0 or worst > TOL:
+            bad += 1
+            print(f"FAIL decimal circuit {case}: exit {code}, worst {worst:.2e}\n{text}")
+        else:
+            ok += 1
+    refusals = 0
+    for angle in ("1e", "pi*", ".", "abc", "1/0", "1e50", "1..2", "-", "pi/", "2*3"):
+        code, out = run(exe, f"OPENQASM 2.0;\nqreg q[1];\nrz({angle}) q[0];\n")
+        if code == 3 and out.strip() == "error: an angle must be a number or a multiple of pi (0.785, pi, -pi/2, 3*pi/4)" or code == 3 and out.startswith("error:"):
+            refusals += 1
+        else:
+            bad += 1
+            print(f"FAIL angle {angle!r} should be refused with status 3: exit {code}, {out[:80]!r}")
+    print(f"{'ok  ' if not bad else 'FAIL'} decimal angles: {ok} random circuits agree with Qiskit to {TOL}; {refusals} of 10 malformed angles refused with status 3; {bad} wrong")
+    return bad == 0
+
+
+def ulps(a, b):
+    import struct
+    key = lambda x: (lambda i: i if i >= 0 else -(1 << 63) - i)(struct.unpack("<q", struct.pack("<d", x))[0])
+    return abs(key(a) - key(b))
+
+
+def number_cases(rng):
+    """Decimal texts for the reader: Python's repr of random doubles (1 to 17 digits, every magnitude), random digit strings of 1 to 18 digits with a point and an exponent, and the exact halfway cases between two doubles."""
+    out = []
+    for _ in range(6000):
+        x = float(rng.uniform(0.5, 1.0)) * 10.0 ** float(rng.integers(-12, 12)) * (1.0 + float(rng.integers(0, 2)) * 5.0)
+        out.append(repr(x))
+        out.append(repr(float(np.pi * rng.integers(-5000, 5000) / rng.integers(1, 200))).lstrip("-"))
+    for _ in range(6000):
+        nd = int(rng.integers(1, 19))
+        digits = "".join(str(int(d)) for d in rng.integers(0, 10, nd))
+        dot = int(rng.integers(0, nd + 1))
+        text = digits[:dot] + "." + digits[dot:] if rng.random() < 0.8 else digits
+        if rng.random() < 0.3:
+            text += "e" + ("-" if rng.random() < 0.5 else "") + str(int(rng.integers(0, 25)))
+        out.append(text)
+    for k in range(53, 62):
+        for odd in (1, 3, 5, 7):
+            v = (1 << k) + odd * (1 << max(0, k - 53))
+            out += [f"{v}.0", f"{v}.00", f"{v // 10}.{v % 10}", f"{v // 100}.{v % 100:02d}"]
+            out += [f"{(1 << k) + (1 << max(0, k - 53)) // 2 + j}.0" for j in (-1, 0, 1)]
+    return out
+
+
+def check_numbers(compiler):
+    """The decimal reader against Python's `float`, which is correctly rounded: bit for bit when the text is in the range the reader promises (at most 18 significant digits, and a power of ten of 18 below, or of 22 either way for digits below 2^53, or digits times the power below 2^62),
+    within two units in the last place otherwise. Built apart from `qsim`: `tests/qasm/numbers.cho` prints what the reader made of each text."""
+    from decimal import Decimal
+    exe = os.path.join(tempfile.mkdtemp(prefix="qasm-num-"), "numbers")
+    srcs = [os.path.join(ROOT, "src", f) for f in sorted(os.listdir(os.path.join(ROOT, "src"))) if f.endswith(".cho") and f != "main.cho"]
+    subprocess.run([compiler, "build", *srcs, os.path.join(ROOT, "tests", "qasm", "numbers.cho"), "--std", "-o", exe], check=True)
+    texts = number_cases(np.random.default_rng(20261028))
+    r = subprocess.run([exe], input=" ".join(texts), capture_output=True, text=True)
+    lines = r.stdout.splitlines()
+    if len(lines) != len(texts) or r.returncode != 0:
+        print(f"FAIL decimal reader: {len(lines)} answers for {len(texts)} texts, status {r.returncode}")
+        return False
+    exact = near = worst = bad = 0
+    for text, line in zip(texts, lines):
+        kind, whole, value = line.split()
+        want = float(text)
+        sign, digs, e10 = Decimal(text).as_tuple()
+        # significant digits as the reader counts them: from the first non-zero one
+        stripped = "".join(str(d) for d in digs).lstrip("0")
+        m = int(stripped) if stripped else 0
+        raw = text.lower().replace("e", " ").split()[0].replace(".", "").lstrip("0")
+        in_range = len(raw) <= 18 and (-18 <= e10 <= 0 or (m < (1 << 53) and -22 <= e10 <= 22) or (0 < e10 <= 18 and m * 10 ** e10 < (1 << 62)))
+        if len(raw) > 18 and not (-18 <= e10):
+            in_range = False
+        if kind == "0":
+            bad += 1
+            print(f"FAIL decimal reader refused {text!r}")
+            continue
+        got = float(value)
+        d = ulps(got, want)
+        if in_range:
+            exact += 1
+            if d != 0:
+                bad += 1
+                if bad < 8:
+                    print(f"FAIL decimal reader: {text!r} gave {got!r}, Python {want!r} ({d} ulps)")
+        else:
+            near += 1
+            worst = max(worst, d)
+            if d > 2:
+                bad += 1
+                if bad < 8:
+                    print(f"FAIL decimal reader: {text!r} gave {got!r}, Python {want!r} ({d} ulps; outside the exact range)")
+    print(f"{'ok  ' if not bad else 'FAIL'} decimal reader: {exact} texts in its exact range are bit for bit Python's float, {near} outside it within {worst} ulp; {bad} wrong")
+    return bad == 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--compiler", default=os.environ.get("CANCHO", "cancho"))
@@ -168,7 +292,8 @@ def main():
     print(f"\n{len(names) - len(failed)} of {len(names)} files read by both parsers; "
           f"Qiskit-written QASM: {accepted} run, {refused} refused for a decimal angle")
     native = check_native(exe)
-    sys.exit(1 if failed or not native else 0)
+    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe)
+    sys.exit(1 if failed or not native or not numbers else 0)
 
 
 if __name__ == "__main__":

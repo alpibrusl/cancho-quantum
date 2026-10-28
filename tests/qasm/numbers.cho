@@ -1,0 +1,50 @@
+// The decimal reader of `src/qasm.cho`, on its own: numbers on standard input (white space between them), and for each one `kind integer value` on a line, the value as the shortest text that reads back to the same bits.
+// `scripts/check_qasm.py` compares those values with Python's, which are correctly rounded, bit for bit.
+import qc.dump;
+import qc.qasm;
+import std.io;
+
+fn run[&i](io: &!i Io) -> [io_read, io_write] int {
+    var status = 0;
+    region r {
+        let la = alloc_slice[r](1, 0);
+        let scratch = alloc_slice[r](32, byte_of(0));
+        la[0] = getchar(io);
+        var more = true;
+        while more {
+            while la[0] == 32 || la[0] == 10 {
+                la[0] = getchar(io);
+            }
+            if la[0] < 0 {
+                more = false;
+            } else {
+                let (kind, whole, v) = qasm.number(io, la);
+                io.print_int(io, kind);
+                io.write_all(io, " ");
+                io.print_int(io, whole);
+                io.write_all(io, " ");
+                dump.put_float(io, scratch, v);
+                io.newline(io);
+                if kind == 0 {
+                    status = 1;
+                    more = false;
+                }
+            }
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(heap);
+    var status = 0;
+    borrow mut io as &!i in {
+        status = run(i);
+    }
+    release(io);
+    return status;
+}
