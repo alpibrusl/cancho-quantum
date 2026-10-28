@@ -268,3 +268,53 @@ pub fn cp[&s](st: &!s [float], n: int, a: int, b: int, lambda: float) -> [] int 
     }
     return 0;
 }
+
+// The gates of OpenQASM's `qelib1.inc` that are built from the ones above, each equal to its true controlled or two-qubit matrix (no global phase left over).
+
+// controlled-Y: S^-1 on the target, CNOT, S
+pub fn cy[&s](st: &!s [float], n: int, control: int, target: int) -> [] int {
+    distinct(n, control, target);
+    sdg(st, n, target);
+    cx(st, n, control, target);
+    s(st, n, target);
+    return 0;
+}
+
+// controlled-H: H = RY(pi/4) Z RY(-pi/4), so RY(-pi/4) on the target, CZ, RY(pi/4) (exact, with no phase left over)
+pub fn ch[&s](st: &!s [float], n: int, control: int, target: int) -> [] int {
+    distinct(n, control, target);
+    ry(st, n, target, 0.0 - angle(1, 4));
+    cz(st, n, control, target);
+    ry(st, n, target, angle(1, 4));
+    return 0;
+}
+
+// controlled-RZ(lambda) = diag(1, 1, e^{-i lambda/2}, e^{i lambda/2}): RZ(lambda/2), CNOT, RZ(-lambda/2), CNOT on the target
+pub fn crz[&s](st: &!s [float], n: int, control: int, target: int, lambda: float) -> [] int {
+    distinct(n, control, target);
+    rz(st, n, target, lambda * 0.5);
+    cx(st, n, control, target);
+    rz(st, n, target, 0.0 - lambda * 0.5);
+    cx(st, n, control, target);
+    return 0;
+}
+
+// RZZ(theta) = exp(-i theta Z Z / 2): CNOT, RZ(theta) on the target, CNOT
+pub fn rzz[&s](st: &!s [float], n: int, a: int, b: int, theta: float) -> [] int {
+    distinct(n, a, b);
+    cx(st, n, a, b);
+    rz(st, n, b, theta);
+    cx(st, n, a, b);
+    return 0;
+}
+
+// controlled swap (Fredkin): CNOT, Toffoli, CNOT
+pub fn cswap[&s](st: &!s [float], n: int, control: int, a: int, b: int) -> [] int {
+    distinct(n, control, a);
+    distinct(n, control, b);
+    distinct(n, a, b);
+    cx(st, n, b, a);
+    ccx(st, n, control, a, b);
+    cx(st, n, b, a);
+    return 0;
+}
