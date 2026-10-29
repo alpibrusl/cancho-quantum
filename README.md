@@ -21,6 +21,7 @@ noise on the density matrix (`docs/density-results.md`).
 - `docs/calibration.md`: a real device's published calibration (`ibm_perth`, 2024-05-27) read into a profile, checked against Qiskit Aer's noise model built from the same snapshot (`scripts/calibration_import.py`, `check_calibration.py`)
 - `docs/noise-profile.md`: per-qubit and per-pair gate error, asymmetric readout, and a device-style JSON profile file (`tools/qprofile.cho`; `profiles/example_5q.json` has invented numbers)
 - `docs/noise-results.md`: five channels, readout error and a gate-noise model, by trajectories, checked against exact density matrices
+- `docs/fpga.md`: `tools/fpga/` counts `qsim`'s samples in an FPGA histogram and plays a circuit's schedule as timed pulses, checked by an analyzer in the same FPGA (Tang Nano 20K; counts equal, spacings exact; not about speed)
 - `docs/m3-results.md`: M3 results (byte-identical across backends and architectures; provenance)
 
 ![The Bell-pair circuit](docs/img/bell-circuit.svg)
