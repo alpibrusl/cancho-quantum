@@ -47,9 +47,9 @@ def best(fn, runs=5):
     return min(times)
 
 
-def run_text(exe, text):
+def run_text(exe, text, *flags):
     def go():
-        r = subprocess.run([exe], input=text, capture_output=True, text=True)
+        r = subprocess.run([exe, *flags], input=text, capture_output=True, text=True)
         assert r.returncode == 0, r.stdout[:200] + r.stderr[:200]
     return best(go)
 
@@ -94,7 +94,7 @@ def qasm_programs(exes):
     # the printing: a QASM run ends by printing every non-zero amplitude, so on a dense state (H on every qubit) the output is 2^n lines, and that is most of the time from about 10 qubits
     for n in (8, 10, 12, 14):
         text = f"OPENQASM 2.0;\nqreg q[{n}];\n" + "".join(f"h q[{q}];\n" for q in range(n))
-        rows[f"{n} qubits, H on every qubit (a dense state, {1 << n:,} amplitudes printed)"] = {"qubits": n, "gates": n, "bytes": len(text), **{b: run_text(e, text) for b, e in exes.items()}}
+        rows[f"{n} qubits, H on every qubit (a dense state, {1 << n:,} amplitudes printed)"] = {"qubits": n, "gates": n, "bytes": len(text), **{b: run_text(e, text) for b, e in exes.items()}, "llvm_quiet": run_text(exes["llvm"], text, "--quiet")}
     # Qiskit's reader on the same texts, for the parse alone
     from qiskit import qasm2
     for key in list(rows):

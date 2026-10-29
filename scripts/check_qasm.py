@@ -551,6 +551,66 @@ def gate_mutants(compiler, old):
     return ok
 
 
+def check_print_options(exe):
+    """`--quiet` and `--threshold P` (README of the benchmark: the printing of a dense state costs 17 microseconds an amplitude): with no flag the output is what it always was; `--threshold P` prints exactly the amplitude
+    lines whose probability is at least P, in the same order, on 60 random circuits and four values of P, and keeps the measurement lines; `--quiet` prints none of the amplitudes; the arguments that are not these are refused with
+    status 2 and nothing on standard output; a `.qc` circuit ignores both."""
+    rng = np.random.default_rng(20261104)
+    ok = bad = 0
+    for case in range(60):
+        n = int(rng.integers(2, 7))
+        lines = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{n}];", f"creg c[{n}];"]
+        for _ in range(int(rng.integers(3, 12))):
+            q = [int(x) for x in rng.permutation(n)]
+            kind = str(rng.choice(["h", "t", "rx", "cx", "ry", "m"]))
+            if kind in ("h", "t"):
+                lines.append(f"{kind} q[{q[0]}];")
+            elif kind in ("rx", "ry"):
+                lines.append(f"{kind}({float(rng.uniform(-3, 3))!r}) q[{q[0]}];")
+            elif kind == "cx":
+                lines.append(f"cx q[{q[0]}],q[{q[1]}];")
+            else:
+                lines.append(f"measure q[{q[0]}] -> c[{q[0]}];")
+        text = "\n".join(lines) + "\n"
+        full = subprocess.run([exe], input=text, capture_output=True, text=True).stdout.splitlines()
+        amps = [l for l in full if l.startswith("amp ")]
+        others = [l for l in full if not l.startswith("amp ")]
+        for P in ("0", "0.01", "0.2", "1"):
+            got = subprocess.run([exe, "--threshold", P], input=text, capture_output=True, text=True).stdout.splitlines()
+            want = others + [l for l in amps if P == "0" or float(l.split()[2]) ** 2 + float(l.split()[3]) ** 2 >= float(P)]
+            good = sorted(got) == sorted(want) and [l for l in got if l.startswith("amp ")] == [l for l in want if l.startswith("amp ")] and (P != "0" or got == full)
+            ok += good
+            bad += not good
+            if not good:
+                print(f"FAIL --threshold {P}: {len(got)} lines against {len(want)}\n{text}")
+        quiet = subprocess.run([exe, "--quiet"], input=text, capture_output=True, text=True).stdout.splitlines()
+        good = quiet == others
+        ok += good
+        bad += not good
+        if not good:
+            print(f"FAIL --quiet printed {len(quiet)} lines, expected the {len(others)} that are not amplitudes\n{text}")
+    # a basis state has probability exactly 1: `--threshold 1` keeps it
+    one = subprocess.run([exe, "--threshold", "1"], input="OPENQASM 2.0;\nqreg q[2];\nx q[1];\n", capture_output=True, text=True).stdout
+    good = one.splitlines() == ["amp 2 1e0 0e0"]
+    ok += good
+    bad += not good
+    if not good:
+        print(f"FAIL --threshold 1 on a basis state: {one!r}")
+    for argv in (["--bogus"], ["--threshold"], ["--threshold", "x"], ["--threshold", "-1"], ["--threshold", "2"], ["--threshold", "nan"], ["--quiet", "extra"]):
+        r = subprocess.run([exe, *argv], input="OPENQASM 2.0;\nqreg q[1];\nx q[0];\n", capture_output=True, text=True)
+        good = r.returncode == 2 and r.stdout == ""
+        ok += good
+        bad += not good
+        if not good:
+            print(f"FAIL {argv} should be refused with status 2: {r.returncode} {r.stdout[:40]!r}")
+    qc = subprocess.run([exe, "--quiet"], input="n 1\nx 0\n", capture_output=True, text=True).stdout
+    good = qc.startswith("amp 0")
+    ok += good
+    bad += not good
+    print(f"{'ok  ' if not bad else 'FAIL'} --quiet and --threshold: {ok} checks (60 random circuits x four thresholds, --quiet, the exact value 1, seven refusals, a .qc circuit that ignores them); {bad} wrong")
+    return bad == 0
+
+
 def ulps(a, b):
     import struct
     key = lambda x: (lambda i: i if i >= 0 else -(1 << 63) - i)(struct.unpack("<q", struct.pack("<d", x))[0])
@@ -683,7 +743,7 @@ def main():
           f"Qiskit-written QASM: {accepted} run, {refused} refused for a decimal angle")
     native = check_native(exe)
     old = build_old(args.compiler)
-    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe) and check_controlled(exe) and check_classical(exe) and check_gate_defs(exe, old)
+    numbers = check_numbers(args.compiler) and check_decimal_circuits(exe) and check_controlled(exe) and check_classical(exe) and check_gate_defs(exe, old) and check_print_options(exe)
     if numbers and args.mutants:
         numbers = gate_mutants(args.compiler, old)
     sys.exit(1 if failed or not native or not numbers else 0)

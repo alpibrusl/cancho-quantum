@@ -126,25 +126,26 @@ kernels at one size on one machine: it does not cover the noise code, the densit
 ## The parts added since: the OpenQASM reader, and the two variational examples
 
 Measured by `scripts/bench_features.py` into `docs/data/bench_features.json` (the tables are filled from it by `bench_report.py`, like the rest). Same machine as above, same rules: whole processes, start-up (1.1 to 1.2 ms) included, minimum of 5 runs
-(3 for the optimiser runs). One caution first: **a QASM run ends by printing every non-zero amplitude**, and the first benchmark's `quiet` exists only for `.qc` files, so a 300-gate circuit at 20 qubits took 16 s, almost all of it printing
-a million lines. The tables therefore use 4 qubits for the reader itself, and a separate row per size for the printing.
+(3 for the optimiser runs). One caution first: **a QASM run ends by printing every amplitude** (zeros are cheap, other numbers are not), and the first benchmark's `quiet` was only for `.qc` files, so a 300-gate circuit at 20 qubits took 16 s, almost all of it printing
+a million lines. The tables therefore use 4 qubits for the reader itself, and a separate row per size for the printing, with the `--quiet` flag that this measurement led to (below).
 
 **The reader** (a seeded circuit of 300 `h`, `t`, `rz`, `cx`, on 4 qubits; Qiskit's `qasm2.loads` is the reader alone, without Python's start or the import of Qiskit, so it favours Qiskit):
 
 <!-- table:qasm -->
-| program | qsim (LLVM) | qsim (Cranelift) | Qiskit `qasm2.loads` alone |
-|---|---|---|---|
-| 4 qubits, multiples of pi (300 gates, 3,651 bytes) | 1.9 ms | 2.8 ms | 1.0 ms |
-| 4 qubits, decimal angles (300 gates, 4,483 bytes) | 2.3 ms | 2.5 ms | 0.9 ms |
-| 4 qubits, every gate a call of a definition (300 gates, 4,041 bytes) | 2.9 ms | 5.2 ms | 1.7 ms |
-| 8 qubits, H on every qubit (a dense state, 256 amplitudes printed) (8 gates, 89 bytes) | 6.5 ms | 13.4 ms | n/a |
-| 10 qubits, H on every qubit (a dense state, 1,024 amplitudes printed) (10 gates, 106 bytes) | 18.1 ms | 48.6 ms | n/a |
-| 12 qubits, H on every qubit (a dense state, 4,096 amplitudes printed) (12 gates, 124 bytes) | 79.6 ms | 193 ms | n/a |
-| 14 qubits, H on every qubit (a dense state, 16,384 amplitudes printed) (14 gates, 142 bytes) | 288 ms | 678 ms | n/a |
+| program | qsim (LLVM) | qsim (Cranelift) | Qiskit `qasm2.loads` alone | qsim (LLVM) `--quiet` |
+|---|---|---|---|---|
+| 4 qubits, multiples of pi (300 gates, 3,651 bytes) | 1.8 ms | 2.3 ms | 0.9 ms | n/a |
+| 4 qubits, decimal angles (300 gates, 4,483 bytes) | 1.7 ms | 2.5 ms | 0.9 ms | n/a |
+| 4 qubits, every gate a call of a definition (300 gates, 4,041 bytes) | 3.5 ms | 4.9 ms | 1.4 ms | n/a |
+| 8 qubits, H on every qubit (a dense state, 256 amplitudes printed) (8 gates, 89 bytes) | 4.9 ms | 12.9 ms | n/a | 1.7 ms |
+| 10 qubits, H on every qubit (a dense state, 1,024 amplitudes printed) (10 gates, 106 bytes) | 21.2 ms | 39.0 ms | n/a | 1.1 ms |
+| 12 qubits, H on every qubit (a dense state, 4,096 amplitudes printed) (12 gates, 124 bytes) | 79.8 ms | 176 ms | n/a | 1.7 ms |
+| 14 qubits, H on every qubit (a dense state, 16,384 amplitudes printed) (14 gates, 142 bytes) | 250 ms | 730 ms | n/a | 1.6 ms |
 <!-- /table -->
 
-* **Reading is cheap and the three spellings cost about the same**: 1.9 ms for multiples of pi, 2.3 ms with decimal angles, 2.9 ms with every gate a call of a definition, of which 1.1 to 1.2 ms is the process start. Differences of a few tenths of a millisecond are inside the noise of a minimum of 5.
-* **The printing is the cost at size**: about 17 microseconds per amplitude with LLVM (288 ms for the 16,384 of a dense 14-qubit state) and about 41 with Cranelift, so a dense 20-qubit state would print for about 18 seconds. The cause is not examined (the shortest-round-trip formatting of two floats per line is the obvious suspect), and it is not fixed; a flag that prints nothing, or only the non-negligible amplitudes, would remove it.
+* **Reading is cheap and the three spellings cost about the same**: 1.8 ms for multiples of pi, 1.7 ms with decimal angles, 3.5 ms with every gate a call of a definition, of which 1.1 to 1.2 ms is the process start. Differences of a millisecond are inside the noise of a minimum of 5: the run before this one gave 1.9, 2.3 and 2.9 ms, so only "a call of a definition costs a little more" can be read from it, and `expansion` below measures that on its own.
+* **The printing is the cost at size**: about 15 microseconds per amplitude with LLVM (250 ms for the 16,384 of a dense 14-qubit state) and about 45 with Cranelift, so a dense 20-qubit state would print for about 16 seconds. **The cause is `std.fmt.float_into`, not the output**: stdout is buffered (35 `write` calls for 4,096 lines, by `strace`), zeros print in about 0.15 microseconds (a 20-qubit state with two non-zero amplitudes prints 1,048,576 lines in 0.17 s), and the amplitudes after a few Hadamards are 17-digit numbers such as `1.5624999999999984e-2`, which take the exact Steele-White algorithm on bignums (`std/fmt.cho`: correct, shortest, and slow). A faster algorithm (Ryu, or Grisu with this one as the fallback) is a change to `std` in the cancho repository and is not made here.
+* **What was done instead: `qsim --quiet` and `qsim --threshold P`** for OpenQASM programs (`--threshold` prints only the amplitudes whose probability is at least P; no flag prints them all, byte for byte as before). With `--quiet` the dense 14-qubit program takes 1.6 ms instead of 250 ms. `scripts/check_qasm.py` checks that the filtered output is exactly the lines of the full output that pass, in order, on 60 random circuits and four thresholds.
 
 **One call of a defined gate** (4 qubits, so that no simulation is in the way; a two-gate definition `g(t) a,b { rz(t*2+0.1) a; cx a,b; }` called N times against its 2N gates written out):
 
