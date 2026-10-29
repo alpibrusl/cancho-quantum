@@ -41,6 +41,36 @@ def tables(d):
     cols = [("qsim_llvm", "qsim (LLVM)"), ("clang_naive", "C, clang, same loop"), ("gcc_naive", "C, gcc, same loop"), ("clang_tuned", "C, clang, pairs only"), ("gcc_tuned", "C, gcc, pairs only")]
     rows = [f"| {NAMES[w]} | " + " | ".join(sec(r[c]) for c, _ in cols) + f" | {r['qsim_llvm'] / r['clang_naive']:.2f}x | {r['qsim_llvm'] / min(r['clang_tuned'], r['gcc_tuned']):.2f}x |" for w, r in k["workloads"].items()]
     out["kernels"] = "| workload | " + " | ".join(l for _, l in cols) + " | qsim / C, same loop | qsim / best tuned C |\n|---|" + "---|" * (len(cols) + 2) + "\n" + "\n".join(rows)
+    f = os.path.join(ROOT, "docs", "data", "bench_features.json")
+    if os.path.exists(f):
+        out.update(feature_tables(json.load(open(f))))
+    return out
+
+
+def feature_tables(b):
+    out = {}
+    rows = []
+    for key, r in b["qasm"].items():
+        rows.append(f"| {key} ({r['gates']} gates, {r['bytes']:,} bytes) | {sec(r['llvm'])} | {sec(r['cranelift'])} | {sec(r['qiskit_loads'])} |")
+    out["qasm"] = "| program | qsim (LLVM) | qsim (Cranelift) | Qiskit `qasm2.loads` alone |\n|---|---|---|---|\n" + "\n".join(rows)
+    rows = []
+    for k, r in b["expansion"].items():
+        if k == "refusal":
+            continue
+        rows.append(f"| {int(k):,} | {sec(r['llvm']['defined'])} | {sec(r['llvm']['written_out'])} | {r['llvm']['per_call_us']:.1f} us | {sec(r['cranelift']['defined'])} | {sec(r['cranelift']['written_out'])} | {r['cranelift']['per_call_us']:.1f} us |")
+    out["expansion"] = "| calls | defined, LLVM | written out, LLVM | per call, LLVM | defined, Cranelift | written out, Cranelift | per call, Cranelift |\n|---|---|---|---|---|---|---|\n" + "\n".join(rows)
+    v = b["variational"]
+    rows = [
+        f"| VQE, 3 layers, BFGS with the exact gradient ({v['vqe_bfgs']['tool_gradients']} gradients) | {sec(v['vqe_bfgs']['tool_s'])} | {sec(v['vqe_bfgs']['scipy_numpy_s'])} | {v['vqe_bfgs']['scipy_numpy_s'] / v['vqe_bfgs']['tool_s']:.1f}x |",
+        f"| VQE, 3 layers, SPSA 800 iterations, exact energy ({v['vqe_spsa_800_exact']['evaluations']} evaluations) | {sec(v['vqe_spsa_800_exact']['tool_s'])} | | |",
+        f"| VQE, 3 layers, SPSA 800 iterations, 1,000 shots per basis ({v['vqe_spsa_800_1000_shots']['shots']:,} shots) | {sec(v['vqe_spsa_800_1000_shots']['tool_s'])} | | |",
+    ]
+    for layers in (1, 2, 3, 4):
+        r = v[f"qaoa_bfgs_{layers}"]
+        rows.append(f"| QAOA, {layers} layer{'s' if layers > 1 else ''}, BFGS, 6 starts ({r['tool_gradients']} gradients) | {sec(r['tool_s'])} | {sec(r['scipy_numpy_s'])} | {r['scipy_numpy_s'] / r['tool_s']:.1f}x |")
+    r = v["qaoa_spsa_2_1000_shots"]
+    rows.append(f"| QAOA, 2 layers, SPSA 200 iterations, 6 starts, 1,000 shots ({r['shots']:,} shots) | {sec(r['tool_s'])} | | |")
+    out["variational"] = "| run | cancho (qsim + `opt`, LLVM) | scipy BFGS on numpy, same start and gradient rule | scipy / cancho |\n|---|---|---|---|\n" + "\n".join(rows)
     return out
 
 
