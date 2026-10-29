@@ -1,0 +1,227 @@
+edition 8;
+
+import std.io;
+import std.buffer;
+import labio;
+
+// seq.cho -- a circuit's ASAP schedule played as pulses by an FPGA, and measured by the FPGA.
+//
+//   printf 'time1 20\ntime2 60\nh 0\nh 1\ncx 0 1\nx 0\ncx 1 2\n' | seq
+//
+// Reads qsim's circuit text: `time1 NS`, `time2 NS` (gate durations; defaults 20 and 60), and gates `<name> q` (one qubit) or `cx a b`
+// (two), qubits 0 to 5. Every gate starts as soon as its qubits are free (what qsim's `sched` does, recomputed here: qsim does not print its
+// schedule). Pin q of the lab design (the LED pins) is high while a gate runs on qubit q. The circuit's time is dilated by 1000: one
+// nanosecond of the circuit is 1 microsecond on the pins (27 ticks of the 27 MHz clock), because the clock's 37 ns tick cannot resolve a
+// 20 ns gate. The analyzer watches the same pins on the same clock; the program prints the edges it recorded against the edges the
+// schedule asks for, and exits 1 if any spacing differs. At most 32 gates.
+// Authority: standard input and output, the Tty capability under /dev, a poll. No filesystem, no network, no foreign call.
+
+fn scale() -> [] int { return 27; }
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi); release(fs); release(args); release(net); release(signals); release(exec); release(clock);
+    let device = narrow(tty, "/dev");
+    var status_code = 0;
+    var failures = 0;
+    match poller_new() {
+        Polling::Failed(e) => { release(device); release(io); release(heap); return 1; }
+        Polling::Ok(open) => {
+            var p = open;
+            borrow device as &t in {
+                match tty_open(t, "/dev/ttyUSB1") {
+                    TtyOpened::Failed(errno) => { status_code = 3; }
+                    TtyOpened::Ok(port) => {
+                        borrow mut port as &!q in {
+                            if tty_configure(q, 115200) != 0 { status_code = 4; }
+                            tty_flush_input(q);
+                            borrow mut p as &!pw in { poller_add_tty(pw, q, 1, 1); }
+                            borrow mut p as &!pw in {
+                                region r {
+                                    let frame = alloc_slice[r](9, byte_of(0));
+                                    let cmd = alloc_slice[r](5, byte_of(0));
+                                    let ans = alloc_slice[r](8, byte_of(0));
+                                    let line = alloc_slice[r](128, byte_of(0));
+                                    let gstart = alloc_slice[r](32, 0);
+                                    let gend = alloc_slice[r](32, 0);
+                                    let gmask = alloc_slice[r](32, 0);
+                                    let free = alloc_slice[r](6, 0);
+                                    var t1 = 20;
+                                    var t2 = 60;
+                                    var ng = 0;
+                                    var len = 0;
+                                    var going = true;
+                                    while going {
+                                        var c = 0 - 1;
+                                        borrow mut io as &!i in { c = getchar(i); }
+                                        if c >= 0 && c != 10 {
+                                            if len < 127 { line[len] = byte_of(c); len = len + 1; }
+                                        } else {
+                                            // the first word, then up to two integers
+                                            var j = 0;
+                                            while j < len && int_of(line[j]) != 32 { j = j + 1; }
+                                            let wlen = j;
+                                            var a0 = 0 - 1;
+                                            var a1 = 0 - 1;
+                                            var k = j;
+                                            var which = 0;
+                                            while k < len {
+                                                if int_of(line[k]) >= 48 && int_of(line[k]) <= 57 {
+                                                    var v = 0;
+                                                    while k < len && int_of(line[k]) >= 48 && int_of(line[k]) <= 57 { v = v * 10 + int_of(line[k]) - 48; k = k + 1; }
+                                                    if which == 0 { a0 = v; } else { a1 = v; }
+                                                    which = which + 1;
+                                                } else { k = k + 1; }
+                                            }
+                                            let is_time1 = wlen == 5 && int_of(line[0]) == 116 && int_of(line[1]) == 105 && int_of(line[2]) == 109 && int_of(line[3]) == 101 && int_of(line[4]) == 49;
+                                            let is_time2 = wlen == 5 && int_of(line[0]) == 116 && int_of(line[1]) == 105 && int_of(line[2]) == 109 && int_of(line[3]) == 101 && int_of(line[4]) == 50;
+                                            let is_cx = wlen == 2 && int_of(line[0]) == 99 && int_of(line[1]) == 120;
+                                            if is_time1 && a0 > 0 { t1 = a0; }
+                                            else if is_time2 && a0 > 0 { t2 = a0; }
+                                            else if is_cx && which == 2 && a0 < 6 && a1 < 6 && ng < 32 {
+                                                var s = free[a0];
+                                                if free[a1] > s { s = free[a1]; }
+                                                gstart[ng] = s; gend[ng] = s + t2; gmask[ng] = 1; 
+                                                var m = 1;
+                                                var z = 0;
+                                                while z < a0 { m = m * 2; z = z + 1; }
+                                                var m2 = 1;
+                                                z = 0;
+                                                while z < a1 { m2 = m2 * 2; z = z + 1; }
+                                                gmask[ng] = m + m2;
+                                                free[a0] = s + t2; free[a1] = s + t2;
+                                                ng = ng + 1;
+                                            } else if which == 1 && wlen >= 1 && wlen <= 4 && a0 < 6 && !is_time1 && !is_time2 && ng < 32 {
+                                                let s = free[a0];
+                                                gstart[ng] = s; gend[ng] = s + t1;
+                                                var m = 1;
+                                                var z = 0;
+                                                while z < a0 { m = m * 2; z = z + 1; }
+                                                gmask[ng] = m;
+                                                free[a0] = s + t1;
+                                                ng = ng + 1;
+                                            }
+                                            len = 0;
+                                            if c < 0 { going = false; }
+                                        }
+                                    }
+                                    if ng == 0 { status_code = 2; }
+                                    // boundaries: every start and end, sorted, unique
+                                    let bt = alloc_slice[r](64, 0);
+                                    var nb = 0;
+                                    var g = 0;
+                                    while g < ng {
+                                        bt[nb] = gstart[g]; nb = nb + 1;
+                                        bt[nb] = gend[g]; nb = nb + 1;
+                                        g = g + 1;
+                                    }
+                                    var a = 1;
+                                    while a < nb {
+                                        var b = a;
+                                        while b > 0 && bt[b - 1] > bt[b] { let tmp = bt[b]; bt[b] = bt[b - 1]; bt[b - 1] = tmp; b = b - 1; }
+                                        a = a + 1;
+                                    }
+                                    // events: the pin mask at each distinct boundary
+                                    let et = alloc_slice[r](64, 0);
+                                    let em = alloc_slice[r](64, 0);
+                                    var ne = 0;
+                                    var u = 0;
+                                    while u < nb {
+                                        if u == 0 || bt[u] != bt[u - 1] {
+                                            var mask = 0;
+                                            g = 0;
+                                            while g < ng {
+                                                if gstart[g] <= bt[u] && bt[u] < gend[g] { mask = mask + gmask[g]; }
+                                                g = g + 1;
+                                            }
+                                            et[ne] = bt[u]; em[ne] = mask; ne = ne + 1;
+                                        }
+                                        u = u + 1;
+                                    }
+                                    if status_code == 0 {
+                                        var e = 0;
+                                        while e < ne {
+                                            labio.write_reg(q, pw, frame, ans, 20, e);
+                                            labio.write_reg(q, pw, frame, ans, 24, et[e] * scale() + 40);
+                                            labio.write_reg(q, pw, frame, ans, 28, em[e]);
+                                            labio.write_reg(q, pw, frame, ans, 32, e + 1);
+                                            e = e + 1;
+                                        }
+                                        labio.write_reg(q, pw, frame, ans, 36, ne);
+                                        labio.write_reg(q, pw, frame, ans, 0, 17);
+                                        labio.write_reg(q, pw, frame, ans, 0, 19);
+                                        labio.pause(pw, 300 + (et[ne - 1] * scale()) / 27000);
+                                        labio.write_reg(q, pw, frame, ans, 0, 16);
+                                        let cnt = labio.read_reg(q, pw, cmd, ans, 8) % 65536;
+                                        // recorded: entry 0 is the initial level; each later entry is an edge with its tick
+                                        var prev_t = 0;
+                                        var prev_m = 0;
+                                        var rec_n = 0;
+                                        var exp_i = 0;
+                                        var last_exp_t = 0;
+                                        var k2 = 0;
+                                        while k2 < cnt {
+                                            let ts = labio.read_reg(q, pw, cmd, ans, 12);
+                                            let pins = labio.read_reg(q, pw, cmd, ans, 16);
+                                            if k2 >= 1 {
+                                                // the next expected edge is the next event whose mask differs from the one before it
+                                                var found = false;
+                                                while !found && exp_i < ne {
+                                                    var pm = 0;
+                                                    if exp_i > 0 { pm = em[exp_i - 1]; }
+                                                    if em[exp_i] != pm { found = true; } else { exp_i = exp_i + 1; }
+                                                }
+                                                if found {
+                                                    var dt = 0;
+                                                    var want = 0;
+                                                    if rec_n > 0 { dt = ts - prev_t; want = (et[exp_i] - last_exp_t) * scale(); }
+                                                    var bad = false;
+                                                    if pins != em[exp_i] { bad = true; }
+                                                    if rec_n > 0 && dt != want { bad = true; }
+                                                    if bad { failures = failures + 1; }
+                                                    borrow mut heap as &!h in { borrow mut io as &!i in {
+                                                        labio.say(h, i, "edge pins=", pins, "");
+                                                        labio.say(h, i, "   expected pins=", em[exp_i], "");
+                                                        if rec_n > 0 { labio.say(h, i, "   ticks since the previous edge ", dt, ""); labio.say(h, i, "   ticks the schedule asks for ", want, ""); }
+                                                    } }
+                                                    last_exp_t = et[exp_i];
+                                                    exp_i = exp_i + 1;
+                                                    rec_n = rec_n + 1;
+                                                } else { failures = failures + 1; }
+                                                prev_t = ts;
+                                            }
+                                            labio.write_reg(q, pw, frame, ans, 4, k2 + 1);
+                                            k2 = k2 + 1;
+                                        }
+                                        // every expected edge must have been recorded
+                                        var rest = 0;
+                                        while exp_i < ne {
+                                            var pm = 0;
+                                            if exp_i > 0 { pm = em[exp_i - 1]; }
+                                            if em[exp_i] != pm { rest = rest + 1; }
+                                            exp_i = exp_i + 1;
+                                        }
+                                        failures = failures + rest;
+                                        borrow mut heap as &!h in { borrow mut io as &!i in {
+                                            labio.say(h, i, "gates: ", ng, "");
+                                            labio.say(h, i, "edges recorded: ", rec_n, "");
+                                            labio.say(h, i, "edges missing or unexpected: ", failures, "");
+                                        } }
+                                    }
+                                }
+                            }
+                        }
+                        tty_close(port);
+                    }
+                }
+            }
+            release(device);
+            poller_close(p);
+        }
+    }
+    release(io);
+    release(heap);
+    if status_code != 0 { return status_code; }
+    if failures != 0 { return 1; }
+    return 0;
+}
