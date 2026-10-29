@@ -204,10 +204,10 @@ def variational(backend):
     # numpy and the tools do the same work: the same cost at a random point
     rng = np.random.default_rng(3)
     th = rng.uniform(-3, 3, 16)
-    got = float(subprocess.run([vqe_e], input=" ".join(map(repr, th)), capture_output=True, text=True).stdout)
+    got = float(subprocess.run([vqe_e], input=" ".join(repr(float(v)) for v in th), capture_output=True, text=True).stdout)
     assert abs(got - vqe_np(th, 3)) < 1e-10, (got, vqe_np(th, 3))
     th = rng.uniform(-3, 3, 6)
-    got = float(subprocess.run([q_e], input=" ".join(map(repr, th)), capture_output=True, text=True).stdout)
+    got = float(subprocess.run([q_e], input=" ".join(repr(float(v)) for v in th), capture_output=True, text=True).stdout)
     assert abs(got - qaoa_np(th)) < 1e-10, (got, qaoa_np(th))
     runs = 3
     common = ["--opt", OPT]
@@ -261,10 +261,11 @@ def main():
     data["versions"] = {"qiskit": qiskit.__version__, "numpy": np.__version__}
     import scipy
     data["versions"]["scipy"] = scipy.__version__
-    data["qasm"] = qasm_programs(exes)
-    data["expansion"] = expansion(exes)
-    data["variational"] = variational("llvm")
-    json.dump(data, open(OUT, "w"), indent=1)
+    for key, fn in (("qasm", lambda: qasm_programs(exes)), ("expansion", lambda: expansion(exes)), ("variational", lambda: variational("llvm"))):
+        data[key] = fn()
+        json.dump(data, open(OUT + ".partial", "w"), indent=1)     # a failure late on keeps what was measured
+        print("measured", key, flush=True)
+    os.replace(OUT + ".partial", OUT)
     print("wrote", OUT)
 
 
