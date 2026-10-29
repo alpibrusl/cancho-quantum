@@ -56,8 +56,8 @@ def feature_tables(b):
     out = {}
     rows = []
     for key, r in b["qasm"].items():
-        rows.append(f"| {key} ({r['gates']} gates, {r['bytes']:,} bytes) | {sec1(r['llvm'])} | {sec1(r['cranelift'])} | {sec1(r['qiskit_loads']) if 'qiskit_loads' in r else 'n/a'} |")
-    out["qasm"] = "| program | qsim (LLVM) | qsim (Cranelift) | Qiskit `qasm2.loads` alone |\n|---|---|---|---|\n" + "\n".join(rows)
+        rows.append(f"| {key} ({r['gates']} gates, {r['bytes']:,} bytes) | {sec1(r['llvm'])} | {sec1(r['cranelift'])} | {sec1(r['qiskit_loads']) if 'qiskit_loads' in r else 'n/a'} | {sec1(r['llvm_quiet']) if 'llvm_quiet' in r else 'n/a'} |")
+    out["qasm"] = "| program | qsim (LLVM) | qsim (Cranelift) | Qiskit `qasm2.loads` alone | qsim (LLVM) `--quiet` |\n|---|---|---|---|---|\n" + "\n".join(rows)
     rows = []
     for k, r in b["expansion"].items():
         if k == "refusal":

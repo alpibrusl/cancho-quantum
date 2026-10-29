@@ -11,53 +11,57 @@
    "qubits": 4,
    "gates": 300,
    "bytes": 3651,
-   "llvm": 0.0019049859997721796,
-   "cranelift": 0.0028364770000735007,
-   "qiskit_loads": 0.0010343969997848035
+   "llvm": 0.0017576630000064597,
+   "cranelift": 0.002300347000016245,
+   "qiskit_loads": 0.0009380580000026839
   },
   "4 qubits, decimal angles": {
    "qubits": 4,
    "gates": 300,
    "bytes": 4483,
-   "llvm": 0.002329764000023715,
-   "cranelift": 0.0025254209999729937,
-   "qiskit_loads": 0.000866682000378205
+   "llvm": 0.0016675700000234883,
+   "cranelift": 0.002450181999989809,
+   "qiskit_loads": 0.0008692410000037398
   },
   "4 qubits, every gate a call of a definition": {
    "qubits": 4,
    "gates": 300,
    "bytes": 4041,
-   "llvm": 0.0028729099999509344,
-   "cranelift": 0.005173646999992343,
-   "qiskit_loads": 0.001696836999599327
+   "llvm": 0.0034564919999979793,
+   "cranelift": 0.004856859000000213,
+   "qiskit_loads": 0.0014104900000120324
   },
   "8 qubits, H on every qubit (a dense state, 256 amplitudes printed)": {
    "qubits": 8,
    "gates": 8,
    "bytes": 89,
-   "llvm": 0.006521401000100013,
-   "cranelift": 0.013362612999571866
+   "llvm": 0.004920440000006465,
+   "cranelift": 0.01292219900000191,
+   "llvm_quiet": 0.0016544910000106938
   },
   "10 qubits, H on every qubit (a dense state, 1,024 amplitudes printed)": {
    "qubits": 10,
    "gates": 10,
    "bytes": 106,
-   "llvm": 0.01811775799978932,
-   "cranelift": 0.0486056350000581
+   "llvm": 0.02123906799999986,
+   "cranelift": 0.03901099899999849,
+   "llvm_quiet": 0.0011311929999919812
   },
   "12 qubits, H on every qubit (a dense state, 4,096 amplitudes printed)": {
    "qubits": 12,
    "gates": 12,
    "bytes": 124,
-   "llvm": 0.07958670000016355,
-   "cranelift": 0.19303935399966576
+   "llvm": 0.07982959299999948,
+   "cranelift": 0.17608771000001866,
+   "llvm_quiet": 0.0016853359999799977
   },
   "14 qubits, H on every qubit (a dense state, 16,384 amplitudes printed)": {
    "qubits": 14,
    "gates": 14,
    "bytes": 142,
-   "llvm": 0.287830589999885,
-   "cranelift": 0.6782747049996942
+   "llvm": 0.2495919259999937,
+   "cranelift": 0.7301217959999917,
+   "llvm_quiet": 0.0016452129999890985
   }
  },
  "expansion": {

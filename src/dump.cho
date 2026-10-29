@@ -54,6 +54,25 @@ pub fn amplitudes[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [
     return 0;
 }
 
+// The same lines, only for the amplitudes whose probability `re^2 + im^2` is at least `min` (a `min` of 0 or less prints them all, which is `amplitudes`). Printing a float that is not short costs about 17 microseconds
+// (`std.fmt` is exact Dragon4 on bignums: docs/benchmark.md), and a dense state of n qubits has 2^n of them.
+pub fn amplitudes_above[&i, &s, &b](io: &!i Io, st: &s [float], n: int, scratch: &!b [byte], min: float) -> [io_write] int {
+    var k = 0;
+    while k < state.amplitudes_for(n) {
+        if min <= 0.0 || st[2 * k] * st[2 * k] + st[2 * k + 1] * st[2 * k + 1] >= min {
+            io.write_all(io, "amp ");
+            io.print_int(io, k);
+            io.write_all(io, " ");
+            put_float(io, scratch, st[2 * k]);
+            io.write_all(io, " ");
+            put_float(io, scratch, st[2 * k + 1]);
+            io.newline(io);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
 // Sample `shots` outcomes (no collapse) and print one line per distinct
 // outcome, in index order: `sample <bits> <count>`, the bits most significant
 // qubit first. `shots` is at most 4096. Answers 0, or 2 if it is not.

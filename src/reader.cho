@@ -1,6 +1,7 @@
 module qc.reader;
 
 import std.io;
+import std.json;
 
 // The token reader shared by the state-vector interpreter (`main.cho`) and the
 // density-matrix interpreter (`density.cho`).
@@ -49,4 +50,30 @@ pub fn read_int[&i](io: &!i Io) -> [io_read] int {
         c = getchar(io);
     }
     return sign * v;
+}
+
+// A number written as text (`0.5`, `1e-6`) read by way of the JSON reader; (false, 0) when it is not a finite one.
+pub fn parse_float[&s](tok: &s [byte]) -> [] (bool, float) {
+    if len(tok) == 0 {
+        return (false, 0.0);
+    }
+    var ok = false;
+    var out = 0.0;
+    region r {
+        let src = alloc_slice[r](len(tok) + 2, byte_of(0));
+        src[0] = byte_of('[');
+        var k = 0;
+        while k < len(tok) {
+            src[1 + k] = tok[k];
+            k = k + 1;
+        }
+        src[len(tok) + 1] = byte_of(']');
+        let all = src[0..len(tok) + 2];
+        let tape = alloc_slice[r](json.tape_len(all), 0);
+        if json.parse(all, tape) > 0 && json.is_number(tape, 1) && json.count(tape, 0) == 1 {
+            out = json.to_float(all, tape, 1);
+            ok = out - out == 0.0;
+        }
+    }
+    return (ok, out);
 }
