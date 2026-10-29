@@ -83,7 +83,7 @@ def qasm_programs(exes):
     dec_angle = lambda rng: repr(float(rng.uniform(-7, 7)))
     cases = {"multiples of pi": (False, pi_angle), "decimal angles": (False, dec_angle), "every gate a call of a definition": (True, pi_angle)}
     rows = {}
-    for n in (4, 20):
+    for n in (4,):
         for gates in (300,):
             for label, (wrap, angle) in cases.items():
                 text = program(n, gates, angle, wrap)
@@ -91,9 +91,15 @@ def qasm_programs(exes):
                 for backend, exe in exes.items():
                     row[backend] = run_text(exe, text)
                 rows[f"{n} qubits, {label}"] = row
+    # the printing: a QASM run ends by printing every non-zero amplitude, so on a dense state (H on every qubit) the output is 2^n lines, and that is most of the time from about 10 qubits
+    for n in (8, 10, 12, 14):
+        text = f"OPENQASM 2.0;\nqreg q[{n}];\n" + "".join(f"h q[{q}];\n" for q in range(n))
+        rows[f"{n} qubits, H on every qubit (a dense state, {1 << n:,} amplitudes printed)"] = {"qubits": n, "gates": n, "bytes": len(text), **{b: run_text(e, text) for b, e in exes.items()}}
     # Qiskit's reader on the same texts, for the parse alone
     from qiskit import qasm2
-    for key in rows:
+    for key in list(rows):
+        if "dense state" in key:
+            continue
         n = int(key.split()[0])
         label = key.split(", ", 1)[1]
         wrap, angle = cases[label]
@@ -255,13 +261,18 @@ def variational(backend):
 def main():
     if not OPT:
         sys.exit("OPT (a built cancho-opt `opt`) is required")
-    exes = {"llvm": qsim("llvm"), "cranelift": qsim("cranelift")}
+    exes = {"llvm": qsim("llvm"), "cranelift": qsim("cranelift")} if "--only" not in sys.argv or sys.argv[sys.argv.index("--only") + 1] != "variational" else {}
     data = {"machine": f"{platform.machine()}, {os.cpu_count()} cores, {platform.system()} {platform.release()}", "measured": time.strftime("%Y-%m-%d")}
     import qiskit
     data["versions"] = {"qiskit": qiskit.__version__, "numpy": np.__version__}
     import scipy
     data["versions"]["scipy"] = scipy.__version__
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    if only:      # redo one stage and keep the others from the file
+        data = json.load(open(OUT))
     for key, fn in (("qasm", lambda: qasm_programs(exes)), ("expansion", lambda: expansion(exes)), ("variational", lambda: variational("llvm"))):
+        if only and key != only:
+            continue
         data[key] = fn()
         json.dump(data, open(OUT + ".partial", "w"), indent=1)     # a failure late on keeps what was measured
         print("measured", key, flush=True)

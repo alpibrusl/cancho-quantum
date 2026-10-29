@@ -1,0 +1,157 @@
+{
+ "machine": "x86_64, 4 cores, Linux 6.18.44-fc-v185",
+ "measured": "2026-10-29",
+ "versions": {
+  "qiskit": "2.6.1",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1"
+ },
+ "qasm": {
+  "4 qubits, multiples of pi": {
+   "qubits": 4,
+   "gates": 300,
+   "bytes": 3651,
+   "llvm": 0.0019049859997721796,
+   "cranelift": 0.0028364770000735007,
+   "qiskit_loads": 0.0010343969997848035
+  },
+  "4 qubits, decimal angles": {
+   "qubits": 4,
+   "gates": 300,
+   "bytes": 4483,
+   "llvm": 0.002329764000023715,
+   "cranelift": 0.0025254209999729937,
+   "qiskit_loads": 0.000866682000378205
+  },
+  "4 qubits, every gate a call of a definition": {
+   "qubits": 4,
+   "gates": 300,
+   "bytes": 4041,
+   "llvm": 0.0028729099999509344,
+   "cranelift": 0.005173646999992343,
+   "qiskit_loads": 0.001696836999599327
+  },
+  "8 qubits, H on every qubit (a dense state, 256 amplitudes printed)": {
+   "qubits": 8,
+   "gates": 8,
+   "bytes": 89,
+   "llvm": 0.006521401000100013,
+   "cranelift": 0.013362612999571866
+  },
+  "10 qubits, H on every qubit (a dense state, 1,024 amplitudes printed)": {
+   "qubits": 10,
+   "gates": 10,
+   "bytes": 106,
+   "llvm": 0.01811775799978932,
+   "cranelift": 0.0486056350000581
+  },
+  "12 qubits, H on every qubit (a dense state, 4,096 amplitudes printed)": {
+   "qubits": 12,
+   "gates": 12,
+   "bytes": 124,
+   "llvm": 0.07958670000016355,
+   "cranelift": 0.19303935399966576
+  },
+  "14 qubits, H on every qubit (a dense state, 16,384 amplitudes printed)": {
+   "qubits": 14,
+   "gates": 14,
+   "bytes": 142,
+   "llvm": 0.287830589999885,
+   "cranelift": 0.6782747049996942
+  }
+ },
+ "expansion": {
+  "1000": {
+   "calls": 1000,
+   "llvm": {
+    "defined": 0.0032352409998566145,
+    "written_out": 0.0015103199998520722,
+    "per_call_us": 1.7249210000045423
+   },
+   "cranelift": {
+    "defined": 0.006316505999848232,
+    "written_out": 0.002268991000164533,
+    "per_call_us": 4.047514999683699
+   }
+  },
+  "10000": {
+   "calls": 10000,
+   "llvm": {
+    "defined": 0.016216487999827223,
+    "written_out": 0.004590049000171348,
+    "per_call_us": 1.1626438999655875
+   },
+   "cranelift": {
+    "defined": 0.05003643400004876,
+    "written_out": 0.010956325000051947,
+    "per_call_us": 3.9080108999996814
+   }
+  },
+  "100000": {
+   "calls": 100000,
+   "llvm": {
+    "defined": 0.21132367200016233,
+    "written_out": 0.04655968199995186,
+    "per_call_us": 1.6476399000021047
+   },
+   "cranelift": {
+    "defined": 0.4015626580001026,
+    "written_out": 0.07099315899995418,
+    "per_call_us": 3.3056949900014843
+   }
+  },
+  "refusal": {
+   "llvm": 0.07776403000002574,
+   "cranelift": 0.2566421960000298
+  }
+ },
+ "variational": {
+  "vqe_bfgs": {
+   "tool_s": 0.110284596999918,
+   "tool_gradients": 56,
+   "scipy_numpy_s": 0.6141425309999704,
+   "error": 6.572520305780927e-14
+  },
+  "vqe_spsa_800_exact": {
+   "tool_s": 2.305963276000057,
+   "evaluations": 1601,
+   "true_error": 0.02652051322389415
+  },
+  "vqe_spsa_800_1000_shots": {
+   "tool_s": 2.775344847000042,
+   "evaluations": 1601,
+   "shots": 3202000,
+   "true_error": 0.03000829814600081
+  },
+  "qaoa_bfgs_1": {
+   "tool_s": 0.11713856200003647,
+   "tool_gradients": 73,
+   "scipy_numpy_s": 1.1302690800000619,
+   "ratio": 0.8484603525205144
+  },
+  "qaoa_bfgs_2": {
+   "tool_s": 0.27196411700015233,
+   "tool_gradients": 146,
+   "scipy_numpy_s": 3.2184209269998973,
+   "ratio": 0.9432784121517248
+  },
+  "qaoa_bfgs_3": {
+   "tool_s": 0.6070496849999927,
+   "tool_gradients": 254,
+   "scipy_numpy_s": 6.324232002999906,
+   "ratio": 0.9825745815989106
+  },
+  "qaoa_bfgs_4": {
+   "tool_s": 1.0448902610000914,
+   "tool_gradients": 361,
+   "scipy_numpy_s": 9.957037578999916,
+   "ratio": 0.9986157042492106
+  },
+  "qaoa_spsa_2_1000_shots": {
+   "tool_s": 3.65583585100012,
+   "evaluations": 2406,
+   "shots": 2406000,
+   "ratio": 0.9417478166703547
+  }
+ }
+}
